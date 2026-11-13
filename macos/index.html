@@ -87,14 +87,20 @@
       </div>
     </details>
 
-    <section class="section">
-      <p class="section-label">Tools <span class="section-note mono" id="toolsNote"></span></p>
-      <div class="grid" id="toolsGrid"></div>
-      <div class="empty" id="toolsEmpty" hidden>
-        <p>Nothing in this category yet.</p>
-        <a class="btn btn-ghost" href="/">Show everything</a>
+    <details class="section tools-section" id="toolsSection">
+      <summary class="tools-toggle" aria-controls="toolsContent">
+        <span class="section-label">Tools</span>
+        <span class="section-note mono" id="toolsNote"></span>
+        <svg class="tools-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+      </summary>
+      <div id="toolsContent">
+        <div class="grid" id="toolsGrid"></div>
+        <div class="empty" id="toolsEmpty" hidden>
+          <p>Nothing in this category yet.</p>
+          <a class="btn btn-ghost" href="/">Show everything</a>
+        </div>
       </div>
-    </section>
+    </details>
 
     <!-- ============ Split community banner (rendered by app.js) ============ -->
     <section class="banner" id="discordCard" aria-label="Kyro Discord"></section>

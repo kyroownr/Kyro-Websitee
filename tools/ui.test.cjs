@@ -70,11 +70,11 @@ async function main() {
         return nativeFetch(input, init);
       };
       Object.defineProperty(navigator, 'clipboard', {configurable:true,value:{writeText:async value=>{window.__copied=value;}}});
-      if (parameters.has('checksumFixture') || parameters.has('emptySoftwareFixture')) {
+      if (parameters.has('checksumFixture') || parameters.has('emptySoftwareFixture') || parameters.has('emptyToolsFixture')) {
         let seed;
         Object.defineProperty(window, 'KYRO_SEED', {configurable:true,get:()=>seed,set:value=>{
           if (parameters.has('checksumFixture')) value.find(row=>row.id === 'after-effects-windows-v27').sha256 = parameters.get('checksumFixture') === 'valid' ? 'A'.repeat(64) : '<invalid>';
-          seed = parameters.has('emptySoftwareFixture') ? value.filter(row=>row.kind !== 'software') : value;
+          seed = value.filter(row => !(parameters.has('emptySoftwareFixture') && row.kind === 'software') && !(parameters.has('emptyToolsFixture') && row.kind === 'tool'));
         }});
       }
     ` });
@@ -84,7 +84,7 @@ async function main() {
       await loaded;
     };
     const screenshot = async filename => {
-      await evaluate("Promise.all(document.getAnimations().filter(animation=>animation.effect.getComputedTiming().iterations !== Infinity).map(animation=>animation.finished.catch(()=>{})))");
+      await evaluate("Promise.all(document.getAnimations().filter(animation=>animation.playState === 'running' && animation.effect.target.checkVisibility() && animation.effect.getComputedTiming().iterations !== Infinity).map(animation=>animation.finished.catch(()=>{})))");
       const capture = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
       fs.writeFileSync(path.join(artifacts, filename), Buffer.from(capture.data, 'base64'));
     };
@@ -98,12 +98,19 @@ async function main() {
       if (!await evaluate("document.querySelector('#softwareSection').open")) await toggleSoftware();
       assert.equal(await evaluate("document.querySelector('#softwareSection').open && document.querySelector('#softwareGrid').checkVisibility()"), true);
     };
+    const toggleTools = async () => {
+      const point = await evaluate("(()=>{const header=document.querySelector('.tools-toggle');header.scrollIntoView({block:'center',behavior:'instant'});const rect=header.getBoundingClientRect();return {x:rect.x+rect.width/2,y:rect.y+rect.height/2};})()");
+      await send('Input.dispatchMouseEvent', {type:'mousePressed',button:'left',clickCount:1,...point});
+      await send('Input.dispatchMouseEvent', {type:'mouseReleased',button:'left',clickCount:1,...point});
+    };
     const openBoard = async () => evaluate(`(async()=>{ document.querySelector('#requestsOpen').click(); await (${waitExpression})(()=>document.querySelectorAll('.req-item').length>0); return document.querySelectorAll('.req-item').length; })()`);
     await send('Emulation.setDeviceMetricsOverride', { width: 1366, height: 900, deviceScaleFactor: 1, mobile: false });
     await navigate('/windows');
     assert.equal(await evaluate("document.querySelector('#softwareSection').open"), false);
     assert.equal(await evaluate("document.querySelector('#softwareGrid').checkVisibility()"), false);
-    assert.equal(await evaluate("document.querySelector('#toolsGrid').checkVisibility()"), true);
+    assert.equal(await evaluate("document.querySelector('#toolsSection').open"), false);
+    assert.equal(await evaluate("document.querySelector('#toolsGrid').checkVisibility()"), false);
+    assert.equal(await evaluate("document.querySelector('#toolsNote').textContent"), '· 4 items');
     assert.equal(await evaluate("document.querySelector('#softwareNote').textContent"), '· 4 items');
     await evaluate("document.querySelector('.software-toggle').scrollIntoView({block:'center',behavior:'instant'})");
     await screenshot('software-collapsed-desktop.png');
@@ -119,6 +126,46 @@ async function main() {
     await send('Input.dispatchKeyEvent', {type:'keyDown',key:' ',code:'Space',windowsVirtualKeyCode:32});
     await send('Input.dispatchKeyEvent', {type:'keyUp',key:' ',code:'Space',windowsVirtualKeyCode:32});
     assert.equal(await evaluate("document.querySelector('#softwareSection').open"), false);
+    for (const width of [1366, 390]) {
+      await send('Emulation.setDeviceMetricsOverride', { width, height: width === 390 ? 844 : 900, deviceScaleFactor: 1, mobile: width === 390 });
+      for (const os of ['windows', 'macos']) {
+        await navigate('/' + os);
+        assert.equal(await evaluate("document.querySelector('#toolsSection').open"), false);
+        assert.equal(await evaluate("document.querySelector('#toolsGrid').checkVisibility()"), false);
+        assert.equal(await evaluate("document.querySelector('#toolsNote').textContent"), '· 4 items');
+        await evaluate("document.querySelector('.tools-toggle').scrollIntoView({block:'center',behavior:'instant'})");
+        await screenshot('tools-collapsed-' + os + '-' + width + '.png');
+        await toggleTools();
+        assert.equal(await evaluate("document.querySelector('#toolsSection').open && document.querySelector('#toolsGrid').checkVisibility() && !document.querySelector('#softwareSection').open"), true);
+        assert.equal(await evaluate("document.querySelectorAll('#toolsGrid .software-card').length"), 4);
+        await expandSoftware();
+        assert.equal(await evaluate("document.querySelector('#toolsSection').open"), true);
+        await toggleSoftware();
+        assert.equal(await evaluate("document.querySelector('#toolsGrid').checkVisibility()"), true);
+        assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
+        await evaluate("document.querySelector('.tools-toggle').scrollIntoView({block:'center',behavior:'instant'})");
+        await screenshot('tools-expanded-' + os + '-' + width + '.png');
+        await evaluate("document.querySelector('[data-id=autocaption] [data-inspect]').click()");
+        assert.equal(await evaluate("document.querySelector('.file-name').textContent"), 'Aescripts AutoCaption v4.6.1.zip');
+        await evaluate("document.querySelector('[data-pass-copy]').click()");
+        assert.equal(await evaluate('window.__copied'), 'Kyro');
+        await evaluate("document.querySelector('[data-tab=install]').click()");
+        assert.equal(await evaluate("document.querySelector('[data-panel=install]').textContent.includes('AutoCaption')"), true);
+        await evaluate("document.querySelector('.modal-close').click()");
+        await toggleTools();
+        assert.equal(await evaluate("document.querySelector('#toolsSection').open"), false);
+        await evaluate("document.querySelector('.tools-toggle').focus()");
+        await send('Input.dispatchKeyEvent', {type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r',unmodifiedText:'\r'});
+        await send('Input.dispatchKeyEvent', {type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+        assert.equal(await evaluate("document.querySelector('#toolsSection').open"), true);
+        await send('Input.dispatchKeyEvent', {type:'keyDown',key:' ',code:'Space',windowsVirtualKeyCode:32});
+        await send('Input.dispatchKeyEvent', {type:'keyUp',key:' ',code:'Space',windowsVirtualKeyCode:32});
+        assert.equal(await evaluate("document.querySelector('#toolsSection').open"), false);
+        await navigate('/' + os);
+        assert.equal(await evaluate("document.querySelector('#toolsSection').open"), false);
+      }
+    }
+    await send('Emulation.setDeviceMetricsOverride', { width: 1366, height: 900, deviceScaleFactor: 1, mobile: false });
     await navigate('/windows');
     assert.equal(await evaluate("document.querySelector('#softwareSection').open"), false);
     assert.ok(await openBoard());
@@ -220,7 +267,13 @@ async function main() {
     assert.equal(await evaluate("document.querySelector('#softwareSection').open && !document.querySelector('#softwareEmpty').hidden && document.querySelector('#softwareNote').textContent === '· coming soon'"), true);
     await toggleSoftware();
     assert.equal(await evaluate("document.querySelector('#softwareSection').open"), false);
-    console.log(JSON.stringify({ realChrome: 'passed', mobileWidth: 390, softwareAccordion: 'mouse, Enter, Space, both OS pages, empty state', toonboom: 'download URL, Kyro password, install note, auth gates', boardFirst: true, composer: true, publicChecksumCopy: true, malformedAndMissingHashes: 'hidden', guide: '6 sections', authGates: 'passed', searchAndCatalog: 'passed', artifacts }));
+    await navigate('/windows?emptyToolsFixture');
+    assert.equal(await evaluate("document.querySelector('#toolsSection').open"), false);
+    await toggleTools();
+    assert.equal(await evaluate("document.querySelector('#toolsSection').open && !document.querySelector('#toolsEmpty').hidden && document.querySelector('#toolsNote').textContent === '· coming soon'"), true);
+    await toggleTools();
+    assert.equal(await evaluate("document.querySelector('#toolsSection').open"), false);
+    console.log(JSON.stringify({ realChrome: 'passed', mobileWidth: 390, softwareAccordion: 'mouse, Enter, Space, both OS pages, empty state', toolsAccordion: 'mouse, Enter, Space, both OS pages, desktop/mobile, independent shelves, empty state', toolDownloads: 'AutoCaption modal, Kyro copy, install guide', toonboom: 'download URL, Kyro password, install note, auth gates', boardFirst: true, composer: true, publicChecksumCopy: true, malformedAndMissingHashes: 'hidden', guide: '6 sections', authGates: 'passed', searchAndCatalog: 'passed', artifacts }));
   } finally {
     if (ws && ws.readyState === WebSocket.OPEN) ws.close();
     chrome.kill();

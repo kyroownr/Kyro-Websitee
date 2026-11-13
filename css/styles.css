@@ -334,20 +334,20 @@ code, .mono { font-family: var(--mono); }
 }
 
 /* ------------------------------ software ------------------------------- */
-.software-section { margin-top: 40px; border: 1px solid var(--line); }
-.software-toggle {
+.software-section, .tools-section { margin-top: 40px; border: 1px solid var(--line); }
+.software-toggle, .tools-toggle {
   display: flex; align-items: center; gap: 12px; padding: 13px 16px;
   background: var(--panel); cursor: pointer; list-style: none;
   transition: background-color 0.18s var(--ease);
 }
-.software-toggle::-webkit-details-marker { display: none; }
-.software-toggle:hover { background: var(--hover); }
-.software-toggle .section-label { flex: 1; margin: 0; }
-.software-toggle .section-note { font-size: 0.66rem; }
-.software-chevron { flex-shrink: 0; color: var(--silver); transition: transform 0.18s var(--ease); }
-.software-section[open] .software-chevron { transform: rotate(180deg); }
-.software-section[open] .software-toggle { border-bottom: 1px solid var(--line); }
-.software-section .grid { margin-top: 0; border: 0; }
+.software-toggle::-webkit-details-marker, .tools-toggle::-webkit-details-marker { display: none; }
+.software-toggle:hover, .tools-toggle:hover { background: var(--hover); }
+.software-toggle .section-label, .tools-toggle .section-label { flex: 1; margin: 0; }
+.software-toggle .section-note, .tools-toggle .section-note { font-size: 0.66rem; }
+.software-chevron, .tools-chevron { flex-shrink: 0; color: var(--silver); transition: transform 0.18s var(--ease); }
+.software-section[open] .software-chevron, .tools-section[open] .tools-chevron { transform: rotate(180deg); }
+.software-section[open] .software-toggle, .tools-section[open] .tools-toggle { border-bottom: 1px solid var(--line); }
+.software-section .grid, .tools-section .grid { margin-top: 0; border: 0; }
 
 .grid {
   display: grid; grid-template-columns: 1fr; gap: 1px;
