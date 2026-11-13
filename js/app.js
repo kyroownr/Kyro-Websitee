@@ -783,7 +783,7 @@
       const shot = (r.gallery && r.gallery.length)
         ? '<img class="vault-shot" src="' + esc(r.gallery[0]) + '" alt="" />'
         : '<canvas></canvas>';
-      const meta = [esc(r.version), esc((r.files || [{ ext: r.format }])[0].ext).toUpperCase().replace('.', ''), priceLabel(r)]
+      const meta = [esc(r.version), esc(firstExt(r)).toUpperCase().replace('.', ''), priceLabel(r)]
         .filter(Boolean)
         .map(t => '<span>' + t + '</span>')
         .join('');
@@ -1084,6 +1084,13 @@
     { value: 'macos', label: 'macOS Apple Silicon / Intel' }
   ];
 
+  /* The first file extension drives the compact format badge. A pure software
+     entry ships no downloadable files, so return '' instead of reading index 0
+     of an empty array (which would throw and blank the whole modal). */
+  function firstExt(r) {
+    return (r.files && r.files.length ? r.files[0].ext : r.format) || '';
+  }
+
   function specHTML(r) {
     const files = (r.files && r.files.length ? r.files : [{ ext: r.format }])
       .map(f => String(f.ext || '').toLowerCase())
@@ -1102,36 +1109,6 @@
         '<span class="badge badge-spec' + (b.value === os ? ' is-current' : '') + '">' + b.label + '</span>')) +
       group('File Format', files.map(ext => '<span class="badge badge-format">' + esc(ext) + '</span>')) +
       '</div>';
-  }
-
-  /* Version history as an accordion: newest build open, the rest one click
-     away, so a long changelog never pushes the download rows out of view. */
-  function changelogHTML(r) {
-    const logs = r.changelog || [];
-    if (!logs.length) return '<p class="m-desc">No version history on file yet.</p>';
-    return '<p class="section-label section-label--tight">Version History</p><div class="changelog">' +
-      logs.map((c, i) => {
-        const open = i === 0;
-        const bodyId = 'log-body-' + i;
-        return '<div class="log-entry' + (open ? ' is-open' : '') + '">' +
-          '<button type="button" class="log-head" data-log aria-expanded="' + open + '" aria-controls="' + bodyId + '">' +
-            '<span class="log-version">' + esc(c.v) + '</span>' +
-            '<span class="log-date mono">' + esc(c.date) + '</span>' +
-            '<span class="log-sign mono" aria-hidden="true">' + (open ? '−' : '+') + '</span>' +
-          '</button>' +
-          '<p class="log-body" id="' + bodyId + '"' + (open ? '' : ' hidden') + '>' + esc(c.notes) + '</p>' +
-        '</div>';
-      }).join('') + '</div>';
-  }
-
-  function toggleLog(btn) {
-    const open = btn.getAttribute('aria-expanded') !== 'true';
-    const entry = btn.parentElement;
-    const body = entry.querySelector('.log-body');
-    btn.setAttribute('aria-expanded', String(open));
-    entry.classList.toggle('is-open', open);
-    btn.querySelector('.log-sign').textContent = open ? '−' : '+';
-    if (body) body.hidden = !open;
   }
 
   /* The AppleFX guide is full prose — headings, sub-headings, paragraphs, fenced
@@ -1308,9 +1285,10 @@
      gallery; the thumbs swap the big shot in place. */
   function stageHTML(r) {
     const gal = (r.gallery || []).filter(Boolean);
+    const fx = firstExt(r);
     const badgeRow =
       '<div class="badge-row">' + priceBadge(r) +
-      '<span class="badge badge-format">' + esc(String((r.files || [{ ext: r.format }])[0].ext)).toUpperCase().replace('.', '') + '</span></div>';
+      (fx ? '<span class="badge badge-format">' + esc(String(fx)).toUpperCase().replace('.', '') + '</span>' : '') + '</div>';
     if (!gal.length) {
       return '<div class="m-stage"><canvas id="modalCanvas"></canvas>' +
         '<span class="preview-chip mono">LIVE PREVIEW</span>' + badgeRow + '</div>';
@@ -1342,7 +1320,6 @@
         '<div class="tabs" role="tablist">' +
           '<button class="tab" data-tab="overview" role="tab">Overview</button>' +
           '<button class="tab" data-tab="install" role="tab">Installation Guide</button>' +
-          '<button class="tab" data-tab="changelog" role="tab">Changelog</button>' +
         '</div>' +
         '<div class="tab-panel" data-panel="overview">' +
           '<ul class="feature-list">' + (r.features || []).map(f => '<li>' + ICON.check + '<span>' + esc(f) + '</span></li>').join('') + '</ul>' +
@@ -1354,7 +1331,6 @@
           '</div>' +
         '</div>' +
         '<div class="tab-panel" data-panel="install">' + installHTML(r) + '</div>' +
-        '<div class="tab-panel" data-panel="changelog">' + changelogHTML(r) + '</div>' +
         '<p class="section-label section-label--tight">Downloads</p>' +
         '<div class="dl-zone"></div>' +
         '<div class="m-actions">' +
@@ -1383,9 +1359,6 @@
         t.setAttribute('aria-pressed', String(on));
       });
     }));
-
-    modalBox.querySelectorAll('.log-head').forEach(btn =>
-      btn.addEventListener('click', () => toggleLog(btn)));
 
     syncTabs();
     showOverlay(modalOverlay);

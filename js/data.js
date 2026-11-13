@@ -34,6 +34,34 @@ window.KYRO_SITE = {
 
 window.KYRO_SEED = [
   {
+    id: 'toonboom',
+    title: 'Toon Boom Harmony Premium',
+    desc: 'Toon Boom Harmony Premium is the industry-standard 2D animation software used by major studios (like Disney, Nickelodeon, and Cartoon Network) as well as freelancers to create animated TV shows, feature films, and games.',
+    category: 'software',
+    kind: 'software',
+    os: ['windows'],
+    price: null,
+    version: '',
+    creator: '',
+    downloads: 0,
+    added: '2026-11-13',
+    tags: ['animation', '2d', 'rigging', 'compositing', 'nodes'],
+    gallery: [
+      '/assets/toonboom-scene.webp',
+      '/assets/toonboom-rig.webp'
+    ],
+    files: [],
+    features: [
+      'As the highest tier of the Harmony lineup, it provides a complete end-to-end pipeline—from sketching and rigging to compositing and special effects.',
+      'Advanced Character Rigging & Deformers: Build complex cut-out character rigs with bones, curves, and master controllers. Deformers allow you to bend, squash, and stretch artwork smoothly so rigs move naturally without redrawing every frame.',
+      'Traditional & Paperless Drawing: Combines vector and bitmap brush engines with stabilizers, onion skinning, and infinite color palettes for fluid frame-by-frame animation.',
+      'Node-Based Compositing & Special Effects: Features a powerful Node View (similar to Nuke or Blender) that lets you build unlimited custom visual effects, lighting, glows, blurs, and particle systems (like rain, fire, and smoke).',
+      '2D/3D Integration: Import 3D models directly into your 2D scenes and arrange layers in a true 3D multiplane space for dynamic camera movements and depth.',
+      'Studio-Ready Workflow: Supports automated lip-syncing, reusable animation libraries, and team pipeline tools for large productions.',
+      'Who it\u2019s for: Professional animators, studios, and serious creators who need maximum control over complex character rigs and high-end visual effects.'
+    ]
+  },
+  {
     id: 'applefx',
     title: 'AppleFX',
     desc: 'AppleFX by 8bitbrain is a flagship After Effects extension/panel designed to give your edits Apple-grade, high-end motion and aesthetics in just one click.',
@@ -73,9 +101,6 @@ window.KYRO_SEED = [
       'Shakes & Expressions: Built-in motion dynamics without needing manual, complex scripting.',
       'Workflow: It features live browser-like previews right inside the panel, real-time control sliders (for duration, scale, blur, etc.), and a one-click apply button that targets your active composition.',
       'License: One-time purchase with a lifetime license (compatible with Mac & Windows for After Effects 2022+), which includes free monthly updates.'
-    ],
-    changelog: [
-      { v: '1.2.5', date: '2026-11-02', notes: 'Dispersion clamp on 8bpc comps, faster frosted roughness, AE 2026 render queue fix.' }
     ]
   },
   {
@@ -252,5 +277,5 @@ window.KYRO_INSTALL = {
 /* Human-readable labels shared across UI surfaces */
 window.KYRO_CATEGORY_LABEL = {
   extension: 'Extension', script: 'Script', preset: 'Preset',
-  project: 'Project File', soundfx: 'Sound FX'
+  project: 'Project File', soundfx: 'Sound FX', software: 'Software'
 };

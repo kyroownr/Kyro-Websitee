@@ -653,20 +653,6 @@ code, .mono { font-family: var(--mono); }
 .install-table tr:last-child td { border-bottom: 0; }
 .install-table td:first-child { color: var(--white); font-weight: 500; }
 
-/* changelog accordion */
-.changelog { display: grid; gap: 9px; }
-.log-entry { border: 1px solid var(--line); background: var(--panel); }
-.log-head {
-  display: flex; align-items: baseline; gap: 10px; width: 100%;
-  padding: 11px 14px; text-align: left; transition: background 0.16s;
-}
-.log-head:hover { background: var(--hover); }
-.log-version { font-family: var(--mono); font-size: 0.76rem; font-weight: 600; color: var(--white); }
-.log-date { font-size: 0.66rem; color: var(--dim); }
-.log-sign { margin-left: auto; font-size: 0.82rem; line-height: 1; color: var(--dim); }
-.log-head:hover .log-sign { color: var(--white); }
-.log-body { margin: 0; padding: 0 14px 12px; font-size: 0.82rem; color: var(--muted); line-height: 1.6; }
-
 /* ------------------------- gated file rows ------------------------------ */
 .gate-banner {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
