@@ -25,13 +25,13 @@
   <meta name="twitter:image" content="https://kyro.new.tg/assets/kyro-banner.png" />
 
   <!-- Favicon: official Kyro wordmark -->
-  <link rel="icon" type="image/png" href="assets/kyro-icon.png" />
+  <link rel="icon" type="image/png" href="/assets/kyro-icon.png" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="stylesheet" href="/css/styles.css" />
 </head>
 <body>
 
@@ -39,15 +39,16 @@
   <header class="site-nav">
     <div class="nav-inner">
       <a class="nav-logo" href="#" id="brandLink" aria-label="Kyro — home">
-        <img class="nav-logo-mark" src="assets/kyro-icon.png" alt="" width="26" height="26" />
+        <img class="nav-logo-mark" src="/assets/kyro-icon.png" alt="" width="26" height="26" />
         <span class="nav-logo-text">Kyro</span>
       </a>
 
       <nav class="nav-right" aria-label="Site">
         <button type="button" class="nav-link" id="paletteOpen">Search</button>
-        <a class="nav-link" href="#software">New Drops</a>
-        <a class="nav-link" href="about.html">About</a>
+        <a class="nav-link" href="/guide">Guide</a>
+        <a class="nav-link" href="/about">About</a>
         <a class="nav-link" href="#discordCard">Community</a>
+        <button type="button" class="nav-link" id="requestsOpen">Requests</button>
 
         <button type="button" class="nav-icon-btn" id="savedBtn" aria-label="Open saved vault" title="Saved Vault">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M18 21 12 16.5 6 21V4.8A1.8 1.8 0 0 1 7.8 3h8.4A1.8 1.8 0 0 1 18 4.8z"/></svg>
@@ -105,8 +106,8 @@
       <p class="section-label">Software <span class="section-note mono" id="softwareNote"></span></p>
       <div class="grid" id="softwareGrid"></div>
       <div class="empty" id="emptyState" hidden>
-        <p>Nothing in this view yet.</p>
-        <button class="btn btn-ghost" id="resetFiltersBtn">Show everything</button>
+        <p>Nothing in the vault yet.</p>
+        <a class="btn btn-ghost" href="#discordCard">Join the community</a>
       </div>
     </section>
 
@@ -122,7 +123,7 @@
           <span class="stamp-badge mono" id="siteUpdated">—</span>
         </div>
         <div class="footer-links">
-          <a href="about.html">About</a>
+          <a href="/about">About</a>
           <a href="#discordCard">Kyro Discord</a>
           <a href="https://discord.gg/5ch7XeNg98" target="_blank" rel="noopener noreferrer" id="footerInvite">Invite ↗</a>
         </div>
@@ -172,12 +173,46 @@
     </div>
   </aside>
 
+  <!-- ============ Requests / wishlist drawer ============ -->
+  <aside class="drawer" id="requestsDrawer" aria-hidden="true" aria-label="Tool requests">
+    <div class="drawer-head">
+      <div>
+        <h3 class="drawer-title">Requests</h3>
+        <p class="drawer-sub mono" id="requestCount">loading…</p>
+      </div>
+      <button type="button" class="close-x" id="requestsClose" aria-label="Close requests"></button>
+    </div>
+
+    <div class="req-compose" id="reqCompose" hidden>
+      <label class="field">
+        <span class="field-label mono">Title</span>
+        <input class="field-input" type="text" id="reqTitle" maxlength="90" placeholder="What should the vault add next?" autocomplete="off" />
+      </label>
+      <div class="field">
+        <span class="field-label mono" id="reqCatLabel">Category</span>
+        <div class="cat-row" id="reqCategories" role="group" aria-labelledby="reqCatLabel"></div>
+      </div>
+      <label class="field">
+        <span class="field-label mono">AE Version</span>
+        <input class="field-input mono" type="text" id="reqAe" inputmode="numeric" maxlength="4" placeholder="2026" autocomplete="off" />
+      </label>
+      <label class="field">
+        <span class="field-label mono">Short Description</span>
+        <textarea class="field-input" id="reqDesc" rows="3" maxlength="280" placeholder="What it should do, and why you want it."></textarea>
+      </label>
+      <button type="button" class="btn btn-primary" id="reqSubmit">Submit Request</button>
+    </div>
+
+    <div class="req-gate" id="reqGate" hidden></div>
+    <div class="req-list" id="requestList"></div>
+  </aside>
+
   <!-- Toast stack (downloads, access notices) -->
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <!-- Modular scripts: data → preview engine → app wiring -->
-  <script src="js/data.js"></script>
-  <script src="js/preview.js"></script>
-  <script src="js/app.js"></script>
+  <script src="/js/data.js"></script>
+  <script src="/js/preview.js"></script>
+  <script src="/js/app.js"></script>
 </body>
 </html>

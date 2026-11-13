@@ -18,5 +18,10 @@
   // so verification would silently fail for everyone.
   "vars": {
     "KYRO_GUILD_ID": "1539961184323772498"
-  }
+  },
+
+  // Requests / wishlist board.
+  "kv_namespaces": [
+    { "binding": "KYRO_DATA", "id": "d8cdcab9b50242128f73675a3b242b01" }
+  ]
 }

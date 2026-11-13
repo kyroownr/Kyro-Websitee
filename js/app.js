@@ -21,9 +21,12 @@
   const REDIRECT_URI = AUTH_WORKER_URL + '/callback';
   const INVITE_URL = DISCORD_INVITE_URL;
   const INVITE_CODE = INVITE_URL.replace(/^https?:\/\//, '');
+  /* Bare slug for Discord's public presence endpoint, which needs
+     /api/v9/invites/<code> rather than the discord.gg host. */
+  const INVITE_SLUG = (INVITE_URL.match(/discord\.gg\/([\w-]+)/) || [])[1] || '';
 
   /* ------------------------------ storage ------------------------------ */
-  const K_RES = 'kyro.resources.v3';
+  const K_RES = 'kyro.resources.v4';
   const K_SAVED = 'kyro.saved.v3';
   const K_AUTH = 'kyro.auth.v1';
   const K_OS = 'kyro.os.v1';
@@ -39,10 +42,15 @@
   const clearSession = (k) => { try { sessionStorage.removeItem(k); } catch { /* private mode */ } };
 
   let resources = read(K_RES, null);
-  if (!Array.isArray(resources) || !resources.length) {
-    resources = window.KYRO_SEED.map(r => Object.assign({}, r));
-    write(K_RES, resources);
-  }
+  if (!Array.isArray(resources)) resources = [];
+  /* A returning visitor keeps the download counts they incremented, but a tool
+     added to the seed after their last visit must still show up — so the cache
+     is merged by id rather than trusted to be current. */
+  const cachedIds = new Set(resources.map(r => (r && r.id) || ''));
+  window.KYRO_SEED.forEach(r => {
+    if (!cachedIds.has(r.id)) resources.push(Object.assign({}, r));
+  });
+  write(K_RES, resources);
   const saved = new Set(read(K_SAVED, []));
 
   /* --------------------------- auth state model ------------------------
@@ -197,6 +205,24 @@
   const savedCount = $('#savedCount');
   const toasts = $('#toasts');
 
+  /* Requests board drawer — the elements only exist on pages that ship it. */
+  const requestsDrawer = $('#requestsDrawer');
+  const requestCompose = $('#reqCompose');
+  const requestGate = $('#reqGate');
+  const requestList = $('#requestList');
+  const requestCount = $('#requestCount');
+  const reqCategories = $('#reqCategories');
+  const reqTitle = $('#reqTitle');
+  const reqAe = $('#reqAe');
+  const reqDesc = $('#reqDesc');
+  const reqSubmit = $('#reqSubmit');
+
+  /* Category page head — only present on the /windows and /macos pages. */
+  const catTitle = $('#catTitle');
+  const catDesc = $('#catDesc');
+  const catCount = $('#catCount');
+  const catNav = $('#catNav');
+
   const ICON = {
     discord: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.3 4.9A17.4 17.4 0 0 0 15.9 3.5l-.3.5a16 16 0 0 0-7.1 0l-.3-.5c-1.6.3-3.1.8-4.4 1.5C.6 9.1-.2 12.7.1 16.2 1.7 17.5 3.7 18.4 5.8 19l1-1.6-1.9-.8.5-.4c3.8 1.7 8 1.7 11.9 0l.5.4-1.9.8 1 1.6c2.1-.6 4.1-1.5 5.7-2.9.4-4-.8-7.5-3.3-11.2ZM8.5 14c-.9 0-1.7-.9-1.7-1.9s.7-1.9 1.7-1.9c.9 0 1.7.9 1.7 1.9s-.8 1.9-1.7 1.9Zm7 0c-.9 0-1.7-.9-1.7-1.9s.8-1.9 1.7-1.9c1 0 1.7.9 1.7 1.9s-.7 1.9-1.7 1.9Z"/></svg>',
     bookmark: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M18 21 12 16.5 6 21V4.8A1.8 1.8 0 0 1 7.8 3h8.4A1.8 1.8 0 0 1 18 4.8z"/></svg>',
@@ -208,7 +234,8 @@
     x: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
     arrow: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m0 0-5.5-5.5M19 12l-5.5 5.5"/></svg>',
     windows: '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M0 2.3l6.5-.9v6.3H0V2.3zm7.3-1L16 0v7.7H7.3V1.3zM0 8.6h6.5v6.3L0 14V8.6zm7.3 0H16V16l-8.7-1.2V8.6z"/></svg>',
-    apple: '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.1 8.5c0-1.7 1.4-2.6 1.5-2.6-.8-1.2-2.1-1.3-2.5-1.4-1.1-.1-2.1.6-2.7.6-.6 0-1.4-.6-2.3-.6-1.2 0-2.3.7-2.9 1.7-1.2 2.1-.3 5.3.9 7 .6.9 1.3 1.8 2.2 1.8.9 0 1.2-.6 2.3-.6s1.4.6 2.3.5c1 0 1.6-.8 2.1-1.7.7-1 1-2 1-2-.1 0-1.9-.7-1.9-2.7zM11.3 3.5c.5-.6.8-1.4.7-2.2-.7 0-1.5.5-2 1.1-.4.5-.8 1.3-.7 2.1.8.1 1.5-.4 2-1z"/></svg>'
+    apple: '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.1 8.5c0-1.7 1.4-2.6 1.5-2.6-.8-1.2-2.1-1.3-2.5-1.4-1.1-.1-2.1.6-2.7.6-.6 0-1.4-.6-2.3-.6-1.2 0-2.3.7-2.9 1.7-1.2 2.1-.3 5.3.9 7 .6.9 1.3 1.8 2.2 1.8.9 0 1.2-.6 2.3-.6s1.4.6 2.3.5c1 0 1.6-.8 2.1-1.7.7-1 1-2 1-2-.1 0-1.9-.7-1.9-2.7zM11.3 3.5c.5-.6.8-1.4.7-2.2-.7 0-1.5.5-2 1.1-.4.5-.8 1.3-.7 2.1.8.1 1.5-.4 2-1z"/></svg>',
+    copy: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.2"/><path d="M15 5.5H6.2A2.2 2.2 0 0 0 4 7.7V15"/></svg>'
   };
 
   /* ------------------------- access-state copy -------------------------- */
@@ -415,6 +442,14 @@
     if (sr) sr.addEventListener('click', recheckMembership);
 
     renderBanner();
+    /* Signing in or out changes who may post, so an open panel repaints. */
+    if (requestsDrawer && requestsDrawer.classList.contains('is-open')) renderRequests();
+    /* Same for an open modal: verifying without closing it must unlock the
+       rows and reveal the archive password. */
+    if (modalId && !modalOverlay.hidden) {
+      const open = resources.find(x => x.id === modalId);
+      if (open) wireDownloads(open);
+    }
   }
 
   /* ========================= directory rendering ======================== */
@@ -425,8 +460,9 @@
 
   function listFor(b) {
     let list = resources.slice();
+    if (b.osValue) list = list.filter(r => (r.os || []).indexOf(b.osValue) !== -1);
     if (b.cats) list = list.filter(r => b.cats.indexOf(r.category) !== -1);
-    if (b.free) list = list.filter(r => Number(r.price) === 0);
+    if (b.free) list = list.filter(r => r.price === 0);
     if (b.sort === 'newest') list = list.sort(byNewest);
     return list;
   }
@@ -439,26 +475,37 @@
     return listFor(currentView());
   }
 
+  /* An unpriced listing is not a free one: when the seed leaves price out the
+     badge disappears entirely instead of guessing at either. */
+  function priceLabel(r) {
+    if (r.price === null || r.price === undefined || r.price === '') return '';
+    return Number(r.price) === 0 ? 'FREE' : '$' + esc(r.price);
+  }
+
   function priceBadge(r) {
-    return Number(r.price) === 0
+    const label = priceLabel(r);
+    if (!label) return '';
+    return label === 'FREE'
       ? '<span class="badge badge-free">FREE</span>'
-      : '<span class="badge badge-pro">$' + esc(r.price) + ' PRO</span>';
+      : '<span class="badge badge-pro">' + label + ' PRO</span>';
   }
 
   function cardHTML(r, i) {
     const isSaved = saved.has(r.id);
     const exts = (r.files || [{ ext: r.format }]).map(f => f.ext.toUpperCase().replace('.', '')).join(' · ');
+    const version = r.version ? '<span class="version-chip mono">' + esc(r.version) + '</span>' : '';
+    const ae = r.aeMin ? '<span class="chip">AE ' + esc(r.aeMin) + '+</span>' : '';
     return (
       '<article class="software-card" data-id="' + esc(r.id) + '" tabindex="0" role="button" aria-label="Inspect ' + esc(r.title) + '" style="animation-delay:' + (i * 50) + 'ms">' +
         '<div class="card-top">' +
           '<h3 class="card-title card-title--row">' + esc(r.title) + '</h3>' +
-          '<span class="version-chip mono">' + esc(r.version) + '</span>' +
+          version +
           '<span class="arrow" aria-hidden="true">→</span>' +
         '</div>' +
         '<p class="card-desc">' + esc(r.desc) + '</p>' +
         '<div class="card-meta">' +
           '<span class="chip"><b>' + full(r.downloads) + '</b> downloads</span>' +
-          '<span class="chip">AE ' + esc(r.aeMin) + '+</span>' +
+          ae +
           '<span class="chip">' + esc(exts) + '</span>' +
           priceBadge(r) +
         '</div>' +
@@ -475,89 +522,194 @@
     softwareGrid.innerHTML = list.map(cardHTML).join('');
     emptyState.hidden = list.length > 0;
     const v = currentView();
-    softwareNote.textContent = '· ' + v.title.toLowerCase() + ' · ' + list.length + ' ' + (list.length === 1 ? 'item' : 'items');
+    if (softwareNote) {
+      softwareNote.textContent = '· ' + v.title.toLowerCase() + ' · ' + list.length + ' ' + (list.length === 1 ? 'item' : 'items');
+    }
   }
 
-  /* Flush 3×3 browse grid. `cats`/`free` filter the list below, `osValue`
-     also moves the hero toggle, `href` cells open the server. */
+  /* Each OS page shows one browse category as its own page; the head reuses
+     that cell's own copy so the two never drift apart. */
+  function renderCategoryHead() {
+    if (!catTitle) return;
+    const b = BROWSE.find(x => x.id === filters.view);
+    if (!b) return;
+    const list = currentList();
+
+    catTitle.textContent = b.title;
+    catDesc.textContent = b.desc;
+    document.title = b.title + ' — Kyro';
+
+    const pill = b.osValue && b.osValue === DETECTED_OS
+      ? '<span class="browse-pill">detected</span>' : '';
+    catCount.innerHTML = pill + '<span>' +
+      (list.length ? list.length + (list.length === 1 ? ' item' : ' items') : 'coming soon') + '</span>';
+
+    catNav.innerHTML = BROWSE.map(x => {
+      const on = x.id === b.id;
+      return '<a class="cat-chip mono' + (on ? ' is-current' : '') + '" href="' +
+        esc(categoryHref(x)) + '"' +
+        (on ? ' aria-current="page"' : '') + '>' + esc(x.title.toUpperCase()) + '</a>';
+    }).join('');
+  }
+
+  /* Flush browse grid. Three cells, three pages, clean paths like keyfla.me:
+     /windows and /macos list the software, /guide is the written start-here. */
   const BROWSE = [
-    { id: 'windows', osValue: 'windows', icon: 'windows', title: 'Windows',
+    { id: 'windows', osValue: 'windows', icon: 'windows', page: '/windows', title: 'Windows',
       desc: 'Software, tools, and plugins for Windows editors.' },
-    { id: 'macos', osValue: 'macos', icon: 'apple', title: 'MacOS',
+    { id: 'macos', osValue: 'macos', icon: 'apple', page: '/macos', title: 'MacOS',
       desc: 'Software, tools, and plugins for Mac editors.' },
-    { id: 'guide', href: 'beginners', title: 'Beginner’s Guide',
-      desc: 'Start here for After Effects setup, plugins, composition settings, and shortcuts.' },
-    { id: 'tutorials', href: 'tutorials', title: 'Tutorials',
-      desc: 'Video walkthroughs for installs, plugins, setup, and common editor fixes.' },
-    { id: 'guides', href: 'guides', title: 'Guides',
-      desc: 'Written setup, troubleshooting, activation, plugin, and workflow guides.' },
-    { id: 'new', sort: 'newest', title: 'New Drops',
-      desc: 'Latest software releases and updates, posted live from Discord.' },
-    { id: 'extensions', cats: ['extension', 'script'], title: 'Extensions & Scripts',
-      desc: 'Extensions and scripts to push your workflow further.' },
-    { id: 'project', cats: ['project'], title: 'Project Files',
-      desc: 'Curated index — .aep breakdowns, presets, LUTs, and templates.' },
-    { id: 'free', free: true, title: 'Free Assets',
-      desc: 'SFX, music, fonts, footage, 3D, icons, converters, and more — all free.' }
+    { id: 'guide', page: '/guide', noCount: true, title: 'Beginner\'s Guide',
+      desc: 'Start here for After Effects setup, plugins, composition settings, and shortcuts.' }
   ];
 
-  function cellMeta(b, count) {
-    if (filters.view === b.id) return 'showing';
-    if (b.href) return 'discord';
-    return count + ' ' + (count === 1 ? 'item' : 'items');
+  function categoryHref(b) {
+    return b.page;
+  }
+
+  function renderBrowse() {
+    if (!browseGrid) return;
+    browseGrid.innerHTML = BROWSE.map((b) => {
+      const count = b.noCount ? 0 : listFor(b).length;
+      return '<a class="browse-cell" href="' + esc(categoryHref(b)) + '">' +
+        cellInner(b, count) + '</a>';
+    }).join('');
+  }
+
+  /* Below five items a raw count advertises how little there is, so the cell
+     says nothing at all — and says COMING SOON when there is nothing to say. */
+  const COUNT_FLOOR = 5;
+
+  function cellFoot(b, count) {
+    if (b.noCount) return '';
+    if (count === 0) return '<p class="cell-meta"><span class="cell-soon mono">coming soon</span></p>';
+    if (count < COUNT_FLOOR) return '';
+    return '<p class="cell-meta mono">' + count + ' items</p>';
   }
 
   function cellInner(b, count) {
     const icon = b.icon ? '<span class="cell-ico">' + ICON[b.icon] + '</span>' : '';
     const pill = (b.osValue && b.osValue === DETECTED_OS) ? '<span class="browse-pill">detected</span>' : '';
-    const arrow = '<span class="cell-arrow" aria-hidden="true">' + (b.href ? '↗' : '→') + '</span>';
-    return '<div class="cell-top">' + icon + '<span class="cell-title">' + esc(b.title) + '</span>' + pill + arrow + '</div>' +
+    return '<div class="cell-top">' + icon + '<span class="cell-title">' + esc(b.title) + '</span>' + pill +
+      '<span class="cell-arrow" aria-hidden="true">→</span></div>' +
       '<p class="cell-desc">' + esc(b.desc) + '</p>' +
-      '<p class="cell-meta mono">' + cellMeta(b, count) + '</p>';
+      cellFoot(b, count);
   }
 
-  function renderBrowse() {
-    browseGrid.innerHTML = BROWSE.map((b) => {
-      const cls = 'browse-cell' + (filters.view === b.id ? ' is-active' : '');
-      const count = listFor(b).length;
-      if (b.href) {
-        return '<a class="' + cls + '" href="' + esc(INVITE_URL) +
-          '" target="_blank" rel="noopener noreferrer">' + cellInner(b, count) + '</a>';
+  /* --------------------------- live server stats -------------------------
+     Discord's public invite endpoint answers with approximate presence and
+     member counts, needs no bot token, and echoes this site's origin in
+     Access-Control-Allow-Origin — so the browser can poll it directly. It is
+     never authoritative: a 429 or a network failure keeps the last good
+     numbers and only dims the dot, falling back to the KYRO_SITE seed before
+     the first reply ever arrives.
+     ----------------------------------------------------------------------- */
+  const STATS_INTERVAL = 30000;
+  const server = { online: null, members: null, live: false };
+
+  function statsText() {
+    const s = window.KYRO_SITE;
+    const online = server.online === null ? s.online : server.online;
+    const members = server.members === null ? s.members : server.members;
+    return online + ' online · ' + members + ' members';
+  }
+
+  /* Repaint only the kicker: renderBanner() would rebuild the whole card and
+     throw away focus, so the poll never touches the buttons. */
+  function paintServerStats() {
+    const text = document.getElementById('bannerStats');
+    if (!text) return;
+    text.textContent = statsText();
+    const dot = text.parentElement && text.parentElement.querySelector('.presence-dot');
+    if (!dot) return;
+    dot.classList.toggle('is-stale', !server.live);
+    dot.title = server.live
+      ? 'Live from the Kyro Discord'
+      : 'Live status unavailable right now — showing the last known counts';
+  }
+
+  async function fetchServerStats() {
+    if (!INVITE_SLUG) return;
+    try {
+      const res = await fetch('https://discord.com/api/v9/invites/' + INVITE_SLUG + '?with_counts=true', {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        /* The endpoint is public; a credentialed CORS request would demand an
+           exact origin plus allow-credentials and buys this nothing. */
+        credentials: 'omit'
+      });
+      if (!res.ok) throw new Error('invite endpoint returned ' + res.status);
+      const data = await res.json();
+      const online = data.approximate_presence_count;
+      const members = data.approximate_member_count;
+      /* Number(null) is 0, which would paint "0 online · 0 members" over a
+         payload that simply omitted the counts — check the type, not the cast. */
+      if (typeof online !== 'number' || typeof members !== 'number' ||
+          !Number.isFinite(online) || !Number.isFinite(members) || online < 0 || members < 0) {
+        throw new Error('invite endpoint omitted the counts');
       }
-      return '<button type="button" class="' + cls + '" data-browse="' + esc(b.id) + '">' +
-        cellInner(b, count) + '</button>';
-    }).join('');
+      server.online = Math.round(online);
+      server.members = Math.round(members);
+      server.live = true;
+    } catch (err) {
+      server.live = false;
+      console.warn('[kyro-stats] ' + ((err && err.message) || err));
+    }
+    paintServerStats();
   }
 
-  /* Two-column community banner: Kyro logo plate + gated-access call to action. */
+  function startServerStats() {
+    fetchServerStats();
+    setInterval(() => {
+      /* A hidden tab gets no requests — the counts are only worth refreshing
+         for someone who can actually see them. */
+      if (document.hidden) return;
+      fetchServerStats();
+    }, STATS_INTERVAL);
+  }
+
+  /* Two-column community banner: Kyro logo plate + the call to action that
+     matches what this visitor has already done. Verified members stop being
+     asked to verify and get the community + requests card instead. */
   function renderBanner() {
     const s = window.KYRO_SITE;
     const inviteLink = '<a class="banner-link" href="' + esc(INVITE_URL) +
       '" target="_blank" rel="noopener noreferrer">Join the Kyro Discord ↗</a>';
-    let primary, secondary;
+    const chatLink = '<a class="banner-link" href="' + esc(INVITE_URL) +
+      '" target="_blank" rel="noopener noreferrer">Join Discord Chat ↗</a>';
+    let title, sub, primary, secondary, foot;
     if (auth.state === OUT) {
+      title = 'Verify membership to unlock downloads.';
+      sub = 'Sign in and join the Kyro Discord to access exclusive tools.';
       primary = '<button type="button" class="btn btn-primary" id="bannerLogin">Login with Discord</button>';
       secondary = inviteLink;
+      foot = '';
     } else if (auth.state === LOGGED) {
+      title = 'Verify membership to unlock downloads.';
+      sub = 'Sign in and join the Kyro Discord to access exclusive tools.';
       primary = '<button type="button" class="btn btn-primary" id="bannerRecheck">Refresh Verification</button>';
       secondary = inviteLink;
+      foot = '';
     } else {
-      primary = '<button type="button" class="btn btn-ghost" id="bannerRecheck">Refresh Verification</button>';
-      secondary = '<span class="banner-state">Verified member · ' + esc(auth.user.username) + '</span>';
+      title = 'Community & Requests';
+      sub = 'You’re in — ask for the tool you need, vote on what lands in the vault next, or just talk shop with the editors.';
+      primary = '<button type="button" class="btn btn-primary" id="bannerRequests">Request a Tool / Preset</button>';
+      secondary = chatLink;
+      foot = '<span class="banner-state">Verified member · ' + esc(auth.user.username) + '</span>';
     }
 
     discordCard.innerHTML =
       '<div class="banner-visual">' +
-        '<img class="banner-logo" src="assets/kyro-banner.png" alt="Kyro — est. Nov 2026" />' +
+        '<img class="banner-logo" src="/assets/kyro-banner.png" alt="Kyro — est. Nov 2026" />' +
       '</div>' +
       '<div class="banner-body">' +
-        '<p class="banner-kicker"><img class="banner-avatar" src="assets/kyro-icon.png" alt="" />' +
+        '<p class="banner-kicker"><img class="banner-avatar" src="/assets/kyro-icon.png" alt="" />' +
           '<i class="presence-dot" aria-hidden="true"></i>' +
-          s.online + ' online · ' + s.members + ' members</p>' +
-        '<h2 class="banner-title">Verify membership to unlock downloads.</h2>' +
-        '<p class="banner-sub">Sign in and join the Kyro Discord to access exclusive tools.</p>' +
+          '<span id="bannerStats">' + esc(statsText()) + '</span></p>' +
+        '<h2 class="banner-title">' + title + '</h2>' +
+        '<p class="banner-sub">' + sub + '</p>' +
         '<div class="banner-actions">' + primary + secondary + '</div>' +
-        '<p class="banner-foot"><span>' + esc(s.domain) + '</span><span>' + esc(INVITE_CODE) + '</span></p>' +
+        '<p class="banner-foot"><span>' + esc(s.domain) + '</span><span>' + esc(INVITE_CODE) + '</span>' + foot + '</p>' +
       '</div>';
 
     Preview.gc();
@@ -566,6 +718,10 @@
     if (bl) bl.addEventListener('click', startLogin);
     const br = $('#bannerRecheck');
     if (br) br.addEventListener('click', recheckMembership);
+    const bq = $('#bannerRequests');
+    if (bq) bq.addEventListener('click', openRequests);
+
+    paintServerStats();
   }
 
   /* ------------------------------ motion -------------------------------- */
@@ -603,33 +759,47 @@
       vaultList.innerHTML = '<div class="vault-empty">Your vault is empty.<br/>Tap the bookmark on any card to stash it here.</div>';
       return;
     }
-    vaultList.innerHTML = items.map(r =>
-      '<div class="vault-item" data-id="' + esc(r.id) + '" role="button" tabindex="0">' +
-        '<div class="vault-thumb"><canvas></canvas></div>' +
+    vaultList.innerHTML = items.map(r => {
+      const shot = (r.gallery && r.gallery.length)
+        ? '<img class="vault-shot" src="' + esc(r.gallery[0]) + '" alt="" />'
+        : '<canvas></canvas>';
+      const meta = [esc(r.version), esc((r.files || [{ ext: r.format }])[0].ext).toUpperCase().replace('.', ''), priceLabel(r)]
+        .filter(Boolean)
+        .map(t => '<span>' + t + '</span>')
+        .join('');
+      return '<div class="vault-item" data-id="' + esc(r.id) + '" role="button" tabindex="0">' +
+        '<div class="vault-thumb">' + shot + '</div>' +
         '<div class="vault-info">' +
           '<div class="v-title">' + esc(r.title) + '</div>' +
-          '<div class="v-meta mono"><span>' + esc(r.version) + '</span><span>' + esc((r.files || [{ ext: r.format }])[0].ext).toUpperCase().replace('.', '') + '</span><span>' + (Number(r.price) === 0 ? 'FREE' : '$' + esc(r.price)) + '</span></div>' +
+          '<div class="v-meta mono">' + meta + '</div>' +
         '</div>' +
         '<button class="vault-remove" data-remove="' + esc(r.id) + '" aria-label="Remove from vault">' + ICON.x + '</button>' +
-      '</div>'
-    ).join('');
+      '</div>';
+    }).join('');
     items.forEach(r => {
+      if (r.gallery && r.gallery.length) return;
       const c = vaultList.querySelector('.vault-item[data-id="' + r.id + '"] canvas');
       if (c) Preview.attach(c, r.preview || 'grid', r.seed || 7);
     });
   }
 
   function openDrawer() {
+    if (requestsDrawer && requestsDrawer.classList.contains('is-open')) hide(requestsDrawer);
     vaultRefresh();
-    drawerScrim.hidden = false;
+    openScrim();
     drawer.classList.add('is-open');
     drawer.setAttribute('aria-hidden', 'false');
   }
   function closeDrawer() {
-    releaseFocus(drawer);
-    drawer.classList.remove('is-open');
-    drawer.setAttribute('aria-hidden', 'true');
-    setTimeout(() => { drawerScrim.hidden = true; }, 320);
+    hide(drawer);
+    closeScrim();
+  }
+  /* Removing is-open + aria-hidden is the whole animation; both drawers do
+     it, and openScrim()/closeScrim() decide when the shared scrim may go. */
+  function hide(el) {
+    releaseFocus(el);
+    el.classList.remove('is-open');
+    el.setAttribute('aria-hidden', 'true');
   }
 
   /* Focus left inside an aria-hidden container is an accessibility warning. */
@@ -637,22 +807,328 @@
     if (el.contains(document.activeElement)) document.activeElement.blur();
   }
 
+  function openScrim() { drawerScrim.hidden = false; }
+  /* Both drawers share one scrim, so the fade-out only hides it when neither
+     is open — otherwise closing one would blank the other mid-slide. */
+  function closeScrim() {
+    setTimeout(() => {
+      const anyOpen = [drawer, requestsDrawer].some(el => el.classList.contains('is-open'));
+      if (!anyOpen) drawerScrim.hidden = true;
+    }, 320);
+  }
+
+  /* ============================== requests board =========================
+     The wishlist is one KV key behind /requests on the auth worker, and
+     identity is the Discord access token that worker already validates, so a
+     vote means one per verified server member rather than one per cookie.
+     Reads stay public: a visitor can see what the community wants before
+     deciding to join.
+     ========================================================================= */
+  const REQ_STATUS_LABEL = {
+    under_review: 'UNDER REVIEW',
+    in_progress: 'IN PROGRESS',
+    added_to_vault: 'ADDED TO VAULT'
+  };
+  /* Monochrome ladder: dim for queued, silver for building, white for shipped. */
+  const REQ_STATUS_CLASS = {
+    under_review: 'badge',
+    in_progress: 'badge badge-pro',
+    added_to_vault: 'badge badge-free'
+  };
+  const REQ_CATEGORY_OPTIONS = [
+    ['extension', 'Extension'], ['script', 'Script'], ['preset', 'Preset'],
+    ['project', 'Project'], ['soundfx', 'Sound FX'], ['other', 'Other']
+  ];
+
+  let requests = [];
+  let reqError = '';
+  let reqBusy = false;
+  let reqCategory = 'extension';
+
+  function reqHeaders() {
+    const h = { Accept: 'application/json' };
+    /* A header, not a query string: tokens in URLs end up in access logs. */
+    if (auth.token) h.Authorization = 'Bearer ' + auth.token;
+    return h;
+  }
+
+  async function loadRequests() {
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/requests', { headers: reqHeaders(), credentials: 'omit' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error('requests responded ' + res.status + (data.error ? ': ' + data.error : ''));
+      requests = Array.isArray(data.requests) ? data.requests : [];
+      reqError = '';
+    } catch (err) {
+      reqError = 'The requests board is unreachable right now. Reopen this panel to try again.';
+      console.warn('[kyro-requests] ' + ((err && err.message) || err));
+    }
+    renderRequests();
+  }
+
+  /* Every write answers with the whole rebuilt board, so the panel repaints
+     from the server's own vote ordering instead of guessing it locally. */
+  async function reqWrite(path, payload) {
+    if (auth.state === OUT) {
+      toast({
+        title: 'Login required',
+        sub: 'Sign in with Discord and join the Kyro server to use the requests board.',
+        icon: ICON.lock, warn: true, ttl: 6500,
+        actions: [{ label: 'Login with Discord', onClick: startLogin }]
+      });
+      return null;
+    }
+    if (auth.state === LOGGED) {
+      toast({
+        title: 'Access denied',
+        sub: 'You must be a member of the Kyro Discord server to use the requests board.',
+        icon: ICON.shield, warn: true, ttl: 7000,
+        actions: [{ label: 'Join Server', href: INVITE_URL }, { label: 'Refresh Verification', onClick: recheckMembership }]
+      });
+      return null;
+    }
+    if (reqBusy) return null;
+
+    reqBusy = true;
+    renderRequests();
+    try {
+      const res = await fetch(AUTH_WORKER_URL + path, {
+        method: 'POST',
+        headers: Object.assign({ 'content-type': 'application/json' }, reqHeaders()),
+        body: JSON.stringify(payload),
+        credentials: 'omit'
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (res.status === 401) {
+        logout();
+        toast({ title: 'Session expired', sub: 'Discord rejected the token — sign in again.', icon: ICON.x, warn: true, ttl: 6500 });
+        return null;
+      }
+      if (!res.ok) {
+        /* The worker's own messages are already written for a reader, so they
+           travel to the toast instead of being replaced by generic copy. */
+        toast({
+          title: 'Nothing was posted',
+          sub: data.error || 'The requests board responded ' + res.status + '.',
+          icon: ICON.x, warn: true, ttl: 6500
+        });
+        return null;
+      }
+      if (Array.isArray(data.requests)) requests = data.requests;
+      reqError = '';
+      return data;
+    } catch (err) {
+      toast({ title: 'Requests board unreachable', sub: 'Check your connection and try again.', icon: ICON.x, warn: true, ttl: 6500 });
+      console.warn('[kyro-requests] ' + ((err && err.message) || err));
+      return null;
+    } finally {
+      reqBusy = false;
+      renderRequests();
+    }
+  }
+
+  function requestCardHTML(r) {
+    const voted = Boolean(r.you_voted);
+    const status = REQ_STATUS_LABEL[r.status] || REQ_STATUS_LABEL.under_review;
+    const statusCls = REQ_STATUS_CLASS[r.status] || 'badge';
+    const day = String(r.created || '').slice(0, 10);
+    return '<article class="req-item' + (voted ? ' is-voted' : '') + '">' +
+        '<button type="button" class="vote-btn mono" data-vote="' + esc(r.id) + '" aria-pressed="' + voted + '"' +
+          ' aria-label="' + (voted ? 'Remove your vote from ' : 'Upvote ') + esc(r.title) + '">' +
+          '<span class="vote-caret" aria-hidden="true">' + (voted ? '▲' : '△') + '</span>' +
+          '<span class="vote-num">' + (Number(r.votes) || 0) + '</span>' +
+        '</button>' +
+        '<div class="req-main">' +
+          '<p class="req-title">' + esc(r.title) + '</p>' +
+          (r.desc ? '<p class="req-desc">' + esc(r.desc) + '</p>' : '') +
+          '<p class="req-meta">' +
+            '<span class="' + statusCls + '">' + status + '</span>' +
+            '<span class="req-cat mono">' + esc((window.KYRO_CATEGORY_LABEL[r.category] || 'Other').toUpperCase()) + '</span>' +
+            (r.ae ? '<span class="req-cat mono">AE ' + esc(r.ae) + '</span>' : '') +
+            (day ? '<span class="req-day mono">' + esc(day) + '</span>' : '') +
+          '</p>' +
+        '</div>' +
+      '</article>';
+  }
+
+  function reqGateHTML() {
+    if (auth.state === OUT) {
+      return '<p class="req-gate-text">Verified Kyro members post and vote on requests.</p>' +
+        '<button type="button" class="btn btn-ghost btn-sm" id="reqLogin">' + ICON.discord + 'Login with Discord</button>';
+    }
+    return '<p class="req-gate-text">Join the Kyro Discord server to post and vote on requests.</p>' +
+      '<a class="btn btn-ghost btn-sm" href="' + esc(INVITE_URL) + '" target="_blank" rel="noopener noreferrer">' + ICON.discord + 'Join Server</a>' +
+      '<button type="button" class="btn btn-ghost btn-sm" id="reqRecheck">Refresh Verification</button>';
+  }
+
+  function renderReqCategories() {
+    if (!reqCategories) return;
+    reqCategories.innerHTML = REQ_CATEGORY_OPTIONS.map(([value, label]) =>
+      '<button type="button" class="cat-chip mono" data-cat="' + value + '" aria-pressed="' + (value === reqCategory) + '">' +
+      esc(label.toUpperCase()) + '</button>').join('');
+    reqCategories.querySelectorAll('[data-cat]').forEach(btn => btn.addEventListener('click', () => {
+      reqCategory = btn.dataset.cat;
+      renderReqCategories();
+    }));
+  }
+
+  function renderRequests() {
+    if (!requestList) return;
+    const verified = auth.state === VERIFIED;
+    requestCompose.hidden = !verified;
+    requestGate.hidden = verified;
+    if (!verified) requestGate.innerHTML = reqGateHTML();
+
+    requestCount.textContent = reqError
+      ? 'board unavailable'
+      : requests.length + (requests.length === 1 ? ' request' : ' requests');
+
+    requestList.innerHTML = reqError
+      ? '<p class="req-empty">' + esc(reqError) + '</p>'
+      : requests.length
+        ? requests.map(requestCardHTML).join('')
+        : '<p class="req-empty">Nothing on the board yet.' +
+          (verified ? ' Post the first request.' : ' Verified members start it off.') + '</p>';
+
+    requestList.querySelectorAll('[data-vote]').forEach(btn =>
+      btn.addEventListener('click', () => voteRequest(btn.dataset.vote, btn)));
+
+    const rl = $('#reqLogin');
+    if (rl) rl.addEventListener('click', startLogin);
+    const rr = $('#reqRecheck');
+    if (rr) rr.addEventListener('click', recheckMembership);
+
+    reqSubmit.disabled = reqBusy;
+    reqSubmit.textContent = reqBusy ? 'Posting…' : 'Submit Request';
+  }
+
+  function voteRequest(id, btn) {
+    if (reqBusy) return;
+    reqWrite('/requests/vote', { token: auth.token, id });
+  }
+
+  function submitRequest() {
+    const title = reqTitle.value.trim();
+    const ae = reqAe.value.trim();
+    if (title.length < 3) {
+      reqTitle.focus();
+      toast({ title: 'Needs a title', sub: 'At least 3 characters — say which tool you want.', icon: ICON.x, warn: true });
+      return;
+    }
+    if (ae && !/^\d{4}$/.test(ae)) {
+      reqAe.focus();
+      toast({ title: 'AE version is a year', sub: 'Four digits, for example 2026. Leave it blank if any version works.', icon: ICON.x, warn: true });
+      return;
+    }
+    reqWrite('/requests', {
+      token: auth.token,
+      title,
+      category: reqCategory,
+      ae,
+      desc: reqDesc.value.trim()
+    }).then((data) => {
+      if (!data) return;
+      reqTitle.value = '';
+      reqAe.value = '';
+      reqDesc.value = '';
+      toast({ title: 'Request posted', sub: 'Verified members can upvote it from this panel.', icon: ICON.check });
+    });
+  }
+
+  function openRequests() {
+    if (!requestsDrawer) return;
+    if (drawer.classList.contains('is-open')) hide(drawer);
+    renderRequests();
+    openScrim();
+    requestsDrawer.classList.add('is-open');
+    requestsDrawer.setAttribute('aria-hidden', 'false');
+    loadRequests();
+    const focusTo = auth.state === VERIFIED ? reqTitle : $('#requestsClose');
+    if (focusTo) focusTo.focus({ preventScroll: true });
+  }
+  function closeRequests() {
+    if (!requestsDrawer) return;
+    hide(requestsDrawer);
+    closeScrim();
+  }
+
   /* ------------------------------ detail modal -------------------------- */
   let modalId = null;
   let modalTab = 'overview';
 
-  function compatHTML(r) {
-    const osLabel = os === 'windows' ? 'Windows' : 'macOS';
-    return (
-      '<span class="compat"><i class="dot"></i>' + osLabel + ' / ' + (os === 'windows' ? 'macOS' : 'Windows') + '</span>' +
-      '<span class="compat"><i class="dot"></i>After Effects ' + esc(r.aeMin) + ' – 2026</span>' +
-      '<span class="compat"><i class="dot"></i>' + esc(window.KYRO_CATEGORY_LABEL[r.category] || 'Asset') + '</span>'
-    );
+  /* Monospace metadata badges: what AE version, which builds, which formats.
+     Both OS badges always ship — the visitor's own platform is the lit one. */
+  const OS_BADGES = [
+    { value: 'windows', label: 'Windows' },
+    { value: 'macos', label: 'macOS Apple Silicon / Intel' }
+  ];
+
+  function specHTML(r) {
+    const files = (r.files && r.files.length ? r.files : [{ ext: r.format }])
+      .map(f => String(f.ext || '').toLowerCase())
+      .filter(Boolean)
+      .filter((ext, i, all) => all.indexOf(ext) === i);
+
+    const group = (label, badges) => badges.length
+      ? '<div class="spec"><span class="spec-label mono">' + label + '</span>' +
+        '<span class="spec-badges">' + badges.join('') + '</span></div>'
+      : '';
+
+    return '<div class="spec-row">' +
+      group('AE Compatibility', r.aeMin
+        ? ['<span class="badge badge-spec">AE ' + esc(r.aeMin) + '+</span>'] : []) +
+      group('OS / Architecture', OS_BADGES.map(b =>
+        '<span class="badge badge-spec' + (b.value === os ? ' is-current' : '') + '">' + b.label + '</span>')) +
+      group('File Format', files.map(ext => '<span class="badge badge-format">' + esc(ext) + '</span>')) +
+      '</div>';
+  }
+
+  /* Version history as an accordion: newest build open, the rest one click
+     away, so a long changelog never pushes the download rows out of view. */
+  function changelogHTML(r) {
+    const logs = r.changelog || [];
+    if (!logs.length) return '<p class="m-desc">No version history on file yet.</p>';
+    return '<p class="section-label section-label--tight">Version History</p><div class="changelog">' +
+      logs.map((c, i) => {
+        const open = i === 0;
+        const bodyId = 'log-body-' + i;
+        return '<div class="log-entry' + (open ? ' is-open' : '') + '">' +
+          '<button type="button" class="log-head" data-log aria-expanded="' + open + '" aria-controls="' + bodyId + '">' +
+            '<span class="log-version">' + esc(c.v) + '</span>' +
+            '<span class="log-date mono">' + esc(c.date) + '</span>' +
+            '<span class="log-sign mono" aria-hidden="true">' + (open ? '−' : '+') + '</span>' +
+          '</button>' +
+          '<p class="log-body" id="' + bodyId + '"' + (open ? '' : ' hidden') + '>' + esc(c.notes) + '</p>' +
+        '</div>';
+      }).join('') + '</div>';
+  }
+
+  function toggleLog(btn) {
+    const open = btn.getAttribute('aria-expanded') !== 'true';
+    const entry = btn.parentElement;
+    const body = entry.querySelector('.log-body');
+    btn.setAttribute('aria-expanded', String(open));
+    entry.classList.toggle('is-open', open);
+    btn.querySelector('.log-sign').textContent = open ? '−' : '+';
+    if (body) body.hidden = !open;
   }
 
   function installBlock(ext, label) {
     const guide = window.KYRO_INSTALL[ext];
     if (!guide) return '';
+    /* A sectioned guide is written prose, not a path walkthrough: heading and
+       paragraph pairs under one title. */
+    if (guide.sections) {
+      return '<div class="install-block">' +
+        (guide.title ? '<p class="install-title">' + esc(guide.title) + '</p>' : '') +
+        guide.sections.map(s =>
+          '<div class="install-section">' +
+            '<h4 class="install-h">' + esc(s.h) + '</h4>' +
+            '<p class="m-desc">' + esc(s.p) + '</p>' +
+          '</div>').join('') +
+        '</div>';
+    }
     const path = guide.paths[os];
     return (
       '<div class="install-block">' +
@@ -671,23 +1147,92 @@
     return blocks || '<p class="m-desc">No install guide on file for this format.</p>';
   }
 
+  /* A SHA-256 is the only hash Discord-free scanners understand, and it is
+     editable data, so it must be well-formed before it becomes a URL — a
+     malformed value never renders a link at all. */
+  function vtURL(sha) {
+    const s = String(sha || '').trim().toLowerCase();
+    return /^[0-9a-f]{64}$/.test(s) ? 'https://www.virustotal.com/gui/file/' + s : '';
+  }
+
   function fileRowsHTML(r) {
     const unlocked = auth.state === VERIFIED;
-    return (r.files || []).map(f =>
+    return (r.files || []).map(f => {
+      const vt = vtURL(f.sha256);
+      const action = !unlocked
+        ? '<button type="button" class="btn btn-ghost btn-sm" data-file="' + esc(f.ext) + '">' +
+          ICON.lock + (auth.state === OUT ? 'Login' : 'Locked') + '</button>'
+        : f.url
+          /* Externally hosted archives hand off to the file host, so the
+             button links out instead of faking a transfer. */
+          ? '<a class="btn btn-primary btn-sm" href="' + esc(f.url) +
+            '" target="_blank" rel="noopener noreferrer">' + ICON.download + 'Download</a>'
+          : '<button type="button" class="btn btn-primary btn-sm" data-file="' + esc(f.ext) +
+            '" style="position:relative">' + ICON.download + 'Download<span class="ring"></span></button>';
+      return (
       '<div class="file-row ' + (unlocked ? 'is-unlocked' : 'is-locked') + '">' +
-        '<span class="file-ico mono">' + esc(f.ext.replace('.', '').toUpperCase()) + '</span>' +
+        '<span class="file-ico mono">' + esc(String(f.ext).replace('.', '')).toUpperCase() + '</span>' +
         '<span class="file-info">' +
           '<span class="file-name">' + esc(f.name) + '</span>' +
           '<span class="file-sub">' + esc(f.label) + '</span>' +
         '</span>' +
         '<span class="file-actions">' +
-          '<span class="file-size mono">' + esc(f.size) + '</span>' +
-          (unlocked
-            ? '<button type="button" class="btn btn-primary btn-sm" data-file="' + esc(f.ext) + '" style="position:relative">' + ICON.download + 'Download<span class="ring"></span></button>'
-            : '<button type="button" class="btn btn-ghost btn-sm" data-file="' + esc(f.ext) + '">' + ICON.lock + (auth.state === OUT ? 'Login' : 'Locked') + '</button>') +
+          (f.size ? '<span class="file-size mono">' + esc(f.size) + '</span>' : '') +
+          (vt
+            ? '<a class="btn btn-ghost btn-sm" href="' + vt +
+              '" target="_blank" rel="noopener noreferrer" title="VirusTotal report for ' + esc(f.name) + '">' +
+              ICON.shield + 'VirusTotal</a>'
+            : '') +
+          action +
         '</span>' +
-      '</div>'
-    ).join('');
+      '</div>');
+    }).join('');
+  }
+
+  /* One archive, many files: the unpack password belongs beside the download
+     link, not buried in the description — and only once the link is unlocked. */
+  function passwordHTML(r) {
+    if (auth.state !== VERIFIED) return '';
+    const pass = (r.files || []).map(f => f.pass).filter(Boolean)[0];
+    if (!pass) return '';
+    return '<div class="pass-row">' +
+      '<span class="pass-label mono">ARCHIVE PASSWORD</span>' +
+      '<code class="pass-value">' + esc(pass) + '</code>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-pass-copy data-pass="' + esc(pass) + '">' + ICON.copy + 'Copy</button>' +
+      '</div>';
+  }
+
+  /* The gate, the rows and the password are one surface: rebuilt together
+     whenever auth state changes, so a modal opened logged-out never keeps
+     showing locked rows after the visitor verifies without closing it. */
+  function wireDownloads(r) {
+    const zone = modalBox.querySelector('.dl-zone');
+    if (!zone) return;
+    zone.innerHTML = gateBannerHTML(r) +
+      '<div class="file-list">' + fileRowsHTML(r) + '</div>' +
+      passwordHTML(r);
+
+    const gl = zone.querySelector('#gateLogin');
+    if (gl) gl.addEventListener('click', startLogin);
+    const gr = zone.querySelector('#gateRecheck');
+    if (gr) gr.addEventListener('click', recheckMembership);
+    zone.querySelectorAll('[data-file]').forEach(btn =>
+      btn.addEventListener('click', () => requestFile(r, btn.dataset.file, btn)));
+    const cp = zone.querySelector('[data-pass-copy]');
+    if (cp) cp.addEventListener('click', () => copyPass(cp, cp.dataset.pass));
+  }
+
+  function copyPass(btn, text) {
+    const done = () => {
+      btn.classList.add('is-done');
+      setTimeout(() => btn.classList.remove('is-done'), 1600);
+      toast({ title: 'Password copied', sub: 'Paste it when the archive asks.' });
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, () => toast({ title: 'Copy failed', sub: 'Select the password and copy it manually.', icon: ICON.lock, warn: true }));
+    } else {
+      toast({ title: 'Clipboard unavailable', sub: 'Select the password and copy it manually.', icon: ICON.lock, warn: true });
+    }
   }
 
   function gateBannerHTML(r) {
@@ -708,21 +1253,41 @@
       '<button type="button" class="btn btn-ghost btn-sm" id="gateRecheck">Refresh Verification</button></div>';
   }
 
+  /* Real screenshots replace the generated canvas whenever the seed ships a
+     gallery; the thumbs swap the big shot in place. */
+  function stageHTML(r) {
+    const gal = (r.gallery || []).filter(Boolean);
+    const badgeRow =
+      '<div class="badge-row">' + priceBadge(r) +
+      '<span class="badge badge-format">' + esc(String((r.files || [{ ext: r.format }])[0].ext)).toUpperCase().replace('.', '') + '</span></div>';
+    if (!gal.length) {
+      return '<div class="m-stage"><canvas id="modalCanvas"></canvas>' +
+        '<span class="preview-chip mono">LIVE PREVIEW</span>' + badgeRow + '</div>';
+    }
+    return '<div class="m-stage has-gallery">' +
+      '<img class="m-shot" id="modalShot" src="' + esc(gal[0]) + '" alt="' + esc(r.title) + ' preview" />' +
+      '<span class="preview-chip mono">SCREENSHOTS</span>' + badgeRow +
+      '<div class="m-thumbs">' + gal.map((src, i) =>
+        '<button type="button" class="m-thumb' + (i === 0 ? ' is-active' : '') + '" data-shot="' + esc(src) +
+        '" aria-pressed="' + (i === 0) + '" aria-label="Show preview ' + (i + 1) + ' of ' + gal.length + '">' +
+        '<img src="' + esc(src) + '" alt="" /></button>').join('') + '</div>' +
+      '</div>';
+  }
+
   function openModal(id) {
     const r = resources.find(x => x.id === id);
     if (!r) return;
     modalId = id;
     const isSaved = saved.has(id);
+    const version = r.version ? '<span class="m-version mono">' + esc(r.version) + '</span>' : '';
+    const by = r.creator ? '<span>by ' + esc(r.creator) + '</span>' : '';
     modalBox.innerHTML =
       '<button class="close-x modal-close" aria-label="Close"></button>' +
-      '<div class="m-stage"><canvas id="modalCanvas"></canvas>' +
-        '<span class="preview-chip mono">LIVE PREVIEW</span>' +
-        '<div class="badge-row">' + priceBadge(r) + '<span class="badge badge-format">' + esc((r.files || [{ ext: r.format }])[0].ext).toUpperCase().replace('.', '') + '</span></div>' +
-      '</div>' +
+      stageHTML(r) +
       '<div class="m-body">' +
-        '<div class="m-title-row"><h2 class="m-title">' + esc(r.title) + '</h2><span class="m-version mono">' + esc(r.version) + '</span></div>' +
+        '<div class="m-title-row"><h2 class="m-title">' + esc(r.title) + '</h2>' + version + '</div>' +
         '<p class="m-desc">' + esc(r.desc) + '</p>' +
-        '<div class="compat-row">' + compatHTML(r) + '</div>' +
+        specHTML(r) +
         '<div class="tabs" role="tablist">' +
           '<button class="tab" data-tab="overview" role="tab">Overview</button>' +
           '<button class="tab" data-tab="install" role="tab">Installation Guide</button>' +
@@ -733,19 +1298,14 @@
           '<div class="tag-row">' + (r.tags || []).map(t => '<span class="tag-chip">#' + esc(t) + '</span>').join('') + '</div>' +
           '<div class="meta-row">' +
             '<span class="dl-count">' + ICON.download + fmt(r.downloads) + ' downloads</span>' +
-            '<span>by ' + esc(r.creator) + '</span>' +
+            by +
             '<span>ADDED ' + esc(r.added) + '</span>' +
           '</div>' +
         '</div>' +
         '<div class="tab-panel" data-panel="install">' + installHTML(r) + '</div>' +
-        '<div class="tab-panel" data-panel="changelog"><div class="changelog">' +
-          (r.changelog || []).map(c =>
-            '<div class="log-entry"><div class="log-head"><span class="log-version">' + esc(c.v) + '</span><span class="log-date mono">' + esc(c.date) + '</span></div>' +
-            '<div class="log-body">' + esc(c.notes) + '</div></div>').join('') +
-        '</div></div>' +
+        '<div class="tab-panel" data-panel="changelog">' + changelogHTML(r) + '</div>' +
         '<p class="section-label section-label--tight">Downloads</p>' +
-        gateBannerHTML(r) +
-        '<div class="file-list">' + fileRowsHTML(r) + '</div>' +
+        '<div class="dl-zone"></div>' +
         '<div class="m-actions">' +
           '<button class="save-btn' + (isSaved ? ' is-saved' : '') + '" data-save="' + esc(r.id) + '" aria-pressed="' + isSaved + '" aria-label="Save to vault">' + ICON.bookmark + '</button>' +
           '<a class="btn btn-ghost" href="' + INVITE_URL + '" target="_blank" rel="noopener noreferrer">' + ICON.discord + 'Server</a>' +
@@ -760,17 +1320,25 @@
     modalBox.querySelector('.modal-close').addEventListener('click', closeModal);
     modalBox.querySelector('.save-btn').addEventListener('click', (e) => toggleSave(r.id, e.currentTarget));
 
-    const gl = $('#gateLogin');
-    if (gl) gl.addEventListener('click', startLogin);
-    const gr = $('#gateRecheck');
-    if (gr) gr.addEventListener('click', recheckMembership);
+    wireDownloads(r);
 
-    modalBox.querySelectorAll('[data-file]').forEach(btn =>
-      btn.addEventListener('click', () => requestFile(r, btn.dataset.file, btn)));
+    modalBox.querySelectorAll('[data-shot]').forEach(btn => btn.addEventListener('click', () => {
+      const shot = $('#modalShot');
+      if (!shot) return;
+      shot.src = btn.dataset.shot;
+      modalBox.querySelectorAll('[data-shot]').forEach(t => {
+        const on = t === btn;
+        t.classList.toggle('is-active', on);
+        t.setAttribute('aria-pressed', String(on));
+      });
+    }));
+
+    modalBox.querySelectorAll('.log-head').forEach(btn =>
+      btn.addEventListener('click', () => toggleLog(btn)));
 
     syncTabs();
     showOverlay(modalOverlay);
-    Preview.pin($('#modalCanvas'), r.preview || 'grid', r.seed || 7);
+    if (!r.gallery || !r.gallery.length) Preview.pin($('#modalCanvas'), r.preview || 'grid', r.seed || 7);
     modalBox.focus({ preventScroll: true });
   }
 
@@ -913,6 +1481,7 @@
     if (auth.state === OUT) list.push({ kind: 'cmd', title: 'Login with Discord', hint: 'OAuth2 · unlocks membership check', run: startLogin });
     else list.push({ kind: 'cmd', title: 'Logout of Discord', hint: auth.user.username, run: logout });
     if (auth.state !== VERIFIED) list.push({ kind: 'cmd', title: 'Refresh verification', hint: 'verified member unlocks downloads', run: recheckMembership });
+    list.push({ kind: 'cmd', title: 'Requests board', hint: 'ask for a tool · vote on the vault', run: openRequests });
     list.push({ kind: 'cmd', title: 'Join the Kyro Discord', hint: INVITE_CODE, run: () => window.open(INVITE_URL, '_blank', 'noopener') });
     return list;
   }
@@ -951,7 +1520,7 @@
       }
       const r = x.r;
       return '<div class="palette-row' + cursor + '" data-i="' + i + '" role="option" aria-selected="' + (i === paletteCursor) + '">' +
-        '<span class="badge badge-format">V' + esc(r.version) + '</span>' +
+        '<span class="badge badge-format">' + (r.version ? 'V' + esc(r.version) : esc(window.KYRO_CATEGORY_LABEL[r.category] || 'ASSET')) + '</span>' +
         '<div class="p-left"><div class="p-title">' + esc(r.title) + '</div>' +
         '<div class="p-tags">#' + esc((r.tags || []).slice(0, 4).join(' · #')) + '</div></div>' +
         (auth.state === VERIFIED ? '<span class="badge badge-free">READY</span>' : '<span class="badge badge-locked">LOCKED</span>') +
@@ -991,7 +1560,8 @@
   }
   function hideOverlay(el) {
     el.hidden = true;
-    if (!$('.overlay:not([hidden])') && !drawer.classList.contains('is-open')) {
+    const drawerOpen = [drawer, requestsDrawer].some(d => d && d.classList.contains('is-open'));
+    if (!$('.overlay:not([hidden])') && !drawerOpen) {
       document.body.style.overflow = '';
     }
   }
@@ -1019,26 +1589,16 @@
     if (card) { e.preventDefault(); openModal(card.dataset.id); }
   });
 
-  browseGrid.addEventListener('click', (e) => {
-    const cell = e.target.closest('[data-browse]');
-    if (!cell) return;
-    const b = BROWSE.find(x => x.id === cell.dataset.browse);
-    if (!b) return;
-    if (filters.view === b.id) {
-      filters.view = 'all';
-    } else {
-      filters.view = b.id;
-      if (b.osValue && b.osValue !== os) { os = b.osValue; write(K_OS, os); syncOsButtons(os); }
-    }
-    renderSoftware();
-    renderBrowse();
-    document.getElementById('software').scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
-  });
-
-  $('#resetFiltersBtn').addEventListener('click', () => {
-    filters.view = 'all';
-    renderSoftware();
-    renderBrowse();
+  const requestsBtn = $('#requestsOpen');
+  if (requestsBtn) {
+    requestsBtn.addEventListener('click', () =>
+      requestsDrawer.classList.contains('is-open') ? closeRequests() : openRequests());
+  }
+  const requestsCloseBtn = $('#requestsClose');
+  if (requestsCloseBtn) requestsCloseBtn.addEventListener('click', closeRequests);
+  drawerScrim.addEventListener('click', () => {
+    if (requestsDrawer && requestsDrawer.classList.contains('is-open')) closeRequests();
+    else closeDrawer();
   });
 
   function syncOsButtons(value) {
@@ -1090,7 +1650,8 @@
     if (item && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); closeDrawer(); openModal(item.dataset.id); }
   });
 
-  $('#heroSearch').addEventListener('click', openPalette);
+  const heroSearch = $('#heroSearch');
+  if (heroSearch) heroSearch.addEventListener('click', openPalette);
   $('#paletteOpen').addEventListener('click', openPalette);
   paletteInput.addEventListener('input', () => paletteSearch(paletteInput.value));
   paletteResults.addEventListener('click', (e) => {
@@ -1105,7 +1666,11 @@
     else if (e.key === 'Enter') { e.preventDefault(); paletteEnter(); }
   });
 
-  $('#brandLink').addEventListener('click', (e) => {
+  /* On index.html the logo is a scroll-to-top; on the other pages it is a
+     plain link home, so the id — and the handler — is simply absent. */
+  const brand = $('#brandLink');
+  if (brand) brand.addEventListener('click', (e) => {
+    if (brand.getAttribute('href') !== '#') return;
     e.preventDefault();
     window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
   });
@@ -1120,6 +1685,7 @@
       closeProfileMenu();
       if (paletteOpen) closePalette();
       else if (!modalOverlay.hidden) closeModal();
+      else if (requestsDrawer && requestsDrawer.classList.contains('is-open')) closeRequests();
       else if (drawer.classList.contains('is-open')) closeDrawer();
     }
   });
@@ -1137,13 +1703,32 @@
   setInterval(tickStamp, 1000);
   $('#footerInvite').href = INVITE_URL;
   $('#footerDomain').textContent = window.KYRO_SITE.domain;
+
+  /* /windows and /macos are this same bundle with one browse cell expanded
+     into a page; the page tells the bundle which cell it is. Anything else
+     goes back to the vault. */
+  if (document.body.dataset.page === 'category') {
+    const b = BROWSE.find(x => x.id === document.body.dataset.category && !x.noCount);
+    if (!b) location.replace('/');
+    else {
+      filters.view = b.id;
+      /* The page’s own platform drives the badges and the install paths for
+         this visit only — it does not overwrite what the visitor picked, or
+         what the browser detected, everywhere else. */
+      if (b.osValue) os = b.osValue;
+    }
+  }
+
   captureSessionFromUrl();
   syncOsButtons(os);
   renderAuth();
   renderAccess();
   renderSoftware();
+  renderCategoryHead();
   renderBrowse();
+  renderReqCategories();
   updateSavedUI();
+  startServerStats();
 
   // Deep links: #r-<asset> opens its modal, #login starts the Discord OAuth redirect.
   const hash = location.hash;

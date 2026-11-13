@@ -7,6 +7,20 @@
  *                    with ?token=&username=&id=&avatar=&in_server=&state=
  *   POST /verify     { token }  →  { in_server, username, guild_id }
  *   GET  /verify     ?token=…   →  same payload (handy for curl)
+ *   GET  /requests   ?token=…   →  { requests } wishlist board, ordered by votes.
+ *                                  token is optional; with it each row carries
+ *                                  you_voted for that member only.
+ *   POST /requests   { token, title, category, ae, desc }  → create a request
+ *   POST /requests/vote   { token, id }   → toggle one vote, returns the board
+ *   POST /requests/status { token, id, status } → members listed in KYRO_ADMIN_IDS only
+ *
+ * Bindings:
+ *   KYRO_DATA   Workers KV namespace holding the board under one key. Writes use
+ *               compare-and-swap so two simultaneous votes cannot clobber each other.
+ *
+ * Plain vars:
+ *   KYRO_ADMIN_IDS  comma separated Discord user ids allowed to move a request
+ *                   between UNDER REVIEW / IN PROGRESS / ADDED TO VAULT.
  *
  * Secrets (Settings → Variables; a plain text var is fine, the encrypted
  * "secret" type is better):
@@ -44,7 +58,10 @@ export default {
     try {
       if (url.pathname === '/callback') return await handleCallback(request, url, env);
       if (url.pathname === '/verify') return await handleVerify(request, url, env, cors);
-      return json({ error: 'Unknown route. Use /callback or /verify.' }, 404, cors);
+      if (url.pathname === '/requests') return await handleRequests(request, url, env, cors);
+      if (url.pathname === '/requests/vote') return await handleVote(request, env, cors);
+      if (url.pathname === '/requests/status') return await handleStatus(request, env, cors);
+      return json({ error: 'Unknown route. Use /callback, /verify or /requests.' }, 404, cors);
     } catch (err) {
       const message = (err && err.message) || String(err);
       // A callback failure belongs in the URL, not in a JSON body the browser cannot render.
@@ -116,6 +133,184 @@ async function handleVerify(request, url, env, cors) {
     avatar: session.avatar,
     guild_id: String(env.KYRO_GUILD_ID || '')
   }, 200, cors);
+}
+
+/* ------------------------------ requests board ---------------------------- */
+
+const REQ_KEY = 'kyro.requests.v1';
+const REQ_STATUSES = ['under_review', 'in_progress', 'added_to_vault'];
+const REQ_CATEGORIES = ['extension', 'script', 'preset', 'project', 'soundfx', 'other'];
+
+function fail(status, code, message) {
+  return Object.assign(new Error(message), { status, code });
+}
+
+async function jsonBody(request) {
+  return await request.json().catch(() => ({}));
+}
+
+/* Control characters and newline runs have no business in a one-line card. */
+function cleanText(value, max) {
+  return String(value == null ? '' : value)
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+
+/* One KV key holds the whole board, so every write is a read-modify-write.
+   Compare-and-swap makes a stale write fail loudly instead of quietly
+   discarding another member's vote. */
+async function readBoard(env) {
+  if (!env.KYRO_DATA) {
+    throw fail(500, 'kv_unbound', 'The KYRO_DATA KV namespace is not bound to this worker.');
+  }
+  const got = await env.KYRO_DATA.getWithMetadata(REQ_KEY, { type: 'json' });
+  return { rows: Array.isArray(got.value) ? got.value : [], cas: (got.metadata && got.metadata.cas) || 0 };
+}
+
+async function mutateBoard(env, fn) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { rows, cas } = await readBoard(env);
+    const next = fn(rows);
+    try {
+      await env.KYRO_DATA.put(REQ_KEY, JSON.stringify(next), { metadata: { cas: cas + 1 }, cas });
+      return next;
+    } catch (err) {
+      const msg = String((err && err.message) || err);
+      if (!/cas|conflict|mismatch|stale/i.test(msg)) throw err;
+    }
+  }
+  throw fail(409, 'board_busy', 'The requests board changed while you were writing. Try again.');
+}
+
+/* Voter ids never leave the worker: the board exposes a count and, for the
+   caller only, whether that caller is among them. */
+function project(rows, viewerId) {
+  return rows
+    .map(r => ({
+      id: r.id,
+      title: r.title,
+      category: r.category,
+      ae: r.ae,
+      desc: r.desc,
+      status: REQ_STATUSES.indexOf(r.status) === -1 ? 'under_review' : r.status,
+      created: r.created,
+      votes: (r.voters || []).length,
+      you_voted: Boolean(viewerId) && (r.voters || []).indexOf(viewerId) !== -1
+    }))
+    .sort((a, b) => b.votes - a.votes || String(b.created).localeCompare(String(a.created)));
+}
+
+async function requireMember(token, env) {
+  if (!token) throw fail(401, 'missing_token', 'Sign in with Discord to use the requests board.');
+  const session = await readSession(token, env);
+  if (!session.inServer) {
+    throw fail(403, 'not_a_member', 'Join the Kyro Discord server to use the requests board.');
+  }
+  return session;
+}
+
+/* A bearer token belongs in a header, not in a URL that analytics and worker
+   logs happily keep. ?token= still works for curl and for the OAuth hand-off. */
+function bearerToken(request, url) {
+  const header = request.headers.get('authorization') || '';
+  const match = header.match(/^Bearer\s+(\S+)$/i);
+  return (match && match[1]) || url.searchParams.get('token') || '';
+}
+
+async function handleRequests(request, url, env, cors) {
+  const { rows } = await readBoard(env);
+
+  if (request.method === 'GET') {
+    let viewerId = '';
+    const token = bearerToken(request, url);
+    // An expired or non-member token must not blank the public board.
+    if (token) {
+      try {
+        const s = await readSession(token, env);
+        if (s.inServer) viewerId = s.id;
+      } catch (err) { viewerId = ''; }
+    }
+    return json({ requests: project(rows, viewerId) }, 200, cors);
+  }
+
+  if (request.method !== 'POST') return json({ error: 'Use GET or POST.' }, 405, cors);
+
+  const input = await jsonBody(request);
+  const session = await requireMember(input.token, env);
+
+  const title = cleanText(input.title, 90);
+  if (title.length < 3) throw fail(400, 'bad_title', 'Give the request a title of at least 3 characters.');
+
+  const wanted = cleanText(input.category, 20);
+  const category = REQ_CATEGORIES.indexOf(wanted) === -1 ? 'other' : wanted;
+  const aeRaw = cleanText(input.ae, 8);
+  const row = {
+    id: crypto.randomUUID(),
+    title,
+    category,
+    ae: /^\d{4}$/.test(aeRaw) ? aeRaw : '',
+    desc: cleanText(input.desc, 280),
+    status: 'under_review',
+    created: new Date().toISOString(),
+    by: session.id,
+    // The author is counted as their first vote.
+    voters: [session.id]
+  };
+
+  const written = await mutateBoard(env, (all) => all.concat([row]));
+  return json({ id: row.id, requests: project(written, session.id) }, 201, cors);
+}
+
+async function handleVote(request, env, cors) {
+  if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
+  const input = await jsonBody(request);
+  const session = await requireMember(input.token, env);
+  const id = cleanText(input.id, 60);
+  if (!id) throw fail(400, 'bad_id', 'Missing request id.');
+
+  let matched = false;
+  const written = await mutateBoard(env, (all) => all.map(r => {
+    if (r.id !== id) return r;
+    matched = true;
+    const voters = r.voters || [];
+    const next = voters.indexOf(session.id) === -1
+      ? voters.concat([session.id])
+      : voters.filter(v => v !== session.id);
+    return Object.assign({}, r, { voters: next });
+  }));
+  if (!matched) throw fail(404, 'unknown_request', 'That request no longer exists.');
+
+  return json({ requests: project(written, session.id) }, 200, cors);
+}
+
+async function handleStatus(request, env, cors) {
+  if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
+  const input = await jsonBody(request);
+  const session = await requireMember(input.token, env);
+
+  const admins = String(env.KYRO_ADMIN_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (!admins.length) {
+    throw fail(501, 'no_admins_set', 'Set KYRO_ADMIN_IDS on the worker before statuses can change.');
+  }
+  if (admins.indexOf(session.id) === -1) throw fail(403, 'not_an_admin', 'Only Kyro admins can change a request status.');
+
+  const status = cleanText(input.status, 20);
+  if (REQ_STATUSES.indexOf(status) === -1) {
+    throw fail(400, 'bad_status', 'Status must be one of ' + REQ_STATUSES.join(', ') + '.');
+  }
+
+  const id = cleanText(input.id, 60);
+  let matched = false;
+  const written = await mutateBoard(env, (all) => all.map(r => {
+    if (r.id !== id) return r;
+    matched = true;
+    return Object.assign({}, r, { status });
+  }));
+  if (!matched) throw fail(404, 'unknown_request', 'That request no longer exists.');
+
+  return json({ requests: project(written, session.id) }, 200, cors);
 }
 
 /* ------------------------------ discord calls ---------------------------- */
@@ -197,7 +392,7 @@ function corsHeaders(request, env) {
   const origin = request.headers.get('origin') || '';
   const headers = {
     'access-control-allow-methods': 'GET, POST, OPTIONS',
-    'access-control-allow-headers': 'content-type',
+    'access-control-allow-headers': 'content-type, authorization',
     'access-control-max-age': '600',
     vary: 'Origin'
   };

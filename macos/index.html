@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MacOS — Kyro</title>
+  <meta name="description" content="Free After Effects software, tools and plugins for Mac editors — verified through the Kyro Discord." />
+  <meta name="theme-color" content="#08090d" />
+
+  <!-- Absolute og:url / og:image: link crawlers resolve them outside the page. -->
+  <link rel="canonical" href="https://kyro.new.tg/macos" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Kyro" />
+  <meta property="og:url" content="https://kyro.new.tg/macos" />
+  <meta property="og:title" content="MacOS — Kyro" />
+  <meta property="og:description" content="Free After Effects software, tools and plugins for Mac editors — verified through the Kyro Discord." />
+  <meta property="og:image" content="https://kyro.new.tg/assets/kyro-banner.png" />
+  <meta property="og:image:width" content="512" />
+  <meta property="og:image:height" content="512" />
+  <meta property="og:image:alt" content="KYRO — est. Nov 2026" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="MacOS — Kyro" />
+  <meta name="twitter:description" content="Free After Effects software, tools and plugins for Mac editors — verified through the Kyro Discord." />
+  <meta name="twitter:image" content="https://kyro.new.tg/assets/kyro-banner.png" />
+
+  <link rel="icon" type="image/png" href="/assets/kyro-icon.png" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body data-page="category" data-category="macos">
+
+  <header class="site-nav">
+    <div class="nav-inner">
+      <a class="nav-logo" href="/" aria-label="Kyro — home">
+        <img class="nav-logo-mark" src="/assets/kyro-icon.png" alt="" width="26" height="26" />
+        <span class="nav-logo-text">Kyro</span>
+      </a>
+
+      <nav class="nav-right" aria-label="Site">
+        <button type="button" class="nav-link" id="paletteOpen">Search</button>
+        <a class="nav-link" href="/guide">Guide</a>
+        <a class="nav-link" href="/about">About</a>
+        <a class="nav-link" href="#discordCard">Community</a>
+        <button type="button" class="nav-link" id="requestsOpen">Requests</button>
+
+        <button type="button" class="nav-icon-btn" id="savedBtn" aria-label="Open saved vault" title="Saved Vault">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M18 21 12 16.5 6 21V4.8A1.8 1.8 0 0 1 7.8 3h8.4A1.8 1.8 0 0 1 18 4.8z"/></svg>
+          <span class="count-badge mono" id="savedCount" hidden>0</span>
+        </button>
+
+        <!-- Rendered by app.js: Login button when logged out, profile pill when logged in -->
+        <div class="nav-auth" id="authSlot"></div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <!-- ============ Category head (filled by app.js) ============ -->
+    <header class="page-head">
+      <p class="section-label">Browse</p>
+      <h1 class="page-title" id="catTitle">MacOS</h1>
+      <p class="page-lede" id="catDesc">Software, tools, and plugins for Mac editors.</p>
+      <p class="page-meta" id="catCount"></p>
+      <nav class="cat-nav" id="catNav" aria-label="Categories"></nav>
+    </header>
+
+    <!-- ============ Access status strip (rendered by app.js) ============ -->
+    <section class="access-strip" id="accessStrip" aria-live="polite"></section>
+
+    <section class="section">
+      <div class="grid" id="softwareGrid"></div>
+      <div class="empty" id="emptyState" hidden>
+        <p>Nothing in this category yet.</p>
+        <a class="btn btn-ghost" href="/">Show everything</a>
+      </div>
+    </section>
+
+    <!-- ============ Split community banner (rendered by app.js) ============ -->
+    <section class="banner" id="discordCard" aria-label="Kyro Discord"></section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell">
+      <div class="footer-main">
+        <div class="footer-left">
+          <span class="brand-word mono">KYRO <span class="brand-heart" aria-hidden="true">&lt;3</span></span>
+          <span class="stamp-badge mono" id="siteUpdated">—</span>
+        </div>
+        <div class="footer-links">
+          <a href="/">Vault</a>
+          <a href="/about">About</a>
+          <a href="https://discord.gg/5ch7XeNg98" target="_blank" rel="noopener noreferrer" id="footerInvite">Invite ↗</a>
+        </div>
+      </div>
+      <div class="footer-meta mono">
+        <p>© 2026, Est. Nov 2026 · Kyro</p>
+        <p><span id="footerDomain">kyro.new.tg</span></p>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ============ Command palette (Ctrl+K) ============ -->
+  <div class="overlay overlay-top" id="paletteOverlay" hidden>
+    <div class="palette" role="dialog" aria-modal="true" aria-label="Quick search">
+      <div class="palette-input">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
+        <input type="text" id="paletteInput" placeholder="Search the Kyro Vault — titles, tags, file formats…" autocomplete="off" spellcheck="false" aria-controls="paletteResults" />
+        <kbd class="mono">Esc</kbd>
+      </div>
+      <div class="palette-results" id="paletteResults" role="listbox" aria-label="Search results"></div>
+      <div class="palette-foot mono">
+        <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+        <span><kbd>Enter</kbd> inspect</span>
+        <span><kbd>Ctrl K</kbd> toggle</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Resource detail modal ============ -->
+  <div class="overlay" id="modalOverlay" hidden>
+    <div class="modal" id="modalBox" role="dialog" aria-modal="true" aria-label="Resource details"></div>
+  </div>
+
+  <!-- ============ Saved Vault drawer ============ -->
+  <div class="scrim" id="drawerScrim" hidden></div>
+  <aside class="drawer" id="vaultDrawer" aria-hidden="true" aria-label="Saved vault">
+    <div class="drawer-head">
+      <div>
+        <h3 class="drawer-title">Saved Vault</h3>
+        <p class="drawer-sub mono" id="vaultCount">0 assets</p>
+      </div>
+      <button type="button" class="close-x" id="drawerClose" aria-label="Close vault"></button>
+    </div>
+    <div class="vault-list" id="vaultList"></div>
+    <div class="drawer-foot">
+      <button class="btn btn-ghost danger" id="vaultClear" type="button">Clear all</button>
+    </div>
+  </aside>
+
+  <!-- ============ Requests / wishlist drawer ============ -->
+  <aside class="drawer" id="requestsDrawer" aria-hidden="true" aria-label="Tool requests">
+    <div class="drawer-head">
+      <div>
+        <h3 class="drawer-title">Requests</h3>
+        <p class="drawer-sub mono" id="requestCount">loading…</p>
+      </div>
+      <button type="button" class="close-x" id="requestsClose" aria-label="Close requests"></button>
+    </div>
+
+    <div class="req-compose" id="reqCompose" hidden>
+      <label class="field">
+        <span class="field-label mono">Title</span>
+        <input class="field-input" type="text" id="reqTitle" maxlength="90" placeholder="What should the vault add next?" autocomplete="off" />
+      </label>
+      <div class="field">
+        <span class="field-label mono" id="reqCatLabel">Category</span>
+        <div class="cat-row" id="reqCategories" role="group" aria-labelledby="reqCatLabel"></div>
+      </div>
+      <label class="field">
+        <span class="field-label mono">AE Version</span>
+        <input class="field-input mono" type="text" id="reqAe" inputmode="numeric" maxlength="4" placeholder="2026" autocomplete="off" />
+      </label>
+      <label class="field">
+        <span class="field-label mono">Short Description</span>
+        <textarea class="field-input" id="reqDesc" rows="3" maxlength="280" placeholder="What it should do, and why you want it."></textarea>
+      </label>
+      <button type="button" class="btn btn-primary" id="reqSubmit">Submit Request</button>
+    </div>
+
+    <div class="req-gate" id="reqGate" hidden></div>
+    <div class="req-list" id="requestList"></div>
+  </aside>
+
+  <!-- Toast stack (downloads, access notices) -->
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <!-- Modular scripts: data → preview engine → app wiring -->
+  <script src="/js/data.js"></script>
+  <script src="/js/preview.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
