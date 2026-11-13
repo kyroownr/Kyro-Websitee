@@ -6,7 +6,13 @@
   "name": "kyro-auth",
   "main": "worker.js",
   "compatibility_date": "2025-09-01",
-  "logpush": true,
+
+  // Was already enabled on the dashboard; declaring it keeps `wrangler deploy`
+  // from switching Worker Logs off with its local default.
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true }
+  },
 
   // Plaintext. Without KYRO_GUILD_ID readSession() can never report a member,
   // so verification would silently fail for everyone.
