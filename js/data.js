@@ -62,6 +62,77 @@ window.KYRO_SEED = [
     ]
   },
   {
+    id: 'krotos',
+    title: 'Krotos Concept 2',
+    desc: 'Krotos Concept 2 (v2.0.3) is a modern, creative synthesizer plugin (VST/AU/AAX) designed for music producers, sound designers, and film/game audio creators. It is built to make complex sound design fast, visual, and intuitive.',
+    category: 'software',
+    kind: 'software',
+    os: ['windows'],
+    price: null,
+    version: '',
+    creator: '',
+    downloads: 0,
+    added: '2026-11-13',
+    tags: ['synth', 'sound design', 'granular', 'presets', 'film audio'],
+    gallery: [
+      '/assets/krotos-concept.webp'
+    ],
+    files: [],
+    features: [
+      'Hybrid & Granular Synthesis: Features two oscillators that let you switch between or combine classic synth waveforms (with FM) and a Granular Oscillator\u2014allowing you to drag and drop any audio file and slice it into lush pads, basses, cinematic textures, or sound effects.',
+      'Visual Drag-and-Drop Modulation: Its standout feature is a color-coded, animated modulation system. You can easily route LFOs, custom-drawn shapes (Advanced Shape Modulator), X/Y pad movements, or even live external audio inputs to control any knob in the synth.',
+      'Built-in Effects Rack: Includes three customizable effect slots with 10 effects\u2014highlighted by a Convolution Reverb (with 160+ Impulse Responses and drag-and-drop support for your own), delays, filters, compressors, and transient shapers.',
+      '700+ Ready-to-Use Presets: Comes loaded with over 700 presets crafted by top artists and sound designers, covering everything from classic basses and leads to cinematic ambiences and sci-fi FX.',
+      'Who it\u2019s for: Producers and sound designers looking for an inspiring, easy-to-navigate synth that bridges traditional electronic music production with cinematic sound design.'
+    ]
+  },
+  {
+    id: 'autocaption',
+    title: 'Aescripts AutoCaption',
+    desc: 'AutoCaption is a speech-to-text plugin for Adobe After Effects that automatically transcribes audio or video layers and turns them into animated, styled captions in seconds.',
+    category: 'extension',
+    kind: 'tool',
+    os: ['windows', 'macos'],
+    price: null,
+    version: '',
+    creator: '',
+    downloads: 0,
+    added: '2026-11-13',
+    tags: ['captions', 'subtitles', 'speech to text', 'transcription', 'social'],
+    gallery: [
+      '/assets/autocaption.webp'
+    ],
+    files: [],
+    features: [
+      'AI Transcription: Automatically detects speech from your timeline and generates accurate subtitles without needing external transcription tools.',
+      'Built-in Animation & Styles: Comes with ready-to-use text animations (like word-by-word highlights, pop-ins, and social media styles) that sync directly with the speaker\u2019s voice.',
+      'Fast Customization: Easily edit text, fonts, colors, and timing right inside After Effects\u2014ideal for speeding up TikTok, Reels, YouTube Shorts, and promo videos.'
+    ]
+  },
+  {
+    id: 'cosmic',
+    title: 'Aescripts Cosmic',
+    desc: 'Cosmic is a styling plugin for Adobe After Effects and Premiere Pro designed to apply rich, cinematic gradients to text and shape layers effortlessly.',
+    category: 'plugin',
+    kind: 'tool',
+    os: ['windows', 'macos'],
+    price: null,
+    version: '',
+    creator: '',
+    downloads: 0,
+    added: '2026-11-13',
+    tags: ['gradient', 'styling', 'titles', 'ui', 'motion graphics'],
+    gallery: [
+      '/assets/cosmic.webp'
+    ],
+    files: [],
+    features: [
+      'Curated Color Palettes: Includes built-in, designer-curated color palettes so you can achieve polished, modern looks without manually picking color stops.',
+      'Full Gradient Control: Easily adjust gradient angles, cycles, blending, and motion directly on your layers.',
+      'Clean Workflow: Eliminates the tedious setup of standard multi-color ramp effects, making it quick to elevate titles, UI elements, and motion graphics.'
+    ]
+  },
+  {
     id: 'applefx',
     title: 'AppleFX',
     desc: 'AppleFX by 8bitbrain is a flagship After Effects extension/panel designed to give your edits Apple-grade, high-end motion and aesthetics in just one click.',
@@ -276,6 +347,6 @@ window.KYRO_INSTALL = {
 
 /* Human-readable labels shared across UI surfaces */
 window.KYRO_CATEGORY_LABEL = {
-  extension: 'Extension', script: 'Script', preset: 'Preset',
+  extension: 'Extension', script: 'Script', preset: 'Preset', plugin: 'Plugin',
   project: 'Project File', soundfx: 'Sound FX', software: 'Software'
 };
