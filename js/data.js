@@ -77,16 +77,7 @@ window.KYRO_SEED = [
     gallery: [
       '/assets/krotos-concept.webp'
     ],
-    files: [
-      {
-        ext: 'zip',
-        name: 'Krotos Concept 2.0.3.zip',
-        size: '',
-        label: 'VST/AU/AAX synthesizer plugin',
-        url: 'https://1024terabox.com/s/1lv5g6zY7PrlBxMpO-KopDg',
-        pass: 'Kyro'
-      }
-    ],
+    files: [],
     features: [
       'Hybrid & Granular Synthesis: Features two oscillators that let you switch between or combine classic synth waveforms (with FM) and a Granular Oscillator\u2014allowing you to drag and drop any audio file and slice it into lush pads, basses, cinematic textures, or sound effects.',
       'Visual Drag-and-Drop Modulation: Its standout feature is a color-coded, animated modulation system. You can easily route LFOs, custom-drawn shapes (Advanced Shape Modulator), X/Y pad movements, or even live external audio inputs to control any knob in the synth.',
@@ -111,16 +102,7 @@ window.KYRO_SEED = [
     gallery: [
       '/assets/autocaption.webp'
     ],
-    files: [
-      {
-        ext: 'zip',
-        name: 'Aescripts AutoCaption v4.6.1.zip',
-        size: '',
-        label: 'Speech-to-text captions extension for After Effects',
-        url: 'https://1024terabox.com/s/1xSDwplTO-NmHCJL8UiSPLw',
-        pass: 'Kyro'
-      }
-    ],
+    files: [],
     features: [
       'AI Transcription: Automatically detects speech from your timeline and generates accurate subtitles without needing external transcription tools.',
       'Built-in Animation & Styles: Comes with ready-to-use text animations (like word-by-word highlights, pop-ins, and social media styles) that sync directly with the speaker\u2019s voice.',
@@ -143,16 +125,7 @@ window.KYRO_SEED = [
     gallery: [
       '/assets/cosmic.webp'
     ],
-    files: [
-      {
-        ext: 'zip',
-        name: 'Aescripts Cosmic v1.0.0.zip',
-        size: '',
-        label: 'Cinematic gradient styling plugin for After Effects and Premiere Pro',
-        url: 'https://1024terabox.com/s/1QdVEcXH1oNuEqplqPBf3nQ',
-        pass: 'Kyro'
-      }
-    ],
+    files: [],
     features: [
       'Curated Color Palettes: Includes built-in, designer-curated color palettes so you can achieve polished, modern looks without manually picking color stops.',
       'Full Gradient Control: Easily adjust gradient angles, cycles, blending, and motion directly on your layers.',
@@ -238,178 +211,6 @@ window.KYRO_SEED = [
       'Workflow Tools: A built-in panel with 13+ one-click tools and 11 add-ons to speed up animation, organization, and design tasks.',
       'Lifetime Access: A one-time purchase that includes all future asset updates.',
       'It essentially turns After Effects into a plug-and-play studio so creators can build professional product promos in a fraction of the usual time.'
-    ]
-  },
-  {
-    id: 'after-effects-v27',
-    title: 'Adobe After Effects v27',
-    desc: 'Adobe After Effects v27 is the industry-standard motion graphics and visual effects application for compositing, animation, and cinematic effects.',
-    category: 'software',
-    kind: 'software',
-    os: ['windows'],
-    price: null,
-    version: 'v27',
-    creator: '',
-    downloads: 0,
-    added: '2026-11-13',
-    tags: ['motion graphics', 'visual effects', 'compositing', 'adobe'],
-    files: [
-      {
-        ext: 'rar',
-        name: 'After Effects v27.0.rar',
-        size: '',
-        label: 'Adobe After Effects v27.0 for Windows',
-        url: 'https://clicknupload.click/12l0im7t93mi/After.Effects.v27.0.rar'
-      }
-    ],
-    features: [
-      'Motion Graphics & Visual Effects: Composite, animate, and apply cinematic effects with a layer-based timeline and keyframe controls.',
-      'Extensive Effect Library: Built-in effects for color correction, keying, tracking, distortion, and simulation.',
-      'Dynamic Link: Work alongside Premiere Pro, Photoshop, and Illustrator with shared assets.',
-      'Plugin Support: Extend After Effects with scripts, presets, and plugins from the Kyro Vault.'
-    ]
-  },
-  {
-    id: 'premiere-pro-v27',
-    title: 'Adobe Premiere Pro v27',
-    desc: 'Adobe Premiere Pro v27 is the industry-leading timeline-based video editing application for film, television, and web.',
-    category: 'software',
-    kind: 'software',
-    os: ['windows'],
-    price: null,
-    version: 'v27.0.0',
-    creator: '',
-    downloads: 0,
-    added: '2026-11-13',
-    tags: ['video editing', 'timeline', 'film', 'tv', 'adobe'],
-    files: [
-      {
-        ext: 'rar',
-        name: 'Premiere v27.0.0.rar',
-        size: '',
-        label: 'Adobe Premiere Pro v27.0.0 for Windows',
-        url: 'https://clicknupload.click/31b0y6wfvmpk/Premiere.v27.0.0.rar'
-      }
-    ],
-    features: [
-      'Timeline-Based Editing: Cut, trim, and assemble video and audio on a multi-track timeline.',
-      'Native Format Support: Edit footage in any format\u2014including 8K, HDR, and VR\u2014without transcoding.',
-      'Lumetri Color: Professional color grading and correction built into the editing workflow.',
-      'Adobe Ecosystem: Dynamic Link with After Effects, Photoshop, and Illustrator keeps assets in sync.'
-    ]
-  },
-  {
-    id: 'after-effects-26-2-1-arm-macos',
-    title: 'After Effects 26.2.1 ARM',
-    desc: 'Adobe After Effects 26.2.1 for macOS Apple Silicon (ARM). Motion graphics and visual effects software for Mac editors.',
-    category: 'software',
-    kind: 'software',
-    os: ['macos'],
-    price: null,
-    version: '26.2.1 ARM',
-    creator: 'Keyflame',
-    downloads: 0,
-    added: '2026-11-13',
-    tags: ['motion graphics', 'visual effects', 'macos', 'arm', 'adobe'],
-    files: [
-      {
-        ext: 'dmg',
-        name: 'After Effects 26.2.1 ARM',
-        size: '',
-        label: 'macOS ARM build \u00b7 credits to Keyflame',
-        url: 'https://bzzhr.to/nijvtdnsgiqg',
-        pass: 'flame'
-      }
-    ],
-    features: [
-      'ARM Native: Built for Apple Silicon Macs with native ARM performance.',
-      'Motion Graphics & Visual Effects: Composite, animate, and apply cinematic effects.',
-      'Credits: Keyflame'
-    ]
-  },
-  {
-    id: 'after-effects-macos',
-    title: 'After Effects',
-    desc: 'Adobe After Effects for macOS \u2014 motion graphics and visual effects software for Mac editors.',
-    category: 'software',
-    kind: 'software',
-    os: ['macos'],
-    price: null,
-    version: '',
-    creator: 'Keyflame',
-    downloads: 0,
-    added: '2026-11-13',
-    tags: ['motion graphics', 'visual effects', 'macos', 'adobe'],
-    files: [
-      {
-        ext: 'dmg',
-        name: 'After Effects macOS',
-        size: '',
-        label: 'macOS build \u00b7 credits to Keyflame',
-        url: 'https://bzzhr.to/21ps0jufvpm5',
-        pass: 'flame'
-      }
-    ],
-    features: [
-      'Motion Graphics & Visual Effects: Composite, animate, and apply cinematic effects.',
-      'Credits: Keyflame'
-    ]
-  },
-  {
-    id: 'premiere-pro-26-2-1-arm-macos',
-    title: 'Premiere Pro 26.2.1 ARM',
-    desc: 'Adobe Premiere Pro 26.2.1 for macOS Apple Silicon (ARM). Timeline-based video editing software for Mac editors.',
-    category: 'software',
-    kind: 'software',
-    os: ['macos'],
-    price: null,
-    version: '26.2.1 ARM',
-    creator: 'Keyflame',
-    downloads: 0,
-    added: '2026-11-13',
-    tags: ['video editing', 'timeline', 'macos', 'arm', 'adobe'],
-    files: [
-      {
-        ext: 'dmg',
-        name: 'Premiere Pro 26.2.1 ARM',
-        size: '',
-        label: 'macOS ARM build \u00b7 credits to Keyflame',
-        url: 'https://bzzhr.to/4l6fm7mn8p89',
-        pass: 'flame'
-      }
-    ],
-    features: [
-      'ARM Native: Built for Apple Silicon Macs with native ARM performance.',
-      'Timeline-Based Editing: Cut, trim, and assemble video and audio on a multi-track timeline.',
-      'Credits: Keyflame'
-    ]
-  },
-  {
-    id: 'premiere-pro-macos',
-    title: 'Premiere Pro',
-    desc: 'Adobe Premiere Pro for macOS \u2014 timeline-based video editing software for Mac editors.',
-    category: 'software',
-    kind: 'software',
-    os: ['macos'],
-    price: null,
-    version: '',
-    creator: 'Keyflame',
-    downloads: 0,
-    added: '2026-11-13',
-    tags: ['video editing', 'timeline', 'macos', 'adobe'],
-    files: [
-      {
-        ext: 'dmg',
-        name: 'Premiere Pro macOS',
-        size: '',
-        label: 'macOS build \u00b7 credits to Keyflame',
-        url: 'https://bzzhr.to/ow8mf9x1fci8',
-        pass: 'flame'
-      }
-    ],
-    features: [
-      'Timeline-Based Editing: Cut, trim, and assemble video and audio on a multi-track timeline.',
-      'Credits: Keyflame'
     ]
   }
 ];
