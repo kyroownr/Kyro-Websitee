@@ -1080,11 +1080,9 @@
   let modalId = null;
   let modalTab = 'overview';
 
-  /* Monospace metadata badges: what AE version, which builds, which formats.
-     Both OS badges always ship — the visitor's own platform is the lit one. */
   const OS_BADGES = [
     { value: 'windows', label: 'Windows' },
-    { value: 'macos', label: 'macOS Apple Silicon / Intel' }
+    { value: 'macos', label: 'macOS' }
   ];
 
   /* The first file extension drives the compact format badge. A pure software
@@ -1108,8 +1106,8 @@
     return '<div class="spec-row">' +
       group('AE Compatibility', r.aeMin
         ? ['<span class="badge badge-spec">AE ' + esc(r.aeMin) + '+</span>'] : []) +
-      group('OS / Architecture', OS_BADGES.map(b =>
-        '<span class="badge badge-spec' + (b.value === os ? ' is-current' : '') + '">' + b.label + '</span>')) +
+      group('OS / Architecture', OS_BADGES.filter(b => (r.os || []).includes(b.value)).map(b =>
+        '<span class="badge badge-spec' + (b.value === os ? ' is-current' : '') + '">' + esc(b.label + (r.architecture ? ' · ' + r.architecture : '')) + '</span>')) +
       group('File Format', files.map(ext => '<span class="badge badge-format">' + esc(ext) + '</span>')) +
       '</div>';
   }
@@ -1169,6 +1167,7 @@
   }
 
   function installHTML(r) {
+    if (window.KYRO_INSTALL[r.id]) return installBlock(r.id);
     const files = r.files && r.files.length ? r.files : [{ ext: r.format, label: '' }];
     const blocks = files.map(f => installBlock(f.ext, f.label)).filter(Boolean).join('');
     return blocks || '<p class="m-desc">No install guide on file for this format.</p>';
@@ -1340,7 +1339,7 @@
     }
     return '<div class="m-stage has-gallery">' +
       '<img class="m-shot" id="modalShot" src="' + esc(gal[0]) + '" alt="' + esc(r.title) + ' preview" />' +
-      '<span class="preview-chip mono">SCREENSHOTS</span>' + badgeRow +
+      '<span class="preview-chip mono">PRODUCT IMAGES</span>' + badgeRow +
       '<div class="m-thumbs">' + gal.map((src, i) =>
         '<button type="button" class="m-thumb' + (i === 0 ? ' is-active' : '') + '" data-shot="' + esc(src) +
         '" aria-pressed="' + (i === 0) + '" aria-label="Show preview ' + (i + 1) + ' of ' + gal.length + '">' +
@@ -1372,6 +1371,7 @@
           '<div class="meta-row">' +
             '<span class="dl-count">' + ICON.download + downloadsLabel(downloadCount(r)) + '</span>' +
             by +
+            (r.credits ? '<span>Credits: ' + esc(r.credits) + '</span>' : '') +
             '<span>ADDED ' + esc(r.added) + '</span>' +
           '</div>' +
         '</div>' +

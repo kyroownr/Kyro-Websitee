@@ -34,6 +34,182 @@ window.KYRO_SITE = {
 
 window.KYRO_SEED = [
   {
+    id: 'after-effects-windows-v27',
+    title: 'Adobe After Effects',
+    desc: 'Adobe After Effects is a motion graphics and visual effects application for animating titles, compositing footage, and creating polished intros, transitions, and cinematic effects.',
+    category: 'software',
+    kind: 'software',
+    os: ['windows'],
+    version: '27.0',
+    creator: 'Adobe',
+    downloads: 0,
+    added: '2026-11-13',
+    tags: ['after effects', 'motion graphics', 'compositing', 'animation', 'vfx'],
+    gallery: ['/assets/after-effects-interface.webp'],
+    files: [
+      {
+        ext: '.rar',
+        name: 'After.Effects.v27.0.rar',
+        size: '',
+        label: 'After Effects v27 — Windows',
+        url: 'https://clicknupload.click/12l0im7t93mi/After.Effects.v27.0.rar'
+      }
+    ],
+    features: [
+      'Motion Graphics & Titles: Animate text, logos, and shape layers with keyframes, expressions, and editable effects.',
+      'Compositing & Visual Effects: Combine footage, masks, and layered effects to build transitions and visual treatments.',
+      'Creative Workflow: Work with layered compositions and connect motion graphics with your video-editing workflow.'
+    ]
+  },
+  {
+    id: 'premiere-pro-windows-v27',
+    title: 'Adobe Premiere Pro',
+    desc: 'Adobe Premiere Pro is a video editing application for cutting footage, arranging timelines, refining color, mixing audio, and producing videos for social media, YouTube, film, and client projects.',
+    category: 'software',
+    kind: 'software',
+    os: ['windows'],
+    version: '27.0.0',
+    creator: 'Adobe',
+    downloads: 0,
+    added: '2026-11-13',
+    tags: ['premiere pro', 'video editing', 'timeline', 'color', 'audio'],
+    gallery: ['/assets/premiere-pro-interface.webp'],
+    files: [
+      {
+        ext: '.rar',
+        name: 'Premiere.v27.0.0.rar',
+        size: '',
+        label: 'Premiere Pro v27 — Windows',
+        url: 'https://clicknupload.click/31b0y6wfvmpk/Premiere.v27.0.0.rar'
+      }
+    ],
+    features: [
+      'Timeline Editing: Organize clips, trim sequences, and build edits with multiple video and audio tracks.',
+      'Color & Audio: Refine your footage with color adjustments and shape the sound of your edit with audio tools.',
+      'Titles & Delivery: Add graphics and transitions, then export finished videos for your chosen destination.'
+    ]
+  },
+  {
+    id: 'after-effects-macos-arm',
+    title: 'Adobe After Effects ARM',
+    desc: 'Adobe After Effects is a motion graphics and visual effects application for animating titles, compositing footage, and creating polished intros, transitions, and cinematic effects. This listing is the 26.2.1 ARM build for macOS.',
+    category: 'software',
+    kind: 'software',
+    os: ['macos'],
+    architecture: 'ARM',
+    version: '26.2.1',
+    creator: 'Adobe',
+    credits: 'Keyflame',
+    downloads: 0,
+    added: '2026-11-13',
+    tags: ['after effects', 'motion graphics', 'compositing', 'animation', 'arm'],
+    gallery: ['/assets/after-effects-interface.webp'],
+    files: [
+      {
+        ext: 'archive',
+        name: 'After Effects 26.2.1 ARM',
+        size: '',
+        label: 'After Effects 26.2.1 ARM — macOS',
+        url: 'https://bzzhr.to/nijvtdnsgiqg',
+        pass: 'flame'
+      }
+    ],
+    features: [
+      'Motion Graphics & Titles: Animate text, logos, and shape layers with keyframes, expressions, and editable effects.',
+      'Compositing & Visual Effects: Combine footage, masks, and layered effects to build transitions and visual treatments.',
+      'ARM Build: The supplied macOS download is labeled 26.2.1 ARM.'
+    ]
+  },
+  {
+    id: 'after-effects-macos',
+    title: 'Adobe After Effects',
+    desc: 'Adobe After Effects is a motion graphics and visual effects application for macOS, built for animated titles, layered compositing, transitions, and creative visual effects.',
+    category: 'software',
+    kind: 'software',
+    os: ['macos'],
+    creator: 'Adobe',
+    credits: 'Keyflame',
+    downloads: 0,
+    added: '2026-11-13',
+    tags: ['after effects', 'motion graphics', 'compositing', 'animation', 'vfx'],
+    gallery: ['/assets/after-effects-interface.webp'],
+    files: [
+      {
+        ext: 'archive',
+        name: 'After Effects — macOS',
+        size: '',
+        label: 'After Effects — macOS',
+        url: 'https://bzzhr.to/21ps0jufvpm5',
+        pass: 'flame'
+      }
+    ],
+    features: [
+      'Motion Graphics & Titles: Animate text, logos, and shape layers with keyframes, expressions, and editable effects.',
+      'Compositing & Visual Effects: Combine footage, masks, and layered effects to build transitions and visual treatments.',
+      'Creative Workflow: Work with layered compositions and connect motion graphics with your video-editing workflow.'
+    ]
+  },
+  {
+    id: 'premiere-pro-macos-arm',
+    title: 'Adobe Premiere Pro ARM',
+    desc: 'Adobe Premiere Pro is a video editing application for cutting footage, arranging timelines, refining color, and mixing audio. This listing is the 26.2.1 ARM build for macOS.',
+    category: 'software',
+    kind: 'software',
+    os: ['macos'],
+    architecture: 'ARM',
+    version: '26.2.1',
+    creator: 'Adobe',
+    credits: 'Keyflame',
+    downloads: 0,
+    added: '2026-11-13',
+    tags: ['premiere pro', 'video editing', 'timeline', 'color', 'arm'],
+    gallery: ['/assets/premiere-pro-interface.webp'],
+    files: [
+      {
+        ext: 'archive',
+        name: 'Premiere Pro 26.2.1 ARM',
+        size: '',
+        label: 'Premiere Pro 26.2.1 ARM — macOS',
+        url: 'https://bzzhr.to/4l6fm7mn8p89',
+        pass: 'flame'
+      }
+    ],
+    features: [
+      'Timeline Editing: Organize clips, trim sequences, and build edits with multiple video and audio tracks.',
+      'Color & Audio: Refine your footage with color adjustments and shape the sound of your edit with audio tools.',
+      'ARM Build: The supplied macOS download is labeled 26.2.1 ARM.'
+    ]
+  },
+  {
+    id: 'premiere-pro-macos',
+    title: 'Adobe Premiere Pro',
+    desc: 'Adobe Premiere Pro is a video editing application for macOS, built for timeline editing, color adjustments, audio mixing, titles, and exporting videos for social media, YouTube, film, and client projects.',
+    category: 'software',
+    kind: 'software',
+    os: ['macos'],
+    creator: 'Adobe',
+    credits: 'Keyflame',
+    downloads: 0,
+    added: '2026-11-13',
+    tags: ['premiere pro', 'video editing', 'timeline', 'color', 'audio'],
+    gallery: ['/assets/premiere-pro-interface.webp'],
+    files: [
+      {
+        ext: 'archive',
+        name: 'Premiere Pro — macOS',
+        size: '',
+        label: 'Premiere Pro — macOS',
+        url: 'https://bzzhr.to/ow8mf9x1fci8',
+        pass: 'flame'
+      }
+    ],
+    features: [
+      'Timeline Editing: Organize clips, trim sequences, and build edits with multiple video and audio tracks.',
+      'Color & Audio: Refine your footage with color adjustments and shape the sound of your edit with audio tools.',
+      'Titles & Delivery: Add graphics and transitions, then export finished videos for your chosen destination.'
+    ]
+  },
+  {
     id: 'toonboom',
     title: 'Toon Boom Harmony Premium',
     desc: 'Toon Boom Harmony Premium is the industry-standard 2D animation software used by major studios (like Disney, Nickelodeon, and Cartoon Network) as well as freelancers to create animated TV shows, feature films, and games.',
@@ -69,7 +245,7 @@ window.KYRO_SEED = [
     kind: 'software',
     os: ['windows'],
     price: null,
-    version: '',
+    version: '2.0.3',
     creator: '',
     downloads: 0,
     added: '2026-11-13',
@@ -77,7 +253,16 @@ window.KYRO_SEED = [
     gallery: [
       '/assets/krotos-concept.webp'
     ],
-    files: [],
+    files: [
+      {
+        ext: '.zip',
+        name: 'Krotos Concept 2.0.3.zip',
+        size: '',
+        label: 'Krotos Concept 2.0.3 — Windows',
+        url: 'https://1024terabox.com/s/1lv5g6zY7PrlBxMpO-KopDg',
+        pass: 'Kyro'
+      }
+    ],
     features: [
       'Hybrid & Granular Synthesis: Features two oscillators that let you switch between or combine classic synth waveforms (with FM) and a Granular Oscillator\u2014allowing you to drag and drop any audio file and slice it into lush pads, basses, cinematic textures, or sound effects.',
       'Visual Drag-and-Drop Modulation: Its standout feature is a color-coded, animated modulation system. You can easily route LFOs, custom-drawn shapes (Advanced Shape Modulator), X/Y pad movements, or even live external audio inputs to control any knob in the synth.',
@@ -94,7 +279,7 @@ window.KYRO_SEED = [
     kind: 'tool',
     os: ['windows', 'macos'],
     price: null,
-    version: '',
+    version: '4.6.1',
     creator: '',
     downloads: 0,
     added: '2026-11-13',
@@ -102,7 +287,16 @@ window.KYRO_SEED = [
     gallery: [
       '/assets/autocaption.webp'
     ],
-    files: [],
+    files: [
+      {
+        ext: '.zip',
+        name: 'Aescripts AutoCaption v4.6.1.zip',
+        size: '',
+        label: 'AutoCaption v4.6.1 — After Effects extension',
+        url: 'https://1024terabox.com/s/1xSDwplTO-NmHCJL8UiSPLw',
+        pass: 'Kyro'
+      }
+    ],
     features: [
       'AI Transcription: Automatically detects speech from your timeline and generates accurate subtitles without needing external transcription tools.',
       'Built-in Animation & Styles: Comes with ready-to-use text animations (like word-by-word highlights, pop-ins, and social media styles) that sync directly with the speaker\u2019s voice.',
@@ -117,7 +311,7 @@ window.KYRO_SEED = [
     kind: 'tool',
     os: ['windows', 'macos'],
     price: null,
-    version: '',
+    version: '1.0.0',
     creator: '',
     downloads: 0,
     added: '2026-11-13',
@@ -125,7 +319,16 @@ window.KYRO_SEED = [
     gallery: [
       '/assets/cosmic.webp'
     ],
-    files: [],
+    files: [
+      {
+        ext: '.zip',
+        name: 'Aescripts Cosmic v1.0.0.zip',
+        size: '',
+        label: 'Cosmic v1.0.0 — After Effects / Premiere Pro plug-in',
+        url: 'https://1024terabox.com/s/1QdVEcXH1oNuEqplqPBf3nQ',
+        pass: 'Kyro'
+      }
+    ],
     features: [
       'Curated Color Palettes: Includes built-in, designer-curated color palettes so you can achieve polished, modern looks without manually picking color stops.',
       'Full Gradient Control: Easily adjust gradient angles, cycles, blending, and motion directly on your layers.',
@@ -222,7 +425,59 @@ window.KYRO_SEED = [
    which is how the externally hosted SaaSor toolkit is documented.
    -------------------------------------------------------------------------- */
 window.KYRO_INSTALL = {
-  archive: {
+  toonboom: {
+    title: 'Toon Boom Installation Guide',
+    blocks: [
+      { p: 'Follow it from the Read me in The folder' }
+    ]
+  },
+  autocaption: {
+    title: 'AutoCaption Installation Guide',
+    blocks: [
+      { h: '1. Copy the Extension Folder' },
+      { p: 'Copy the <code>com.autocaption</code> folder to the Adobe CEP Extensions directory.' },
+      { sub: 'Windows' },
+      { code: 'C:\\Program Files (x86)\\Common Files\\Adobe\\CEP\\extensions\\', lang: 'text' },
+      { sub: 'macOS' },
+      { code: '/Library/Application Support/Adobe/CEP/extensions/', lang: 'text' },
+      { h: '2. Install the Required Registry/Certificate' },
+      { ul: [
+        '<b>Windows:</b> Run <code>Add Keys.reg</code>.',
+        '<b>macOS:</b> Run <code>install-as-admin</code>.'
+      ] },
+      { h: '3. Enable Scripting in Adobe After Effects' },
+      { p: 'Open <b>Adobe After Effects → Preferences</b> and enable:' },
+      { p: '<b>Allow Scripts to Write Files and Access Network</b>' },
+      { sub: 'For Older Versions' },
+      { ul: [
+        '<b>Windows:</b> <code>Edit → Preferences → General</code>',
+        '<b>macOS:</b> <code>After Effects → Preferences → General</code>'
+      ] },
+      { sub: 'For After Effects CC 2019.1 and Later' },
+      { ul: [
+        '<b>Windows:</b> <code>Edit → Preferences → Scripting &amp; Expressions</code>',
+        '<b>macOS:</b> <code>After Effects → Preferences → Scripting &amp; Expressions</code>'
+      ] },
+      { p: 'Make sure <b>Allow Scripts to Write Files and Access Network</b> is enabled.' },
+      { h: '4. Launch AutoCaption' },
+      { p: 'Open <b>Adobe After Effects</b>, then navigate to:' },
+      { p: '<b>Window → Extensions → AutoCaption</b>' },
+      { p: '<b>AutoCaption</b> should now be available from the <b>Extensions</b> menu.' }
+    ]
+  },
+  cosmic: {
+    title: 'Cosmic Installation Guide',
+    blocks: [
+      { h: 'Manual Installation' },
+      { p: 'Cosmic is an effect plug-in, not an extension. Quit After Effects and Premiere Pro first, then copy the file for your system into the shared Adobe plug-ins folder, where both After Effects and Premiere Pro will find it:' },
+      { sub: 'macOS' },
+      { code: '/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/', lang: 'text' },
+      { sub: 'Windows' },
+      { code: 'C:\\Program Files\\Adobe\\Common\\Plug-ins\\7.0\\MediaCore\\', lang: 'text' },
+      { p: 'Create a folder called <code>Cosmic</code> inside <code>MediaCore</code> and put the file there. Use <code>Cosmic.plugin</code> on macOS and <code>Cosmic.aex</code> on Windows. Start After Effects or Premiere Pro. Cosmic is available under <b>Effect &gt; Loophouse &gt; Cosmic</b> (in Premie- re Pro: <b>Video Effects &gt; Loophouse &gt; Cosmic</b>).' }
+    ]
+  },
+  saasor: {
     title: '🚀 SaaSor Quick Start Guide',
     sections: [
       {
