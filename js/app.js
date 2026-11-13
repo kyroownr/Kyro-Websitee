@@ -215,7 +215,9 @@
   const requestCount = $('#requestCount');
   const reqCategories = $('#reqCategories');
   const reqTitle = $('#reqTitle');
-  const reqAe = $('#reqAe');
+  const reqReference = $('#reqReference');
+  const reqSimilar = $('#reqSimilar');
+  const reqNewRequest = $('#reqNewRequest');
   const reqDesc = $('#reqDesc');
   const reqSubmit = $('#reqSubmit');
 
@@ -504,7 +506,7 @@
   function cardHTML(r, i) {
     const isSaved = saved.has(r.id);
     const locked = isLocked(r);
-    const exts = (r.files || [{ ext: r.format }]).map(f => f.ext.toUpperCase().replace('.', '')).join(' · ');
+    const exts = (r.files || [{ ext: r.format }]).map(f => String(f.ext || '').toUpperCase().replace('.', '')).filter(Boolean).join(' · ');
     const version = r.version ? '<span class="version-chip mono">' + esc(r.version) + '</span>' : '';
     const ae = r.aeMin ? '<span class="chip">AE ' + esc(r.aeMin) + '+</span>' : '';
     return (
@@ -518,7 +520,7 @@
         '<div class="card-meta">' +
           '<span class="chip"><b>' + full(downloadCount(r)) + '</b> ' + (downloadCount(r) === 1 ? 'download' : 'downloads') + '</span>' +
           ae +
-          '<span class="chip">' + esc(exts) + '</span>' +
+          (exts ? '<span class="chip">' + esc(exts) + '</span>' : '') +
           (locked ? '<span class="chip chip-soon mono">' + ICON.clock + 'COMING SOON</span>' : '') +
           priceBadge(r) +
         '</div>' +
@@ -840,23 +842,11 @@
     }, 320);
   }
 
-  /* ============================== requests board =========================
-     The wishlist is one KV key behind /requests on the auth worker, and
-     identity is the Discord access token that worker already validates, so a
-     vote means one per verified server member rather than one per cookie.
-     Reads stay public: a visitor can see what the community wants before
-     deciding to join.
-     ========================================================================= */
   const REQ_STATUS_LABEL = {
-    under_review: 'UNDER REVIEW',
-    in_progress: 'IN PROGRESS',
-    added_to_vault: 'ADDED TO VAULT'
+    open: 'OPEN', planned: 'PLANNED', in_progress: 'IN PROGRESS', shipped: 'SHIPPED'
   };
-  /* Monochrome ladder: dim for queued, silver for building, white for shipped. */
   const REQ_STATUS_CLASS = {
-    under_review: 'badge',
-    in_progress: 'badge badge-pro',
-    added_to_vault: 'badge badge-free'
+    open: 'badge', planned: 'badge badge-pro', in_progress: 'badge badge-pro', shipped: 'badge badge-free'
   };
   const REQ_CATEGORY_OPTIONS = [
     ['extension', 'Extension'], ['script', 'Script'], ['preset', 'Preset'],
@@ -867,6 +857,13 @@
   let reqError = '';
   let reqBusy = false;
   let reqCategory = 'extension';
+  let reqOs = DETECTED_OS || 'both';
+  let reqVersions = new Set(['any']);
+  let reqSort = 'top';
+  let reqFilter = 'all';
+  let reqComposeOpen = false;
+  let reqLoaded = false;
+  let reqAdmin = false;
 
   function reqHeaders() {
     const h = { Accept: 'application/json' };
@@ -881,6 +878,8 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error('requests responded ' + res.status + (data.error ? ': ' + data.error : ''));
       requests = Array.isArray(data.requests) ? data.requests : [];
+      reqAdmin = Boolean(data.is_admin);
+      reqLoaded = true;
       reqError = '';
     } catch (err) {
       reqError = 'The requests board is unreachable right now. Reopen this panel to try again.';
@@ -929,8 +928,7 @@
         return null;
       }
       if (!res.ok) {
-        /* The worker's own messages are already written for a reader, so they
-           travel to the toast instead of being replaced by generic copy. */
+        if (data.code === 'duplicate_request') await loadRequests();
         toast({
           title: 'Nothing was posted',
           sub: data.error || 'The requests board responded ' + res.status + '.',
@@ -939,6 +937,7 @@
         return null;
       }
       if (Array.isArray(data.requests)) requests = data.requests;
+      reqAdmin = Boolean(data.is_admin);
       reqError = '';
       return data;
     } catch (err) {
@@ -951,26 +950,40 @@
     }
   }
 
+  function referenceURL(value) {
+    try {
+      const url = new URL(value);
+      return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : '';
+    } catch { return ''; }
+  }
+
   function requestCardHTML(r) {
     const voted = Boolean(r.you_voted);
-    const status = REQ_STATUS_LABEL[r.status] || REQ_STATUS_LABEL.under_review;
-    const statusCls = REQ_STATUS_CLASS[r.status] || 'badge';
+    const status = REQ_STATUS_LABEL[r.status] || REQ_STATUS_LABEL.open;
     const day = String(r.created || '').slice(0, 10);
-    return '<article class="req-item' + (voted ? ' is-voted' : '') + '">' +
+    const reference = referenceURL(r.reference);
+    const versions = Array.isArray(r.ae_versions) ? r.ae_versions : [];
+    const admin = reqAdmin && auth.state === VERIFIED;
+    return '<article class="req-item' + (voted ? ' is-voted' : '') + '" data-request-id="' + esc(r.id) + '">' +
         '<button type="button" class="vote-btn mono" data-vote="' + esc(r.id) + '" aria-pressed="' + voted + '"' +
-          ' aria-label="' + (voted ? 'Remove your vote from ' : 'Upvote ') + esc(r.title) + '">' +
+          (reqBusy ? ' disabled' : '') + ' aria-label="' + (voted ? 'Remove your vote from ' : 'Upvote ') + esc(r.title) + '">' +
           '<span class="vote-caret" aria-hidden="true">' + (voted ? '▲' : '△') + '</span>' +
           '<span class="vote-num">' + (Number(r.votes) || 0) + '</span>' +
         '</button>' +
         '<div class="req-main">' +
           '<p class="req-title">' + esc(r.title) + '</p>' +
           (r.desc ? '<p class="req-desc">' + esc(r.desc) + '</p>' : '') +
+          (reference ? '<a class="req-reference mono" href="' + esc(reference) + '" target="_blank" rel="noopener noreferrer">REFERENCE ↗</a>' : '') +
           '<p class="req-meta">' +
-            '<span class="' + statusCls + '">' + status + '</span>' +
+            '<span class="' + (REQ_STATUS_CLASS[r.status] || 'badge') + '">' + status + '</span>' +
+            (r.starter ? '<span class="req-cat mono">STARTER IDEA</span>' : '') +
             '<span class="req-cat mono">' + esc((window.KYRO_CATEGORY_LABEL[r.category] || 'Other').toUpperCase()) + '</span>' +
-            (r.ae ? '<span class="req-cat mono">AE ' + esc(r.ae) + '</span>' : '') +
+            (r.os ? '<span class="req-cat mono">' + esc(r.os.toUpperCase()) + '</span>' : '') +
+            (versions.length ? '<span class="req-cat mono">AE ' + esc(versions.join(' / ').toUpperCase()) + '</span>' : '') +
             (day ? '<span class="req-day mono">' + esc(day) + '</span>' : '') +
           '</p>' +
+          (admin ? '<select class="field-input req-status-select mono" data-req-status="' + esc(r.id) + '" aria-label="Status for ' + esc(r.title) + '"' + (reqBusy ? ' disabled' : '') + '>' +
+            Object.entries(REQ_STATUS_LABEL).map(([value, label]) => '<option value="' + value + '"' + (r.status === value ? ' selected' : '') + '>' + label + '</option>').join('') + '</select>' : '') +
         '</div>' +
       '</article>';
   }
@@ -992,82 +1005,137 @@
       esc(label.toUpperCase()) + '</button>').join('');
     reqCategories.querySelectorAll('[data-cat]').forEach(btn => btn.addEventListener('click', () => {
       reqCategory = btn.dataset.cat;
-      renderReqCategories();
+      reqCategories.querySelectorAll('[data-cat]').forEach(chip => chip.setAttribute('aria-pressed', String(chip === btn)));
     }));
+  }
+
+  function syncReqFields() {
+    requestsDrawer.querySelectorAll('[data-req-os]').forEach(btn => btn.setAttribute('aria-pressed', String(btn.dataset.reqOs === reqOs)));
+    requestsDrawer.querySelectorAll('[data-req-ae]').forEach(btn => btn.setAttribute('aria-pressed', String(reqVersions.has(btn.dataset.reqAe))));
+  }
+
+  function renderSimilarRequest() {
+    const query = reqTitle.value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    const words = query.split(' ').filter(word => word.length > 2);
+    const matches = query.length < 3 ? [] : requests.map(row => {
+      const title = row.title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+      const titleWords = new Set(title.split(' '));
+      const overlap = words.filter(word => titleWords.has(word)).length;
+      const score = title === query ? 2 : words.length >= 2 && overlap >= 2 ? overlap / words.length : 0;
+      return { row, score };
+    }).filter(match => match.score >= 0.6).sort((a, b) => b.score - a.score || b.row.votes - a.row.votes);
+    const match = matches[0] && matches[0].row;
+    reqSimilar.hidden = !match;
+    reqSimilar.innerHTML = match ? '<span>Similar request exists: <b>' + esc(match.title) + '</b> — ' + (Number(match.votes) || 0) + ' votes</span>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-similar-vote="' + esc(match.id) + '"' + (reqBusy || match.you_voted ? ' disabled' : '') + '>' + (match.you_voted ? 'Upvoted' : 'Upvote') + '</button>' : '';
+    const button = reqSimilar.querySelector('[data-similar-vote]');
+    if (button) button.addEventListener('click', () => voteRequest(button.dataset.similarVote));
   }
 
   function renderRequests() {
     if (!requestList) return;
     const verified = auth.state === VERIFIED;
-    requestCompose.hidden = !verified;
-    requestGate.hidden = verified;
-    if (!verified) requestGate.innerHTML = reqGateHTML();
+    const expanded = verified && reqComposeOpen;
+    requestCompose.classList.toggle('is-open', expanded);
+    requestCompose.inert = !expanded;
+    reqNewRequest.setAttribute('aria-expanded', String(reqComposeOpen));
+    reqNewRequest.textContent = reqComposeOpen ? '− Close Form' : '+ New Request';
+    requestGate.hidden = verified || !reqComposeOpen;
+    if (!requestGate.hidden) requestGate.innerHTML = reqGateHTML();
+    requestCount.textContent = reqError ? 'board unavailable' : !reqLoaded ? 'loading…' : requests.length + (requests.length === 1 ? ' request' : ' requests');
 
-    requestCount.textContent = reqError
-      ? 'board unavailable'
-      : requests.length + (requests.length === 1 ? ' request' : ' requests');
-
-    requestList.innerHTML = reqError
-      ? '<p class="req-empty">' + esc(reqError) + '</p>'
-      : requests.length
-        ? requests.map(requestCardHTML).join('')
-        : '<p class="req-empty">Nothing on the board yet.' +
-          (verified ? ' Post the first request.' : ' Verified members start it off.') + '</p>';
-
-    requestList.querySelectorAll('[data-vote]').forEach(btn =>
-      btn.addEventListener('click', () => voteRequest(btn.dataset.vote, btn)));
-
+    let rows = requests.filter(row => (reqFilter === 'all' || row.category === reqFilter) && (reqSort !== 'added' || row.status === 'shipped'));
+    rows.sort(reqSort === 'top' ? (a, b) => b.votes - a.votes || String(b.created).localeCompare(String(a.created)) : (a, b) => String(b.created).localeCompare(String(a.created)));
+    requestList.innerHTML = reqError ? '<p class="req-empty">' + esc(reqError) + '</p>' : !reqLoaded ? '<p class="req-empty">Loading the board…</p>' : rows.length ? rows.map(requestCardHTML).join('') :
+      '<p class="req-empty">' + (reqSort === 'added' ? 'No shipped requests yet.' : requests.length ? 'No requests match this category.' : 'Nothing on the board yet. Post the first request.') + '</p>';
+    requestList.querySelectorAll('[data-vote]').forEach(btn => btn.addEventListener('click', () => voteRequest(btn.dataset.vote)));
+    requestList.querySelectorAll('[data-req-status]').forEach(select => select.addEventListener('change', () => {
+      reqWrite('/requests/status', { token: auth.token, id: select.dataset.reqStatus, status: select.value });
+    }));
+    requestsDrawer.querySelectorAll('[data-req-sort]').forEach(btn => btn.setAttribute('aria-pressed', String(btn.dataset.reqSort === reqSort)));
+    requestsDrawer.querySelectorAll('[data-req-filter]').forEach(btn => btn.setAttribute('aria-pressed', String(btn.dataset.reqFilter === reqFilter)));
     const rl = $('#reqLogin');
     if (rl) rl.addEventListener('click', startLogin);
     const rr = $('#reqRecheck');
     if (rr) rr.addEventListener('click', recheckMembership);
-
-    reqSubmit.disabled = reqBusy;
-    reqSubmit.textContent = reqBusy ? 'Posting…' : 'Submit Request';
+    reqSubmit.disabled = reqBusy || !reqLoaded || Boolean(reqError);
+    reqSubmit.textContent = reqBusy ? 'Saving…' : 'Submit Request';
+    syncReqFields();
+    renderSimilarRequest();
   }
 
-  function voteRequest(id, btn) {
+  function voteRequest(id) {
     if (reqBusy) return;
     reqWrite('/requests/vote', { token: auth.token, id });
   }
 
-  function submitRequest() {
+  function submitRequest(event) {
+    event.preventDefault();
     const title = reqTitle.value.trim();
-    const ae = reqAe.value.trim();
-    if (title.length < 3) {
-      reqTitle.focus();
-      toast({ title: 'Needs a title', sub: 'At least 3 characters — say which tool you want.', icon: ICON.x, warn: true });
-      return;
-    }
-    if (ae && !/^\d{4}$/.test(ae)) {
-      reqAe.focus();
-      toast({ title: 'AE version is a year', sub: 'Four digits, for example 2026. Leave it blank if any version works.', icon: ICON.x, warn: true });
+    const rawReference = reqReference.value.trim();
+    const reference = rawReference ? referenceURL(rawReference) : '';
+    if (title.length < 3 || (rawReference && !reference)) {
+      (title.length < 3 ? reqTitle : reqReference).focus();
+      toast({ title: 'Check the form', sub: title.length < 3 ? 'The title needs at least 3 characters.' : 'Use an HTTP or HTTPS product/demo link without login details.', icon: ICON.x, warn: true });
       return;
     }
     reqWrite('/requests', {
-      token: auth.token,
-      title,
-      category: reqCategory,
-      ae,
-      desc: reqDesc.value.trim()
+      token: auth.token, title, category: reqCategory, os: reqOs,
+      ae_versions: Array.from(reqVersions), reference, desc: reqDesc.value.trim()
     }).then((data) => {
       if (!data) return;
       reqTitle.value = '';
-      reqAe.value = '';
+      reqReference.value = '';
       reqDesc.value = '';
-      toast({ title: 'Request posted', sub: 'Verified members can upvote it from this panel.', icon: ICON.check });
+      reqCategory = 'extension';
+      reqOs = DETECTED_OS || 'both';
+      reqVersions = new Set(['any']);
+      reqComposeOpen = false;
+      reqSort = 'newest';
+      reqFilter = 'all';
+      renderReqCategories();
+      renderRequests();
+      reqNewRequest.focus({ preventScroll: true });
+      toast({ title: 'Request posted', sub: data.notification === 'sent' ? 'Saved to the board and sent to Discord.' : 'Saved to the board. Discord notification is unavailable.', icon: ICON.check });
     });
+  }
+
+  function wireRequestControls() {
+    if (!requestsDrawer) return;
+    $('#reqForm').addEventListener('submit', submitRequest);
+    reqTitle.addEventListener('input', renderSimilarRequest);
+    reqNewRequest.addEventListener('click', () => {
+      reqComposeOpen = !reqComposeOpen;
+      renderRequests();
+      if (reqComposeOpen && auth.state === VERIFIED) reqTitle.focus({ preventScroll: true });
+    });
+    requestsDrawer.querySelectorAll('[data-req-os]').forEach(btn => btn.addEventListener('click', () => { reqOs = btn.dataset.reqOs; syncReqFields(); }));
+    requestsDrawer.querySelectorAll('[data-req-ae]').forEach(btn => btn.addEventListener('click', () => {
+      const version = btn.dataset.reqAe;
+      if (version === 'any') reqVersions = new Set(['any']);
+      else {
+        reqVersions.delete('any');
+        if (reqVersions.has(version)) reqVersions.delete(version); else reqVersions.add(version);
+        if (!reqVersions.size) reqVersions.add('any');
+      }
+      syncReqFields();
+    }));
+    requestsDrawer.querySelectorAll('[data-req-sort]').forEach(btn => btn.addEventListener('click', () => { reqSort = btn.dataset.reqSort; renderRequests(); }));
+    requestsDrawer.querySelectorAll('[data-req-filter]').forEach(btn => btn.addEventListener('click', () => { reqFilter = btn.dataset.reqFilter; renderRequests(); }));
+    syncReqFields();
   }
 
   function openRequests() {
     if (!requestsDrawer) return;
     if (drawer.classList.contains('is-open')) hide(drawer);
+    reqComposeOpen = false;
+    reqAdmin = false;
     renderRequests();
     openScrim();
     requestsDrawer.classList.add('is-open');
     requestsDrawer.setAttribute('aria-hidden', 'false');
     loadRequests();
-    const focusTo = auth.state === VERIFIED ? reqTitle : $('#requestsClose');
+    const focusTo = reqNewRequest;
     if (focusTo) focusTo.focus({ preventScroll: true });
   }
   function closeRequests() {
@@ -1197,7 +1265,7 @@
             '" style="position:relative">' + ICON.download + 'Download<span class="ring"></span></button>';
       return (
       '<div class="file-row ' + (unlocked ? 'is-unlocked' : 'is-locked') + '">' +
-        '<span class="file-ico mono">' + esc(String(f.ext).replace('.', '')).toUpperCase() + '</span>' +
+        (f.ext ? '<span class="file-ico mono">' + esc(String(f.ext).replace('.', '')).toUpperCase() + '</span>' : '') +
         '<span class="file-info">' +
           '<span class="file-name">' + esc(f.name) + '</span>' +
           '<span class="file-sub">' + esc(f.label) + '</span>' +
@@ -1217,6 +1285,16 @@
 
   /* One archive, many files: the unpack password belongs beside the download
      link, not buried in the description — and only once the link is unlocked. */
+  function checksumHTML(r) {
+    const sha = String(r.sha256 || '').trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(sha)) return '';
+    return '<section class="checksum-box" aria-label="File checksum">' +
+      '<div class="checksum-head"><span class="checksum-title mono">SHA-256 CHECKSUM</span>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-checksum-copy="' + sha + '">' + ICON.copy + 'Copy</button></div>' +
+      '<code class="checksum-value">' + sha + '</code>' +
+      '<p class="checksum-help">Verify the downloaded file, then compare the result:<br>Windows<code>certutil -hashfile &lt;file&gt; SHA256</code>macOS<code>shasum -a 256 &lt;file&gt;</code></p></section>';
+  }
+
   function passwordHTML(r) {
     if (auth.state !== VERIFIED) return '';
     const pass = (r.files || []).map(f => f.pass).filter(Boolean)[0];
@@ -1291,19 +1369,19 @@
     zone.querySelectorAll('[data-ext-link]').forEach(a =>
       a.addEventListener('click', () => countDownload(r)));
     const cp = zone.querySelector('[data-pass-copy]');
-    if (cp) cp.addEventListener('click', () => copyPass(cp, cp.dataset.pass));
+    if (cp) cp.addEventListener('click', () => copyText(cp, cp.dataset.pass));
   }
 
-  function copyPass(btn, text) {
+  function copyText(btn, text, title = 'Password copied', sub = 'Paste it when the archive asks.') {
     const done = () => {
       btn.classList.add('is-done');
       setTimeout(() => btn.classList.remove('is-done'), 1600);
-      toast({ title: 'Password copied', sub: 'Paste it when the archive asks.' });
+      toast({ title, sub });
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(done, () => toast({ title: 'Copy failed', sub: 'Select the password and copy it manually.', icon: ICON.lock, warn: true }));
+      navigator.clipboard.writeText(text).then(done, () => toast({ title: 'Copy failed', sub: 'Select the value and copy it manually.', icon: ICON.lock, warn: true }));
     } else {
-      toast({ title: 'Clipboard unavailable', sub: 'Select the password and copy it manually.', icon: ICON.lock, warn: true });
+      toast({ title: 'Clipboard unavailable', sub: 'Select the value and copy it manually.', icon: ICON.lock, warn: true });
     }
   }
 
@@ -1378,6 +1456,7 @@
         '<div class="tab-panel" data-panel="install">' + installHTML(r) + '</div>' +
         '<p class="section-label section-label--tight">Downloads</p>' +
         '<div class="dl-zone"></div>' +
+        checksumHTML(r) +
         '<div class="m-actions">' +
           '<button class="save-btn' + (isSaved ? ' is-saved' : '') + '" data-save="' + esc(r.id) + '" aria-pressed="' + isSaved + '" aria-label="Save to vault">' + ICON.bookmark + '</button>' +
           '<a class="btn btn-ghost" href="' + INVITE_URL + '" target="_blank" rel="noopener noreferrer">' + ICON.discord + 'Server</a>' +
@@ -1393,6 +1472,8 @@
     modalBox.querySelector('.save-btn').addEventListener('click', (e) => toggleSave(r.id, e.currentTarget));
 
     wireDownloads(r);
+    const checksumCopy = modalBox.querySelector('[data-checksum-copy]');
+    if (checksumCopy) checksumCopy.addEventListener('click', () => copyText(checksumCopy, checksumCopy.dataset.checksumCopy, 'Checksum copied', 'Compare it with your local SHA-256 result.'));
 
     modalBox.querySelectorAll('[data-shot]').forEach(btn => btn.addEventListener('click', () => {
       const shot = $('#modalShot');
@@ -1869,6 +1950,7 @@
   renderCategoryHead();
   renderBrowse();
   renderReqCategories();
+  wireRequestControls();
   updateSavedUI();
   startServerStats();
 

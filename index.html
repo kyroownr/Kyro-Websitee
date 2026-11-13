@@ -171,31 +171,74 @@
         <h3 class="drawer-title">Requests</h3>
         <p class="drawer-sub mono" id="requestCount">loading…</p>
       </div>
-      <button type="button" class="close-x" id="requestsClose" aria-label="Close requests"></button>
-    </div>
-
-    <div class="req-compose" id="reqCompose" hidden>
-      <label class="field">
-        <span class="field-label mono">Title</span>
-        <input class="field-input" type="text" id="reqTitle" maxlength="90" placeholder="What should the vault add next?" autocomplete="off" />
-      </label>
-      <div class="field">
-        <span class="field-label mono" id="reqCatLabel">Category</span>
-        <div class="cat-row" id="reqCategories" role="group" aria-labelledby="reqCatLabel"></div>
+      <div class="req-head-actions">
+        <button type="button" class="btn btn-ghost btn-sm mono" id="reqNewRequest" aria-expanded="false" aria-controls="reqCompose reqGate">+ New Request</button>
+        <button type="button" class="close-x" id="requestsClose" aria-label="Close requests"></button>
       </div>
-      <label class="field">
-        <span class="field-label mono">AE Version</span>
-        <input class="field-input mono" type="text" id="reqAe" inputmode="numeric" maxlength="4" placeholder="2026" autocomplete="off" />
-      </label>
-      <label class="field">
-        <span class="field-label mono">Short Description</span>
-        <textarea class="field-input" id="reqDesc" rows="3" maxlength="280" placeholder="What it should do, and why you want it."></textarea>
-      </label>
-      <button type="button" class="btn btn-primary" id="reqSubmit">Submit Request</button>
     </div>
 
-    <div class="req-gate" id="reqGate" hidden></div>
-    <div class="req-list" id="requestList"></div>
+    <div class="req-scroll">
+      <div class="req-controls">
+        <div class="cat-row" id="reqSort" role="group" aria-label="Sort requests">
+          <button type="button" class="cat-chip mono" data-req-sort="top" aria-pressed="true">TOP VOTED</button>
+          <button type="button" class="cat-chip mono" data-req-sort="newest" aria-pressed="false">NEWEST</button>
+          <button type="button" class="cat-chip mono" data-req-sort="added" aria-pressed="false">ADDED</button>
+        </div>
+        <div class="cat-row" id="reqFilters" role="group" aria-label="Filter requests">
+          <button type="button" class="cat-chip mono" data-req-filter="all" aria-pressed="true">ALL</button>
+          <button type="button" class="cat-chip mono" data-req-filter="extension" aria-pressed="false">EXTENSION</button>
+          <button type="button" class="cat-chip mono" data-req-filter="script" aria-pressed="false">SCRIPT</button>
+          <button type="button" class="cat-chip mono" data-req-filter="preset" aria-pressed="false">PRESET</button>
+          <button type="button" class="cat-chip mono" data-req-filter="project" aria-pressed="false">PROJECT</button>
+          <button type="button" class="cat-chip mono" data-req-filter="soundfx" aria-pressed="false">SOUND FX</button>
+        </div>
+      </div>
+
+      <div class="req-compose" id="reqCompose" inert>
+        <div class="req-compose-inner">
+          <form class="req-fields" id="reqForm">
+            <label class="field">
+              <span class="field-label mono">Title</span>
+              <input class="field-input" type="text" id="reqTitle" minlength="3" maxlength="90" placeholder="What should the vault add next?" autocomplete="off" required />
+            </label>
+            <div class="req-similar" id="reqSimilar" aria-live="polite" hidden></div>
+            <div class="field">
+              <span class="field-label mono" id="reqCatLabel">Category</span>
+              <div class="cat-row" id="reqCategories" role="group" aria-labelledby="reqCatLabel"></div>
+            </div>
+            <div class="field">
+              <span class="field-label mono" id="reqOsLabel">OS</span>
+              <div class="cat-row" id="reqOs" role="group" aria-labelledby="reqOsLabel">
+                <button type="button" class="cat-chip mono" data-req-os="windows" aria-pressed="false">WINDOWS</button>
+                <button type="button" class="cat-chip mono" data-req-os="macos" aria-pressed="false">MACOS</button>
+                <button type="button" class="cat-chip mono" data-req-os="both" aria-pressed="false">BOTH</button>
+              </div>
+            </div>
+            <div class="field">
+              <span class="field-label mono" id="reqAeLabel">AE Versions</span>
+              <div class="cat-row" id="reqAeVersions" role="group" aria-labelledby="reqAeLabel">
+                <button type="button" class="cat-chip mono" data-req-ae="2024" aria-pressed="false">2024</button>
+                <button type="button" class="cat-chip mono" data-req-ae="2025" aria-pressed="false">2025</button>
+                <button type="button" class="cat-chip mono" data-req-ae="2026" aria-pressed="false">2026</button>
+                <button type="button" class="cat-chip mono" data-req-ae="any" aria-pressed="true">ANY</button>
+              </div>
+            </div>
+            <label class="field">
+              <span class="field-label mono">Reference Link (Optional)</span>
+              <input class="field-input" type="url" id="reqReference" maxlength="500" placeholder="Product page or demo URL" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span class="field-label mono">Short Description</span>
+              <textarea class="field-input" id="reqDesc" rows="3" maxlength="280" placeholder="What it should do, and why you want it."></textarea>
+            </label>
+            <button type="submit" class="btn btn-primary" id="reqSubmit">Submit Request</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="req-gate" id="reqGate" hidden></div>
+      <div class="req-list" id="requestList" aria-live="polite"></div>
+    </div>
   </aside>
 
   <!-- Toast stack (downloads, access notices) -->

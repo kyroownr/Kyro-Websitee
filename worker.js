@@ -10,7 +10,7 @@
  *   GET  /requests   ?token=…   →  { requests } wishlist board, ordered by votes.
  *                                  token is optional; with it each row carries
  *                                  you_voted for that member only.
- *   POST /requests   { token, title, category, ae, desc }  → create a request
+ *   POST /requests   { token, title, category, os, ae_versions, reference, desc }
  *   POST /requests/vote   { token, id }   → toggle one vote, returns the board
  *   POST /requests/status { token, id, status } → members listed in KYRO_ADMIN_IDS only
  *   GET  /downloads  →  { counts } live download totals, one per asset id.
@@ -20,13 +20,13 @@
  *                                      counted once.
  *
  * Bindings:
- *   KYRO_DATA   Workers KV namespace holding the board under one key and the
- *               download counters under another. Writes use compare-and-swap so
- *               two simultaneous votes cannot clobber each other.
+ *   KYRO_DATA       Workers KV for download counters and the legacy board import.
+ *   KYRO_REQUESTS   SQLite Durable Object with transactional requests and votes.
  *
  * Plain vars:
  *   KYRO_ADMIN_IDS  comma separated Discord user ids allowed to move a request
- *                   between UNDER REVIEW / IN PROGRESS / ADDED TO VAULT.
+ *                   between OPEN / PLANNED / IN PROGRESS / SHIPPED.
+ *   DISCORD_REQUESTS_WEBHOOK_URL  secret containing the #vault-requests webhook.
  *
  * Secrets (Settings → Variables; a plain text var is fine, the encrypted
  * "secret" type is better):
@@ -145,15 +145,19 @@ async function handleVerify(request, url, env, cors) {
 /* ------------------------------ requests board ---------------------------- */
 
 const REQ_KEY = 'kyro.requests.v1';
-const REQ_STATUSES = ['under_review', 'in_progress', 'added_to_vault'];
+const REQ_STATUSES = ['open', 'planned', 'in_progress', 'shipped'];
 const REQ_CATEGORIES = ['extension', 'script', 'preset', 'project', 'soundfx', 'other'];
+const REQ_OS = ['windows', 'macos', 'both'];
+const REQ_AE = ['2024', '2025', '2026', 'any'];
 
 function fail(status, code, message) {
   return Object.assign(new Error(message), { status, code });
 }
 
 async function jsonBody(request) {
-  return await request.json().catch(() => ({}));
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw fail(400, 'bad_body', 'Send a JSON object.');
+  return body;
 }
 
 /* Control characters and newline runs have no business in a one-line card. */
@@ -165,40 +169,141 @@ function cleanText(value, max) {
     .slice(0, max);
 }
 
-/* One KV key holds the whole board, so every write is a read-modify-write.
-   Compare-and-swap makes a stale write fail loudly instead of quietly
-   discarding another member's vote. The counters reuse the same machinery
-   under a different key. */
 async function readDoc(env, key, fallback) {
   if (!env.KYRO_DATA) {
     throw fail(500, 'kv_unbound', 'The KYRO_DATA KV namespace is not bound to this worker.');
   }
   const got = await env.KYRO_DATA.getWithMetadata(key, { type: 'json' });
-  return { value: got.value == null ? fallback : got.value, cas: (got.metadata && got.metadata.cas) || 0 };
+  return { value: got.value == null ? fallback : got.value };
 }
 
-async function mutateDoc(env, key, fallback, label, fn) {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const { value, cas } = await readDoc(env, key, fallback);
-    const next = fn(value);
+async function mutateDoc(env, key, fallback, fn) {
+  const { value } = await readDoc(env, key, fallback);
+  const next = fn(value);
+  await env.KYRO_DATA.put(key, JSON.stringify(next));
+  return next;
+}
+
+function requestTitleKey(title) {
+  return title.toLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+function starterRequests() {
+  const created = new Date().toISOString();
+  return [
+    ['starter-bounce', 'Inertial bounce & graph helper', 'script', 'Apply adjustable bounce expressions and tidy easing curves without rebuilding them by hand.'],
+    ['starter-glow', 'Optical glow preset pack', 'preset', 'Reusable soft glow, bloom, and highlight presets for clean text and footage edits.'],
+    ['starter-render', 'Batch render utility', 'script', 'Queue multiple compositions with consistent output names and export locations.'],
+    ['starter-whoosh', 'Transition whoosh sound pack', 'soundfx', 'A compact collection of clean whooshes and impacts for motion transitions.']
+  ].map(([id, title, category, desc]) => ({
+    id, title, category, desc, os: 'both', ae_versions: ['any'], reference: '',
+    status: 'open', created, starter: true, voters: []
+  }));
+}
+
+export class KyroRequests {
+  constructor(state, env) {
+    this.state = state;
+    state.blockConcurrencyWhile(async () => {
+      if (await state.storage.get('board') !== undefined) return;
+      const legacy = await env.KYRO_DATA.get(REQ_KEY, { type: 'json' });
+      if (legacy !== null && !Array.isArray(legacy)) throw new Error('The existing requests board is not an array.');
+      const rows = (legacy || []).map(row => ({
+        ...row,
+        status: row.status === 'added_to_vault' ? 'shipped' : row.status === 'under_review' ? 'open' : REQ_STATUSES.includes(row.status) ? row.status : 'open',
+        os: REQ_OS.includes(row.os) ? row.os : 'both',
+        ae_versions: row.ae_versions || (row.ae ? [row.ae] : ['any']),
+        reference: row.reference || '',
+        voters: row.voters || []
+      }));
+      await state.storage.put('board', rows.length ? rows : starterRequests());
+    });
+  }
+
+  async fetch(request) {
     try {
-      await env.KYRO_DATA.put(key, JSON.stringify(next), { metadata: { cas: cas + 1 }, cas });
-      return next;
+      const input = await request.json();
+      if (input.action === 'read') return json({ rows: await this.state.storage.get('board') }, 200, {});
+      const rows = await this.state.storage.transaction(async storage => {
+        const all = await storage.get('board');
+        let next;
+        if (input.action === 'create') {
+          const duplicate = all.find(row => requestTitleKey(row.title) === requestTitleKey(input.row.title));
+          if (duplicate) throw fail(409, 'duplicate_request', 'This request already exists. Upvote "' + duplicate.title + '" instead.');
+          next = all.concat([input.row]);
+        } else {
+          const row = all.find(item => item.id === input.id);
+          if (!row) throw fail(404, 'unknown_request', 'That request no longer exists.');
+          if (input.action === 'vote') {
+            const voters = row.voters.includes(input.viewerId) ? row.voters.filter(id => id !== input.viewerId) : row.voters.concat([input.viewerId]);
+            next = all.map(item => item.id === input.id ? { ...item, voters } : item);
+          } else if (input.action === 'status') {
+            next = all.map(item => item.id === input.id ? { ...item, status: input.status } : item);
+          } else throw fail(400, 'bad_action', 'Unknown requests operation.');
+        }
+        await storage.put('board', next);
+        return next;
+      });
+      return json({ rows }, 200, {});
     } catch (err) {
-      const msg = String((err && err.message) || err);
-      if (!/cas|conflict|mismatch|stale/i.test(msg)) throw err;
+      return json({ error: err.message, code: err.code || 'board_error' }, err.status || 500, {});
     }
   }
-  throw fail(409, 'write_busy', 'The ' + label + ' changed while you were writing. Try again.');
 }
 
-async function readBoard(env) {
-  const { value } = await readDoc(env, REQ_KEY, []);
-  return Array.isArray(value) ? value : [];
+async function requestBoard(env, input) {
+  if (!env.KYRO_REQUESTS) throw fail(500, 'board_unbound', 'The KYRO_REQUESTS Durable Object is not bound to this worker.');
+  const board = env.KYRO_REQUESTS.get(env.KYRO_REQUESTS.idFromName('community'));
+  const response = await board.fetch('https://requests.internal/', { method: 'POST', body: JSON.stringify(input) });
+  const data = await response.json();
+  if (!response.ok) throw fail(response.status, data.code, data.error);
+  return data.rows;
 }
 
-function mutateBoard(env, fn) {
-  return mutateDoc(env, REQ_KEY, [], 'requests board', fn);
+function isAdmin(session, env) {
+  return Boolean(session && session.inServer && String(env.KYRO_ADMIN_IDS || '').split(',').map(id => id.trim()).includes(session.id));
+}
+
+function requestReference(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (raw.length > 500) throw fail(400, 'bad_reference', 'The reference link must be 500 characters or fewer.');
+  try {
+    const url = new URL(raw);
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error();
+    return url.href;
+  } catch { throw fail(400, 'bad_reference', 'Use an HTTP or HTTPS reference link without login details.'); }
+}
+
+async function notifyRequest(row, session, env) {
+  if (!env.DISCORD_REQUESTS_WEBHOOK_URL) return 'not_configured';
+  try {
+    const url = new URL(env.DISCORD_REQUESTS_WEBHOOK_URL);
+    if (url.protocol !== 'https:' || url.hostname !== 'discord.com' || !/^\/api(?:\/v\d+)?\/webhooks\/\d+\/[\w-]+$/.test(url.pathname)) throw new Error();
+    const response = await fetch(url.href, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(8000),
+      body: JSON.stringify({
+        allowed_mentions: { parse: [] },
+        embeds: [{
+          title: row.title, description: row.desc || 'No description supplied.', color: 0x08090d,
+          fields: [
+            { name: 'Category', value: row.category.toUpperCase(), inline: true },
+            { name: 'OS', value: row.os.toUpperCase(), inline: true },
+            { name: 'AE Versions', value: row.ae_versions.join(' / ').toUpperCase(), inline: true },
+            { name: 'Status', value: 'OPEN', inline: true },
+            { name: 'Requested by', value: cleanText(session.username, 100), inline: true },
+            { name: 'Reference', value: row.reference || 'None supplied.' }
+          ],
+          footer: { text: 'Kyro Vault Requests · ' + row.id }, timestamp: row.created
+        }]
+      })
+    });
+    if (!response.ok) { console.warn('[kyro-requests] Discord notification failed: HTTP ' + response.status); return 'failed'; }
+    return 'sent';
+  } catch {
+    console.warn('[kyro-requests] Discord notification could not be delivered.');
+    return 'failed';
+  }
 }
 
 /* Voter ids never leave the worker: the board exposes a count and, for the
@@ -209,9 +314,12 @@ function project(rows, viewerId) {
       id: r.id,
       title: r.title,
       category: r.category,
-      ae: r.ae,
+      os: r.os,
+      ae_versions: r.ae_versions,
+      reference: r.reference,
+      starter: Boolean(r.starter),
       desc: r.desc,
-      status: REQ_STATUSES.indexOf(r.status) === -1 ? 'under_review' : r.status,
+      status: REQ_STATUSES.includes(r.status) ? r.status : 'open',
       created: r.created,
       votes: (r.voters || []).length,
       you_voted: Boolean(viewerId) && (r.voters || []).indexOf(viewerId) !== -1
@@ -239,75 +347,54 @@ function bearerToken(request, url) {
 }
 
 async function handleRequests(request, url, env, cors) {
-  const rows = await readBoard(env);
-
   if (request.method === 'GET') {
-    let viewerId = '';
+    let session = null;
     const token = bearerToken(request, url);
-    // An expired or non-member token must not blank the public board.
     if (token) {
-      try {
-        const s = await readSession(token, env);
-        if (s.inServer) viewerId = s.id;
-      } catch (err) { viewerId = ''; }
+      try { session = await readSession(token, env); } catch { session = null; }
     }
-    return json({ requests: project(rows, viewerId) }, 200, cors);
+    const rows = await requestBoard(env, { action: 'read' });
+    return json({ requests: project(rows, session && session.inServer ? session.id : ''), is_admin: isAdmin(session, env) }, 200, cors);
   }
-
   if (request.method !== 'POST') return json({ error: 'Use GET or POST.' }, 405, cors);
-
   const input = await jsonBody(request);
-  const session = await requireMember(input.token, env);
-
+  const session = await requireMember(bearerToken(request, url) || input.token, env);
+  if (typeof input.title !== 'string') throw fail(400, 'bad_title', 'Give the request a title.');
   const title = cleanText(input.title, 90);
   if (title.length < 3) throw fail(400, 'bad_title', 'Give the request a title of at least 3 characters.');
-
-  const wanted = cleanText(input.category, 20);
-  const category = REQ_CATEGORIES.indexOf(wanted) === -1 ? 'other' : wanted;
-  const aeRaw = cleanText(input.ae, 8);
+  if (!REQ_CATEGORIES.includes(input.category)) throw fail(400, 'bad_category', 'Choose a request category.');
+  if (!REQ_OS.includes(input.os)) throw fail(400, 'bad_os', 'Choose Windows, macOS, or Both.');
+  if (!Array.isArray(input.ae_versions) || !input.ae_versions.length || input.ae_versions.length > 3 || input.ae_versions.some(version => !REQ_AE.includes(version))) {
+    throw fail(400, 'bad_ae_versions', 'Choose AE 2024, 2025, 2026, or Any.');
+  }
+  const versions = [...new Set(input.ae_versions)].sort();
+  if (versions.includes('any') && versions.length > 1) throw fail(400, 'bad_ae_versions', 'Any cannot be combined with a specific AE version.');
   const row = {
-    id: crypto.randomUUID(),
-    title,
-    category,
-    ae: /^\d{4}$/.test(aeRaw) ? aeRaw : '',
-    desc: cleanText(input.desc, 280),
-    status: 'under_review',
-    created: new Date().toISOString(),
-    by: session.id,
-    // The author is counted as their first vote.
-    voters: [session.id]
+    id: crypto.randomUUID(), title, category: input.category, os: input.os,
+    ae_versions: versions, reference: requestReference(input.reference), desc: cleanText(input.desc, 280),
+    status: 'open', created: new Date().toISOString(), by: session.id, voters: [session.id]
   };
-
-  const written = await mutateBoard(env, (all) => all.concat([row]));
-  return json({ id: row.id, requests: project(written, session.id) }, 201, cors);
+  await requestBoard(env, { action: 'create', row });
+  const notification = await notifyRequest(row, session, env);
+  const written = await requestBoard(env, { action: 'read' });
+  return json({ id: row.id, requests: project(written, session.id), is_admin: isAdmin(session, env), notification }, 201, cors);
 }
 
 async function handleVote(request, env, cors) {
   if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
   const input = await jsonBody(request);
-  const session = await requireMember(input.token, env);
+  const session = await requireMember(bearerToken(request, new URL(request.url)) || input.token, env);
   const id = cleanText(input.id, 60);
   if (!id) throw fail(400, 'bad_id', 'Missing request id.');
 
-  let matched = false;
-  const written = await mutateBoard(env, (all) => all.map(r => {
-    if (r.id !== id) return r;
-    matched = true;
-    const voters = r.voters || [];
-    const next = voters.indexOf(session.id) === -1
-      ? voters.concat([session.id])
-      : voters.filter(v => v !== session.id);
-    return Object.assign({}, r, { voters: next });
-  }));
-  if (!matched) throw fail(404, 'unknown_request', 'That request no longer exists.');
-
-  return json({ requests: project(written, session.id) }, 200, cors);
+  const written = await requestBoard(env, { action: 'vote', id, viewerId: session.id });
+  return json({ requests: project(written, session.id), is_admin: isAdmin(session, env) }, 200, cors);
 }
 
 async function handleStatus(request, env, cors) {
   if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
   const input = await jsonBody(request);
-  const session = await requireMember(input.token, env);
+  const session = await requireMember(bearerToken(request, new URL(request.url)) || input.token, env);
 
   const admins = String(env.KYRO_ADMIN_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
   if (!admins.length) {
@@ -321,15 +408,9 @@ async function handleStatus(request, env, cors) {
   }
 
   const id = cleanText(input.id, 60);
-  let matched = false;
-  const written = await mutateBoard(env, (all) => all.map(r => {
-    if (r.id !== id) return r;
-    matched = true;
-    return Object.assign({}, r, { status });
-  }));
-  if (!matched) throw fail(404, 'unknown_request', 'That request no longer exists.');
-
-  return json({ requests: project(written, session.id) }, 200, cors);
+  if (!id) throw fail(400, 'bad_id', 'Missing request id.');
+  const written = await requestBoard(env, { action: 'status', id, status });
+  return json({ requests: project(written, session.id), is_admin: true }, 200, cors);
 }
 
 /* ------------------------------ download counts -------------------------- */
@@ -354,11 +435,11 @@ async function handleDownloads(request, url, env, cors) {
   if (request.method !== 'POST') return json({ error: 'Use GET or POST.' }, 405, cors);
 
   const input = await jsonBody(request);
-  const session = await requireMember(input.token, env);
+  const session = await requireMember(bearerToken(request, new URL(request.url)) || input.token, env);
   const id = cleanText(input.id, 60);
   if (!id) throw fail(400, 'bad_id', 'Missing asset id.');
 
-  const written = await mutateDoc(env, DL_KEY, { counts: {}, by: {} }, 'download counters', (current) => {
+  const written = await mutateDoc(env, DL_KEY, { counts: {}, by: {} }, (current) => {
     const d = countsDoc(current);
     const seen = Array.isArray(d.by[session.id]) ? d.by[session.id] : [];
     if (seen.indexOf(id) !== -1) return d;

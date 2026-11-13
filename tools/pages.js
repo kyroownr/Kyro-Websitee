@@ -99,14 +99,20 @@ const head = (p) => `<!DOCTYPE html>
     <section class="access-strip" id="accessStrip" aria-live="polite"></section>
 
     <!-- ============ Two shelves: the editor, then what runs inside it ==== -->
-    <section class="section">
-      <p class="section-label">Software <span class="section-note mono" id="softwareNote"></span></p>
-      <div class="grid" id="softwareGrid"></div>
-      <div class="empty" id="softwareEmpty" hidden>
-        <p>No editors listed for ${p.title} yet.</p>
-        <a class="btn btn-ghost" href="/#discordCard">Ask in the Kyro Discord</a>
+    <details class="section software-section" id="softwareSection">
+      <summary class="software-toggle" aria-controls="softwareContent">
+        <span class="section-label">Software</span>
+        <span class="section-note mono" id="softwareNote"></span>
+        <svg class="software-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+      </summary>
+      <div id="softwareContent">
+        <div class="grid" id="softwareGrid"></div>
+        <div class="empty" id="softwareEmpty" hidden>
+          <p>No editors listed for ${p.title} yet.</p>
+          <a class="btn btn-ghost" href="/#discordCard">Ask in the Kyro Discord</a>
+        </div>
       </div>
-    </section>
+    </details>
 
     <section class="section">
       <p class="section-label">Tools <span class="section-note mono" id="toolsNote"></span></p>

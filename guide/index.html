@@ -53,11 +53,15 @@
   <main class="shell">
     <header class="page-head">
       <p class="section-label">Guide</p>
-      <h1 class="page-title">Beginner's Guide to After Effects</h1>
-      <p class="page-lede">Start here for After Effects setup, plugins, composition settings, and shortcuts.</p>
+      <h1 class="page-title" id="guideTitle">Beginner's Guide to After Effects</h1>
+      <p class="page-lede" id="guideLede">Start here for After Effects setup, plugins, composition settings, and shortcuts.</p>
+      <div class="cat-nav" role="group" aria-label="Guide edition">
+        <button type="button" class="cat-chip mono" data-guide-os="windows" aria-pressed="true" aria-controls="guideWindows">Windows</button>
+        <button type="button" class="cat-chip mono" data-guide-os="macos" aria-pressed="false" aria-controls="guideMac">MacBook</button>
+      </div>
     </header>
 
-    <div class="prose">
+    <div class="prose" id="guideWindows">
       <section class="prose-section">
         <h2 class="prose-title">1. PC &amp; Hardware Requirements</h2>
         <p class="prose-body">After Effects runs differently from normal video editors—it relies heavily on your CPU, RAM, and SSD storage rather than just your graphics card.</p>
@@ -132,6 +136,78 @@
       </section>
     </div>
 
+    <div class="prose" id="guideMac" hidden>
+      <section class="prose-section">
+        <h2 class="prose-title">1. MacBook &amp; Hardware Requirements</h2>
+        <p class="prose-body">After Effects relies heavily on unified memory (RAM), CPU speed, and fast SSD storage. On Apple Silicon (M1, M2, M3, M4+), memory is shared between the CPU and GPU, making RAM size critical.</p>
+        <ul class="g-list">
+          <li><b>Unified Memory (RAM):</b> Aim for 32GB or 36GB+ for smooth playback. 16GB/18GB works for short social edits, while 8GB is too low and will stutter constantly.</li>
+          <li><b>Storage:</b> Keep at least 50GB–100GB of free space on your internal SSD for After Effects' Disk Cache. If your MacBook only has a 256GB or 512GB drive, store your raw video footage on a fast external NVMe SSD (Thunderbolt/USB-C).</li>
+          <li><b>Power Mode:</b> Always keep your MacBook plugged into power when rendering or previewing heavy effects—battery mode throttles performance.</li>
+        </ul>
+      </section>
+      <section class="prose-section">
+        <h2 class="prose-title">2. Which Version to Install</h2>
+        <p class="prose-body">Pick the newest native Apple Silicon version your plugins support.</p>
+        <ul class="g-list">
+          <li><b>Watch out for compatibility:</b> Newer versions can open old project files, but older versions cannot open files saved in newer versions. (If sharing with someone on an older version, use File &gt; Save As &gt; Save a Copy As).</li>
+          <li><b>Apple Silicon (M-Series) Compatibility:</b> Most modern plugins run natively on M-series chips, while some older plugins require running After Effects under Rosetta (slower). Avoid outdated, cracked, or unmaintained plugins—they frequently crash on newer macOS versions.</li>
+        </ul>
+      </section>
+      <section class="prose-section">
+        <h2 class="prose-title">3. Plugins (Add-ons)</h2>
+        <p class="prose-body">Don't install everything at once—it slows down startup times and clutters menus. Only install what matches your editing style:</p>
+        <ul class="g-list">
+          <li><b>Glow &amp; Color:</b> Deep Glow (clean glows), Magic Bullet Looks (color grading).</li>
+          <li><b>Smooth Motion &amp; Slow-Mo:</b> RSMB (adds realistic motion blur), Twixtor (smooth slow motion).</li>
+          <li><b>Effects &amp; Transitions:</b> Sapphire, BCC, or Universe (glitches, distortions, VHS looks).</li>
+          <li><b>3D &amp; Particles:</b> Element 3D (3D models/text), Trapcode (particles/backgrounds).</li>
+        </ul>
+      </section>
+      <section class="prose-section">
+        <h2 class="prose-title">4. Setting Up Your Project (Composition)</h2>
+        <ul class="g-list">
+          <li><b>Resolution &amp; Shape:</b>
+            <ul class="g-list">
+              <li>1080 × 1080 (1:1): Square — best for practice and multi-platform edits.</li>
+              <li>1080 × 1920 (9:16): Vertical — best for TikTok, Reels, and Shorts.</li>
+              <li>1920 × 1080 (16:9): Horizontal — best for YouTube.</li>
+            </ul>
+          </li>
+          <li><b>Frame Rate (FPS):</b> Match your source footage (24fps for film/anime, 30fps for general social media, 60fps for gaming/heavy slow-mo).</li>
+          <li><b>Background &amp; Duration:</b> Set the length to match your audio track and keep the background black.</li>
+        </ul>
+      </section>
+      <section class="prose-section">
+        <h2 class="prose-title">5. Saving Your Own Presets</h2>
+        <p class="prose-body">Instead of rebuilding your favorite shakes, transitions, or color grades every time, save them as presets:</p>
+        <ul class="g-list">
+          <li>Select the effects or keyframes you want to save.</li>
+          <li>Go to Animation &gt; Save Animation Preset.</li>
+          <li>Save them in your macOS user folder: <code>~/Documents/Adobe/After Effects [version]/User Presets</code> (never inside the <code>/Applications</code> folder, so updates don't wipe them out) and organize them into folders like Shakes, Color, and Text.</li>
+        </ul>
+      </section>
+      <section class="prose-section">
+        <h2 class="prose-title">6. Essential MacBook Shortcuts to Memorize First</h2>
+        <p class="prose-body">(Note: If Space doesn't preview or Mac system shortcuts interfere, check System Settings &gt; Keyboard &gt; Keyboard Shortcuts).</p>
+        <div class="g-table-wrap">
+          <table class="g-table">
+            <thead><tr><th scope="col">Category</th><th scope="col">Mac Shortcut</th><th scope="col">What it does</th></tr></thead>
+            <tbody>
+              <tr><td>Layer Properties</td><td><kbd>P</kbd> / <kbd>S</kbd> / <kbd>R</kbd> / <kbd>T</kbd></td><td>Opens Position, Scale, Rotation, Opacity</td></tr>
+              <tr><td>Keyframes</td><td><kbd>U</kbd></td><td>Shows only properties that have keyframes</td></tr>
+              <tr><td>Cutting</td><td><kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>D</kbd></td><td>Splits the selected layer at the playhead</td></tr>
+              <tr><td>Trimming</td><td><kbd>Option</kbd> + <kbd>[</kbd> or <kbd>Option</kbd> + <kbd>]</kbd></td><td>Trims the start or end of a layer</td></tr>
+              <tr><td>Duplicating</td><td><kbd>Cmd</kbd> + <kbd>D</kbd></td><td>Duplicates the selected layer</td></tr>
+              <tr><td>Playback</td><td><kbd>Space</kbd></td><td>Plays or pauses preview</td></tr>
+              <tr><td>Project</td><td><kbd>Cmd</kbd> + <kbd>Option</kbd> + <kbd>Y</kbd></td><td>Creates a new Adjustment Layer</td></tr>
+              <tr><td>Settings</td><td><kbd>Cmd</kbd> + <kbd>,</kbd></td><td>Opens After Effects Settings/Preferences</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
     <p class="page-foot">
       <a class="btn btn-primary" href="/">Back to the Vault</a>
       <a class="banner-link" href="https://discord.gg/5ch7XeNg98" target="_blank" rel="noopener noreferrer">Join the Kyro Discord ↗</a>
@@ -161,6 +237,23 @@
   <script>
     /* Same live stamp as the vault page; this page ships no app bundle. */
     (function () {
+      const editions = { windows: document.getElementById('guideWindows'), macos: document.getElementById('guideMac') };
+      const buttons = document.querySelectorAll('[data-guide-os]');
+      const selectEdition = (os) => {
+        Object.entries(editions).forEach(([key, panel]) => { panel.hidden = key !== os; });
+        buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.guideOs === os)));
+        document.getElementById('guideTitle').textContent = os === 'macos' ? "Beginner's Guide to After Effects (MacBook Edition)" : "Beginner's Guide to After Effects";
+        document.getElementById('guideLede').textContent = os === 'macos' ? 'Start here for MacBook setup, Apple Silicon plugin tips, composition settings, and macOS shortcuts.' : 'Start here for After Effects setup, plugins, composition settings, and shortcuts.';
+      };
+      let storedOs;
+      try { storedOs = JSON.parse(localStorage.getItem('kyro.os.v1')); } catch {}
+      const requestedOs = new URLSearchParams(location.search).get('os');
+      const defaultOs = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent + ' ' + navigator.platform) ? 'macos' : 'windows';
+      selectEdition(requestedOs === 'macos' || requestedOs === 'windows' ? requestedOs : storedOs === 'macos' || storedOs === 'windows' ? storedOs : defaultOs);
+      buttons.forEach(button => button.addEventListener('click', () => {
+        selectEdition(button.dataset.guideOs);
+        try { localStorage.setItem('kyro.os.v1', JSON.stringify(button.dataset.guideOs)); } catch {}
+      }));
       const two = (n) => String(n).padStart(2, '0');
       const el = document.getElementById('siteUpdated');
       const tick = () => {

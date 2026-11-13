@@ -6,6 +6,7 @@
   "name": "kyro-auth",
   "main": "worker.js",
   "compatibility_date": "2025-09-01",
+  "keep_vars": true,
 
   // Was already enabled on the dashboard; declaring it keeps `wrangler deploy`
   // from switching Worker Logs off with its local default.
@@ -20,8 +21,15 @@
     "KYRO_GUILD_ID": "1539961184323772498"
   },
 
-  // Requests / wishlist board.
   "kv_namespaces": [
     { "binding": "KYRO_DATA", "id": "d8cdcab9b50242128f73675a3b242b01" }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "KYRO_REQUESTS", "class_name": "KyroRequests" }
+    ]
+  },
+  "migrations": [
+    { "tag": "requests-v1", "new_sqlite_classes": ["KyroRequests"] }
   ]
 }

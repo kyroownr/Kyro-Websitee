@@ -18,6 +18,7 @@
                it is never filled in with a guess
      gallery:  real screenshot paths, shown in the modal stage instead of the
                generated canvas preview
+   sha256: optional SHA-256 checksum of the resource archive; omit if unknown.
    files[].sha256 is optional and powers the VirusTotal link: paste the real
    hash of the shipped artifact (64 hex chars) and the report button appears on
    that file's row. Anything malformed or absent renders no link at all, so a
@@ -226,7 +227,16 @@ window.KYRO_SEED = [
       '/assets/toonboom-scene.webp',
       '/assets/toonboom-rig.webp'
     ],
-    files: [],
+    files: [
+      {
+        ext: '',
+        name: 'Toon Boom Harmony Premium',
+        size: '',
+        label: 'Windows',
+        url: 'https://1024terabox.com/s/1exMINTeowOqb6mzXgZ_TIQ',
+        pass: 'Kyro'
+      }
+    ],
     features: [
       'As the highest tier of the Harmony lineup, it provides a complete end-to-end pipeline—from sketching and rigging to compositing and special effects.',
       'Advanced Character Rigging & Deformers: Build complex cut-out character rigs with bones, curves, and master controllers. Deformers allow you to bend, squash, and stretch artwork smoothly so rigs move naturally without redrawing every frame.',
