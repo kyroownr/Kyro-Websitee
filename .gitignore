@@ -1,0 +1,16 @@
+# Secrets — the Discord client secret lives only in the Worker's environment.
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+.wrangler/
+
+# Templates that document the names above stay in the repo.
+!.env.example
+!.dev.vars.example
+
+# Local tooling and OS noise
+node_modules/
+*.log
+.DS_Store
+Thumbs.db

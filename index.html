@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kyro — Free Tools &amp; Resources for Editors</title>
+  <meta name="description" content="Free After Effects software and resources for editors. Downloads verified through the Kyro Discord." />
+  <meta name="theme-color" content="#08090d" />
+
+  <!-- Social preview. og:url / og:image must stay absolute: link crawlers
+       resolve them outside the page, so a relative path renders no card. -->
+  <link rel="canonical" href="https://kyro.new.tg/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Kyro" />
+  <meta property="og:url" content="https://kyro.new.tg/" />
+  <meta property="og:title" content="Kyro — Free Tools &amp; Resources for Editors" />
+  <meta property="og:description" content="Free After Effects software and resources for editors. Downloads verified through the Kyro Discord." />
+  <meta property="og:image" content="https://kyro.new.tg/assets/kyro-banner.png" />
+  <meta property="og:image:width" content="512" />
+  <meta property="og:image:height" content="512" />
+  <meta property="og:image:alt" content="KYRO — est. Nov 2026" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Kyro — Free Tools &amp; Resources for Editors" />
+  <meta name="twitter:description" content="Free After Effects software and resources for editors. Downloads verified through the Kyro Discord." />
+  <meta name="twitter:image" content="https://kyro.new.tg/assets/kyro-banner.png" />
+
+  <!-- Favicon: official Kyro wordmark -->
+  <link rel="icon" type="image/png" href="assets/kyro-icon.png" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+  <!-- ============ Minimal top navbar (full width) ============ -->
+  <header class="site-nav">
+    <div class="nav-inner">
+      <a class="nav-logo" href="#" id="brandLink" aria-label="Kyro — home">
+        <img class="nav-logo-mark" src="assets/kyro-icon.png" alt="" width="26" height="26" />
+        <span class="nav-logo-text">Kyro</span>
+      </a>
+
+      <nav class="nav-right" aria-label="Site">
+        <button type="button" class="nav-link" id="paletteOpen">Search</button>
+        <a class="nav-link" href="#software">New Drops</a>
+        <a class="nav-link" href="about.html">About</a>
+        <a class="nav-link" href="#discordCard">Community</a>
+
+        <button type="button" class="nav-icon-btn" id="savedBtn" aria-label="Open saved vault" title="Saved Vault">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M18 21 12 16.5 6 21V4.8A1.8 1.8 0 0 1 7.8 3h8.4A1.8 1.8 0 0 1 18 4.8z"/></svg>
+          <span class="count-badge mono" id="savedCount" hidden>0</span>
+        </button>
+
+        <!-- Rendered by app.js: Login button when logged out, profile pill when logged in -->
+        <div class="nav-auth" id="authSlot"></div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <!-- ============ Centered editorial hero ============ -->
+    <section class="hero">
+      <h1 class="hero-title">Kyro</h1>
+      <p class="hero-sub">Free software &amp; resources — created for editors, by editor.</p>
+
+      <div class="hero-search-wrap">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
+        <button type="button" class="hero-search" id="heroSearch">Search the Kyro Vault…</button>
+        <span class="hero-search-kbd mono" aria-hidden="true"><span>Ctrl</span><span>⌘</span><span>K</span></span>
+      </div>
+
+      <div class="os-toggle" role="group" aria-label="Choose operating system">
+        <button type="button" class="os-toggle-btn is-active" data-os="windows" aria-pressed="true">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M0 2.3l6.5-.9v6.3H0V2.3zm7.3-1L16 0v7.7H7.3V1.3zM0 8.6h6.5v6.3L0 14V8.6zm7.3 0H16V16l-8.7-1.2V8.6z"/></svg>
+          Windows
+        </button>
+        <button type="button" class="os-toggle-btn" data-os="macos" aria-pressed="false">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.1 8.5c0-1.7 1.4-2.6 1.5-2.6-.8-1.2-2.1-1.3-2.5-1.4-1.1-.1-2.1.6-2.7.6-.6 0-1.4-.6-2.3-.6-1.2 0-2.3.7-2.9 1.7-1.2 2.1-.3 5.3.9 7 .6.9 1.3 1.8 2.2 1.8.9 0 1.2-.6 2.3-.6s1.4.6 2.3.5c1 0 1.6-.8 2.1-1.7.7-1 1-2 1-2-.1 0-1.9-.7-1.9-2.7zM11.3 3.5c.5-.6.8-1.4.7-2.2-.7 0-1.5.5-2 1.1-.4.5-.8 1.3-.7 2.1.8.1 1.5-.4 2-1z"/></svg>
+          MacOS
+        </button>
+      </div>
+    </section>
+
+    <!-- ============ Compact notice box ============ -->
+    <p class="notice" id="notice">
+      <span class="notice-dot" aria-hidden="true"></span>
+      <span class="notice-body">
+        <span class="notice-text">Everything here is free. Every build is checked before it ships, but scan before you install — false positives are normal with unsigned AE extensions.</span>
+        <span class="notice-sub">Downloads verified in the <a class="notice-link" href="#discordCard">Kyro Discord</a>.</span>
+      </span>
+    </p>
+
+    <!-- ============ Access status strip (rendered by app.js) ============ -->
+    <section class="access-strip" id="accessStrip" aria-live="polite"></section>
+
+    <!-- ============ Flush 3x3 browse grid ============ -->
+    <p class="section-label">Browse</p>
+    <div class="browse" id="browseGrid"></div>
+
+    <!-- ============ Software results ============ -->
+    <section class="section" id="software">
+      <p class="section-label">Software <span class="section-note mono" id="softwareNote"></span></p>
+      <div class="grid" id="softwareGrid"></div>
+      <div class="empty" id="emptyState" hidden>
+        <p>Nothing in this view yet.</p>
+        <button class="btn btn-ghost" id="resetFiltersBtn">Show everything</button>
+      </div>
+    </section>
+
+    <!-- ============ Split community banner (rendered by app.js) ============ -->
+    <section class="banner" id="discordCard" aria-label="Kyro Discord"></section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell">
+      <div class="footer-main">
+        <div class="footer-left">
+          <span class="brand-word mono">KYRO <span class="brand-heart" aria-hidden="true">&lt;3</span></span>
+          <span class="stamp-badge mono" id="siteUpdated">—</span>
+        </div>
+        <div class="footer-links">
+          <a href="about.html">About</a>
+          <a href="#discordCard">Kyro Discord</a>
+          <a href="https://discord.gg/5ch7XeNg98" target="_blank" rel="noopener noreferrer" id="footerInvite">Invite ↗</a>
+        </div>
+      </div>
+      <div class="footer-meta mono">
+        <p>© 2026, Est. Nov 2026 · Kyro</p>
+        <p><span id="footerDomain">kyro.new.tg</span></p>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ============ Command palette (Ctrl+K) ============ -->
+  <div class="overlay overlay-top" id="paletteOverlay" hidden>
+    <div class="palette" role="dialog" aria-modal="true" aria-label="Quick search">
+      <div class="palette-input">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
+        <input type="text" id="paletteInput" placeholder="Search the Kyro Vault — titles, tags, file formats…" autocomplete="off" spellcheck="false" aria-controls="paletteResults" />
+        <kbd class="mono">Esc</kbd>
+      </div>
+      <div class="palette-results" id="paletteResults" role="listbox" aria-label="Search results"></div>
+      <div class="palette-foot mono">
+        <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+        <span><kbd>Enter</kbd> inspect</span>
+        <span><kbd>Ctrl K</kbd> toggle</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Resource detail modal ============ -->
+  <div class="overlay" id="modalOverlay" hidden>
+    <div class="modal" id="modalBox" role="dialog" aria-modal="true" aria-label="Resource details"></div>
+  </div>
+
+  <!-- ============ Saved Vault drawer ============ -->
+  <div class="scrim" id="drawerScrim" hidden></div>
+  <aside class="drawer" id="vaultDrawer" aria-hidden="true" aria-label="Saved vault">
+    <div class="drawer-head">
+      <div>
+        <h3 class="drawer-title">Saved Vault</h3>
+        <p class="drawer-sub mono" id="vaultCount">0 assets</p>
+      </div>
+      <button type="button" class="close-x" id="drawerClose" aria-label="Close vault"></button>
+    </div>
+    <div class="vault-list" id="vaultList"></div>
+    <div class="drawer-foot">
+      <button class="btn btn-ghost danger" id="vaultClear" type="button">Clear all</button>
+    </div>
+  </aside>
+
+  <!-- Toast stack (downloads, access notices) -->
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <!-- Modular scripts: data → preview engine → app wiring -->
+  <script src="js/data.js"></script>
+  <script src="js/preview.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+# Copy to .dev.vars for `wrangler dev`, then fill in the real values.
+# On the deployed worker set the same names under Settings → Variables, or with
+#   wrangler secret put DISCORD_CLIENT_SECRET
+DISCORD_CLIENT_ID=1570702041993711706
+DISCORD_CLIENT_SECRET=replace-with-the-discord-app-client-secret
+KYRO_GUILD_ID=1539961184323772498
+KYRO_SITE_URL=https://kyro.new.tg
+KYRO_ALLOWED_ORIGINS=https://kyro.new.tg

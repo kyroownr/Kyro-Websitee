@@ -1,0 +1,16 @@
+{
+  // Cloudflare Worker backing the Discord OAuth2 flow for kyro.new.tg.
+  // DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET live on the dashboard as
+  // secret_text bindings, so `wrangler deploy` never touches or overwrites them.
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  "name": "kyro-auth",
+  "main": "worker.js",
+  "compatibility_date": "2025-09-01",
+  "logpush": true,
+
+  // Plaintext. Without KYRO_GUILD_ID readSession() can never report a member,
+  // so verification would silently fail for everyone.
+  "vars": {
+    "KYRO_GUILD_ID": "1539961184323772498"
+  }
+}
