@@ -185,14 +185,19 @@
     return score;
   }
 
-  /* ------------------------------ DOM refs ----------------------------- */
+  /* The vault page itself lists nothing — like keyfla.me it is hero, notice and
+     the browse grid. The two OS pages are the ones with lists, and each carries
+     a Software section above a Tools section, so every ref here is optional. */
   const authSlot = $('#authSlot');
   const accessStrip = $('#accessStrip');
   const softwareGrid = $('#softwareGrid');
   const softwareNote = $('#softwareNote');
+  const softwareEmpty = $('#softwareEmpty');
+  const toolsGrid = $('#toolsGrid');
+  const toolsNote = $('#toolsNote');
+  const toolsEmpty = $('#toolsEmpty');
   const browseGrid = $('#browseGrid');
   const discordCard = $('#discordCard');
-  const emptyState = $('#emptyState');
   const modalOverlay = $('#modalOverlay');
   const modalBox = $('#modalBox');
   const paletteOverlay = $('#paletteOverlay');
@@ -458,11 +463,19 @@
     return d !== 0 ? d : String(b.version || '').localeCompare(String(a.version || ''), undefined, { numeric: true });
   }
 
-  function listFor(b) {
+  /* Two shelves per OS page: the editor itself under Software, everything that
+     runs inside it under Tools. A listing with no kind is a tool, because that
+     is what the vault actually hands out today. */
+  function kindOf(r) {
+    return r.kind === 'software' ? 'software' : 'tool';
+  }
+
+  function listFor(b, kind) {
     let list = resources.slice();
     if (b.osValue) list = list.filter(r => (r.os || []).indexOf(b.osValue) !== -1);
     if (b.cats) list = list.filter(r => b.cats.indexOf(r.category) !== -1);
     if (b.free) list = list.filter(r => r.price === 0);
+    if (kind) list = list.filter(r => kindOf(r) === kind);
     if (b.sort === 'newest') list = list.sort(byNewest);
     return list;
   }
@@ -504,7 +517,7 @@
         '</div>' +
         '<p class="card-desc">' + esc(r.desc) + '</p>' +
         '<div class="card-meta">' +
-          '<span class="chip"><b>' + full(r.downloads) + '</b> downloads</span>' +
+          '<span class="chip"><b>' + full(downloadCount(r)) + '</b> ' + (downloadCount(r) === 1 ? 'download' : 'downloads') + '</span>' +
           ae +
           '<span class="chip">' + esc(exts) + '</span>' +
           priceBadge(r) +
@@ -517,14 +530,22 @@
     );
   }
 
-  function renderSoftware() {
-    const list = currentList();
-    softwareGrid.innerHTML = list.map(cardHTML).join('');
-    emptyState.hidden = list.length > 0;
-    const v = currentView();
-    if (softwareNote) {
-      softwareNote.textContent = '· ' + v.title.toLowerCase() + ' · ' + list.length + ' ' + (list.length === 1 ? 'item' : 'items');
+  /* One shelf: rendered only where its own grid exists, which is the two OS
+     pages. The vault page has no lists at all, so both calls just return. */
+  function renderSection(grid, note, empty, b, kind) {
+    if (!grid) return;
+    const list = listFor(b, kind);
+    grid.innerHTML = list.map(cardHTML).join('');
+    if (note) {
+      note.textContent = '· ' + (list.length ? list.length + (list.length === 1 ? ' item' : ' items') : 'coming soon');
     }
+    if (empty) empty.hidden = list.length > 0;
+  }
+
+  function renderSoftware() {
+    const b = currentView();
+    renderSection(softwareGrid, softwareNote, softwareEmpty, b, 'software');
+    renderSection(toolsGrid, toolsNote, toolsEmpty, b, 'tool');
   }
 
   /* Each OS page shows one browse category as its own page; the head reuses
@@ -660,11 +681,13 @@
 
   function startServerStats() {
     fetchServerStats();
+    loadDownloadCounts();
     setInterval(() => {
       /* A hidden tab gets no requests — the counts are only worth refreshing
          for someone who can actually see them. */
       if (document.hidden) return;
       fetchServerStats();
+      loadDownloadCounts();
     }, STATS_INTERVAL);
   }
 
@@ -1165,7 +1188,7 @@
         : f.url
           /* Externally hosted archives hand off to the file host, so the
              button links out instead of faking a transfer. */
-          ? '<a class="btn btn-primary btn-sm" href="' + esc(f.url) +
+          ? '<a class="btn btn-primary btn-sm" data-ext-link href="' + esc(f.url) +
             '" target="_blank" rel="noopener noreferrer">' + ICON.download + 'Download</a>'
           : '<button type="button" class="btn btn-primary btn-sm" data-file="' + esc(f.ext) +
             '" style="position:relative">' + ICON.download + 'Download<span class="ring"></span></button>';
@@ -1218,6 +1241,10 @@
     if (gr) gr.addEventListener('click', recheckMembership);
     zone.querySelectorAll('[data-file]').forEach(btn =>
       btn.addEventListener('click', () => requestFile(r, btn.dataset.file, btn)));
+    /* The externally hosted archive leaves the page, so the click itself is the
+       only signal that somebody actually took the file. */
+    zone.querySelectorAll('[data-ext-link]').forEach(a =>
+      a.addEventListener('click', () => countDownload(r)));
     const cp = zone.querySelector('[data-pass-copy]');
     if (cp) cp.addEventListener('click', () => copyPass(cp, cp.dataset.pass));
   }
@@ -1297,7 +1324,7 @@
           '<ul class="feature-list">' + (r.features || []).map(f => '<li>' + ICON.check + '<span>' + esc(f) + '</span></li>').join('') + '</ul>' +
           '<div class="tag-row">' + (r.tags || []).map(t => '<span class="tag-chip">#' + esc(t) + '</span>').join('') + '</div>' +
           '<div class="meta-row">' +
-            '<span class="dl-count">' + ICON.download + fmt(r.downloads) + ' downloads</span>' +
+            '<span class="dl-count">' + ICON.download + downloadsLabel(downloadCount(r)) + '</span>' +
             by +
             '<span>ADDED ' + esc(r.added) + '</span>' +
           '</div>' +
@@ -1354,6 +1381,79 @@
     modalTab = 'overview';
   }
 
+  /* -------------------------- download counters ------------------------
+     The number on a card is the seed's baseline plus whatever the worker has
+     actually counted since. Baselines stay in data.js — they are the vault's
+     own history — while every real download lands in KV, tallied once per
+     verified member, so the counter is shared instead of per-browser. */
+  const SEED_BASE = {};
+  (window.KYRO_SEED || []).forEach(r => { SEED_BASE[r.id] = Number(r.downloads) || 0; });
+  let liveCounts = {};
+  /* Per visit, so one member hammering the button cannot spam the worker; the
+     server dedupes by Discord id anyway. */
+  const counted = {};
+
+  function downloadCount(r) {
+    return (Number(SEED_BASE[r.id]) || 0) + (Number(liveCounts[r.id]) || 0);
+  }
+
+  /* A counter that reaches exactly one person should not say "1 downloads". */
+  function downloadsLabel(n) {
+    return full(n) + ' ' + (n === 1 ? 'download' : 'downloads');
+  }
+
+  /* Both grids and the open modal repaint from the same numbers, so a count
+     that moved elsewhere on the site shows here without a full re-render. */
+  function paintCounts() {
+    [softwareGrid, toolsGrid].forEach(grid => {
+      if (!grid) return;
+      grid.querySelectorAll('.software-card[data-id]').forEach(card => {
+        const b = card.querySelector('.card-meta .chip b');
+        if (b) b.textContent = full(downloadCount(byId(card.dataset.id)));
+      });
+    });
+    const count = modalBox.querySelector('[data-panel="overview"] .dl-count');
+    if (count && modalId) {
+      const r = byId(modalId);
+      if (r) count.innerHTML = ICON.download + downloadsLabel(downloadCount(r));
+    }
+  }
+
+  function byId(id) {
+    return resources.find(r => r.id === id) || null;
+  }
+
+  async function loadDownloadCounts() {
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/downloads', { headers: { Accept: 'application/json' }, credentials: 'omit' });
+      if (!res.ok) return;
+      const data = await res.json();
+      liveCounts = (data && data.counts) || {};
+      paintCounts();
+    } catch (err) { /* counters stay at their baseline until the worker answers */ }
+  }
+
+  /* Fired the moment a member reaches for the file — the link opens in its own
+     tab, so this is the only place the site learns the download happened. */
+  async function countDownload(r) {
+    if (!r || auth.state !== VERIFIED || !auth.token) return;
+    if (counted[r.id]) return;
+    counted[r.id] = true;
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/downloads', {
+        method: 'POST',
+        headers: Object.assign({ 'content-type': 'application/json' }, reqHeaders()),
+        credentials: 'omit',
+        body: JSON.stringify({ token: auth.token, id: r.id })
+      });
+      if (!res.ok) { delete counted[r.id]; return; }
+      const data = await res.json();
+      if (data && data.counts) liveCounts = data.counts;
+      else liveCounts[r.id] = Number(data && data.downloads) || 0;
+      paintCounts();
+    } catch (err) { delete counted[r.id]; }
+  }
+
   /* --------------------------- gated downloads -------------------------- */
   function requestFile(r, ext, btn) {
     if (auth.state === OUT) {
@@ -1402,18 +1502,12 @@
       t.setPct(pct);
       if (pct >= 100) {
         clearInterval(iv);
-        r.downloads += 1;
-        write(K_RES, resources);
+        countDownload(r);
         t.finish('Download started', file.name + ' · saved to your Downloads folder');
         btn.disabled = false;
         btn.classList.add('is-done');
         btn.innerHTML = ICON.check + 'Unlocked';
         setTimeout(() => { btn.classList.remove('is-done'); btn.innerHTML = original; }, 1900);
-        // keep visible counters fresh without a heavy re-render
-        const meta = modalBox.querySelector('[data-panel="overview"] .dl-count');
-        if (meta) meta.innerHTML = ICON.download + fmt(r.downloads) + ' downloads';
-        const chip = softwareGrid.querySelector('.software-card[data-id="' + r.id + '"] .card-meta .chip b');
-        if (chip) chip.textContent = full(r.downloads);
       }
     }, 230);
   }
@@ -1576,17 +1670,22 @@
   $$('[data-close]').forEach(btn => btn.addEventListener('click', () => hideOverlay(document.getElementById(btn.dataset.close))));
 
   /* ------------------------------ global events ------------------------- */
-  softwareGrid.addEventListener('click', (e) => {
-    const save = e.target.closest('[data-save]');
-    if (save) { toggleSave(save.dataset.save, save); return; }
-    const card = e.target.closest('.software-card');
-    if (card) openModal(card.dataset.id);
-  });
-  softwareGrid.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    if (e.target.closest('button')) return;
-    const card = e.target.closest('.software-card');
-    if (card) { e.preventDefault(); openModal(card.dataset.id); }
+  /* Both shelves behave identically; the vault page has neither, so the list
+     it binds is simply empty there. */
+  [softwareGrid, toolsGrid].forEach(grid => {
+    if (!grid) return;
+    grid.addEventListener('click', (e) => {
+      const save = e.target.closest('[data-save]');
+      if (save) { toggleSave(save.dataset.save, save); return; }
+      const card = e.target.closest('.software-card');
+      if (card) openModal(card.dataset.id);
+    });
+    grid.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      if (e.target.closest('button')) return;
+      const card = e.target.closest('.software-card');
+      if (card) { e.preventDefault(); openModal(card.dataset.id); }
+    });
   });
 
   const requestsBtn = $('#requestsOpen');

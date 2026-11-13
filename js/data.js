@@ -4,6 +4,9 @@
    renders (browse grid, community banner, install guides) is driven from here.
    Fields:
      category: extension | script | preset | project | soundfx
+     kind:     'software' — an editor the vault hands out, or 'tool' — an
+               extension, script or pack that runs inside one. The OS pages
+               split on this: Software first, Tools under it.
      os:       ['windows','macos'] — which browse categories list this tool
      files[]:  gated downloads unlocked by Discord server membership
      files[].url: set for externally hosted archives; the row then links out
@@ -35,6 +38,7 @@ window.KYRO_SEED = [
     title: 'AppleFX',
     desc: 'Liquid-glass refraction, chromatic dispersion and iOS-style materials for After Effects — the Apple look, rendered fast.',
     category: 'extension',
+    kind: 'tool',
     os: ['windows', 'macos'],
     price: 0,
     version: '1.2.5',
@@ -69,6 +73,7 @@ window.KYRO_SEED = [
     title: 'SaaSor Plus',
     desc: 'SaaSor is an all-in-one After Effects toolkit and extension designed for creating SaaS, app, and startup promo videos.',
     category: 'extension',
+    kind: 'tool',
     os: ['windows', 'macos'],
     price: null,
     version: '',

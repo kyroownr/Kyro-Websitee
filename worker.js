@@ -13,10 +13,16 @@
  *   POST /requests   { token, title, category, ae, desc }  → create a request
  *   POST /requests/vote   { token, id }   → toggle one vote, returns the board
  *   POST /requests/status { token, id, status } → members listed in KYRO_ADMIN_IDS only
+ *   GET  /downloads  →  { counts } live download totals, one per asset id.
+ *   POST /downloads  { token, id }  →  records one download for that member;
+ *                                      repeat clicks by the same member are
+ *                                      counted once, the way a person is
+ *                                      counted once.
  *
  * Bindings:
- *   KYRO_DATA   Workers KV namespace holding the board under one key. Writes use
- *               compare-and-swap so two simultaneous votes cannot clobber each other.
+ *   KYRO_DATA   Workers KV namespace holding the board under one key and the
+ *               download counters under another. Writes use compare-and-swap so
+ *               two simultaneous votes cannot clobber each other.
  *
  * Plain vars:
  *   KYRO_ADMIN_IDS  comma separated Discord user ids allowed to move a request
@@ -61,7 +67,8 @@ export default {
       if (url.pathname === '/requests') return await handleRequests(request, url, env, cors);
       if (url.pathname === '/requests/vote') return await handleVote(request, env, cors);
       if (url.pathname === '/requests/status') return await handleStatus(request, env, cors);
-      return json({ error: 'Unknown route. Use /callback, /verify or /requests.' }, 404, cors);
+      if (url.pathname === '/downloads') return await handleDownloads(request, url, env, cors);
+      return json({ error: 'Unknown route. Use /callback, /verify, /requests or /downloads.' }, 404, cors);
     } catch (err) {
       const message = (err && err.message) || String(err);
       // A callback failure belongs in the URL, not in a JSON body the browser cannot render.
@@ -160,28 +167,38 @@ function cleanText(value, max) {
 
 /* One KV key holds the whole board, so every write is a read-modify-write.
    Compare-and-swap makes a stale write fail loudly instead of quietly
-   discarding another member's vote. */
-async function readBoard(env) {
+   discarding another member's vote. The counters reuse the same machinery
+   under a different key. */
+async function readDoc(env, key, fallback) {
   if (!env.KYRO_DATA) {
     throw fail(500, 'kv_unbound', 'The KYRO_DATA KV namespace is not bound to this worker.');
   }
-  const got = await env.KYRO_DATA.getWithMetadata(REQ_KEY, { type: 'json' });
-  return { rows: Array.isArray(got.value) ? got.value : [], cas: (got.metadata && got.metadata.cas) || 0 };
+  const got = await env.KYRO_DATA.getWithMetadata(key, { type: 'json' });
+  return { value: got.value == null ? fallback : got.value, cas: (got.metadata && got.metadata.cas) || 0 };
 }
 
-async function mutateBoard(env, fn) {
+async function mutateDoc(env, key, fallback, label, fn) {
   for (let attempt = 0; attempt < 3; attempt++) {
-    const { rows, cas } = await readBoard(env);
-    const next = fn(rows);
+    const { value, cas } = await readDoc(env, key, fallback);
+    const next = fn(value);
     try {
-      await env.KYRO_DATA.put(REQ_KEY, JSON.stringify(next), { metadata: { cas: cas + 1 }, cas });
+      await env.KYRO_DATA.put(key, JSON.stringify(next), { metadata: { cas: cas + 1 }, cas });
       return next;
     } catch (err) {
       const msg = String((err && err.message) || err);
       if (!/cas|conflict|mismatch|stale/i.test(msg)) throw err;
     }
   }
-  throw fail(409, 'board_busy', 'The requests board changed while you were writing. Try again.');
+  throw fail(409, 'write_busy', 'The ' + label + ' changed while you were writing. Try again.');
+}
+
+async function readBoard(env) {
+  const { value } = await readDoc(env, REQ_KEY, []);
+  return Array.isArray(value) ? value : [];
+}
+
+function mutateBoard(env, fn) {
+  return mutateDoc(env, REQ_KEY, [], 'requests board', fn);
 }
 
 /* Voter ids never leave the worker: the board exposes a count and, for the
@@ -202,11 +219,13 @@ function project(rows, viewerId) {
     .sort((a, b) => b.votes - a.votes || String(b.created).localeCompare(String(a.created)));
 }
 
+/* Shared by the board and the counters: both belong to members, and the copy
+   has to stay true whichever route called it. */
 async function requireMember(token, env) {
-  if (!token) throw fail(401, 'missing_token', 'Sign in with Discord to use the requests board.');
+  if (!token) throw fail(401, 'missing_token', 'Sign in with Discord to use the Kyro community features.');
   const session = await readSession(token, env);
   if (!session.inServer) {
-    throw fail(403, 'not_a_member', 'Join the Kyro Discord server to use the requests board.');
+    throw fail(403, 'not_a_member', 'Join the Kyro Discord server to use the Kyro community features.');
   }
   return session;
 }
@@ -220,7 +239,7 @@ function bearerToken(request, url) {
 }
 
 async function handleRequests(request, url, env, cors) {
-  const { rows } = await readBoard(env);
+  const rows = await readBoard(env);
 
   if (request.method === 'GET') {
     let viewerId = '';
@@ -311,6 +330,44 @@ async function handleStatus(request, env, cors) {
   if (!matched) throw fail(404, 'unknown_request', 'That request no longer exists.');
 
   return json({ requests: project(written, session.id) }, 200, cors);
+}
+
+/* ------------------------------ download counts -------------------------- */
+
+/* A counter, not a log: the ids of the members who already counted are kept
+   only so a person is tallied once, never twice, however many times they
+   click. Nothing that leaves the worker identifies them. */
+const DL_KEY = 'kyro.downloads.v1';
+
+function countsDoc(value) {
+  const v = value && typeof value === 'object' ? value : {};
+  return {
+    counts: v.counts && typeof v.counts === 'object' ? v.counts : {},
+    by: v.by && typeof v.by === 'object' ? v.by : {}
+  };
+}
+
+async function handleDownloads(request, url, env, cors) {
+  const doc = countsDoc((await readDoc(env, DL_KEY, { counts: {}, by: {} })).value);
+
+  if (request.method === 'GET') return json({ counts: doc.counts }, 200, cors);
+  if (request.method !== 'POST') return json({ error: 'Use GET or POST.' }, 405, cors);
+
+  const input = await jsonBody(request);
+  const session = await requireMember(input.token, env);
+  const id = cleanText(input.id, 60);
+  if (!id) throw fail(400, 'bad_id', 'Missing asset id.');
+
+  const written = await mutateDoc(env, DL_KEY, { counts: {}, by: {} }, 'download counters', (current) => {
+    const d = countsDoc(current);
+    const seen = Array.isArray(d.by[session.id]) ? d.by[session.id] : [];
+    if (seen.indexOf(id) !== -1) return d;
+    d.by[session.id] = seen.concat([id]);
+    d.counts[id] = (Number(d.counts[id]) || 0) + 1;
+    return d;
+  });
+
+  return json({ id, downloads: Number(written.counts[id]) || 0, counts: written.counts }, 200, cors);
 }
 
 /* ------------------------------ discord calls ---------------------------- */

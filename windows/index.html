@@ -71,9 +71,20 @@
     <!-- ============ Access status strip (rendered by app.js) ============ -->
     <section class="access-strip" id="accessStrip" aria-live="polite"></section>
 
+    <!-- ============ Two shelves: the editor, then what runs inside it ==== -->
     <section class="section">
+      <p class="section-label">Software <span class="section-note mono" id="softwareNote"></span></p>
       <div class="grid" id="softwareGrid"></div>
-      <div class="empty" id="emptyState" hidden>
+      <div class="empty" id="softwareEmpty" hidden>
+        <p>No editors listed for Windows yet.</p>
+        <a class="btn btn-ghost" href="/#discordCard">Ask in the Kyro Discord</a>
+      </div>
+    </section>
+
+    <section class="section">
+      <p class="section-label">Tools <span class="section-note mono" id="toolsNote"></span></p>
+      <div class="grid" id="toolsGrid"></div>
+      <div class="empty" id="toolsEmpty" hidden>
         <p>Nothing in this category yet.</p>
         <a class="btn btn-ghost" href="/">Show everything</a>
       </div>
