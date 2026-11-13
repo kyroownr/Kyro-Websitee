@@ -141,6 +141,7 @@ window.KYRO_SEED = [
     os: ['windows', 'macos'],
     price: null,
     version: '1.2.5',
+    releaseAt: '2026-11-19T00:00:00',
     creator: '8bitbrain',
     downloads: 0,
     aeMin: 2022,
@@ -348,5 +349,5 @@ window.KYRO_INSTALL = {
 /* Human-readable labels shared across UI surfaces */
 window.KYRO_CATEGORY_LABEL = {
   extension: 'Extension', script: 'Script', preset: 'Preset', plugin: 'Plugin',
-  project: 'Project File', soundfx: 'Sound FX', software: 'Software'
+  project: 'Project File', soundfx: 'Sound FX', software: 'Software', other: 'Other'
 };

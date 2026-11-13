@@ -698,6 +698,28 @@ code, .mono { font-family: var(--mono); }
 
 .m-actions { display: flex; align-items: center; gap: 8px; margin-top: 18px; }
 
+/* ------------------------- release lock / countdown ---------------------
+   A staged drop seals its download behind a live countdown until `releaseAt`. */
+.soon-panel {
+  display: grid; gap: 13px; justify-items: center; text-align: center;
+  padding: 20px 16px; border: 1px solid var(--line); background: var(--panel);
+}
+.soon-kicker {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 0.62rem; letter-spacing: 0.16em; color: var(--accent);
+}
+.soon-title { font-size: 0.86rem; color: var(--muted); line-height: 1.5; }
+.countdown { display: flex; gap: 10px; }
+.cd-cell {
+  display: grid; gap: 3px; justify-items: center; min-width: 58px;
+  padding: 10px 8px; border: 1px solid var(--line); background: var(--bg);
+}
+.cd-num { font-size: 1.5rem; font-weight: 600; color: var(--white); line-height: 1; }
+.cd-lab { font-size: 0.58rem; letter-spacing: 0.14em; color: var(--dim); }
+.cd-live { font-family: var(--mono); font-size: 0.82rem; letter-spacing: 0.12em; color: var(--accent); padding: 12px; }
+.chip-soon { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); }
+.chip-soon svg { width: 12px; height: 12px; }
+
 /* ------------------------------ command palette ------------------------- */
 .palette {
   width: min(580px, 100%); align-self: start; margin-top: 11vh;

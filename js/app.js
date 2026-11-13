@@ -237,7 +237,8 @@
     arrow: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m0 0-5.5-5.5M19 12l-5.5 5.5"/></svg>',
     windows: '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M0 2.3l6.5-.9v6.3H0V2.3zm7.3-1L16 0v7.7H7.3V1.3zM0 8.6h6.5v6.3L0 14V8.6zm7.3 0H16V16l-8.7-1.2V8.6z"/></svg>',
     apple: '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.1 8.5c0-1.7 1.4-2.6 1.5-2.6-.8-1.2-2.1-1.3-2.5-1.4-1.1-.1-2.1.6-2.7.6-.6 0-1.4-.6-2.3-.6-1.2 0-2.3.7-2.9 1.7-1.2 2.1-.3 5.3.9 7 .6.9 1.3 1.8 2.2 1.8.9 0 1.2-.6 2.3-.6s1.4.6 2.3.5c1 0 1.6-.8 2.1-1.7.7-1 1-2 1-2-.1 0-1.9-.7-1.9-2.7zM11.3 3.5c.5-.6.8-1.4.7-2.2-.7 0-1.5.5-2 1.1-.4.5-.8 1.3-.7 2.1.8.1 1.5-.4 2-1z"/></svg>',
-    copy: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.2"/><path d="M15 5.5H6.2A2.2 2.2 0 0 0 4 7.7V15"/></svg>'
+    copy: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.2"/><path d="M15 5.5H6.2A2.2 2.2 0 0 0 4 7.7V15"/></svg>',
+    clock: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3.5 2"/></svg>'
   };
 
   /* ------------------------- access-state copy -------------------------- */
@@ -502,6 +503,7 @@
 
   function cardHTML(r, i) {
     const isSaved = saved.has(r.id);
+    const locked = isLocked(r);
     const exts = (r.files || [{ ext: r.format }]).map(f => f.ext.toUpperCase().replace('.', '')).join(' · ');
     const version = r.version ? '<span class="version-chip mono">' + esc(r.version) + '</span>' : '';
     const ae = r.aeMin ? '<span class="chip">AE ' + esc(r.aeMin) + '+</span>' : '';
@@ -517,11 +519,12 @@
           '<span class="chip"><b>' + full(downloadCount(r)) + '</b> ' + (downloadCount(r) === 1 ? 'download' : 'downloads') + '</span>' +
           ae +
           '<span class="chip">' + esc(exts) + '</span>' +
+          (locked ? '<span class="chip chip-soon mono">' + ICON.clock + 'COMING SOON</span>' : '') +
           priceBadge(r) +
         '</div>' +
         '<div class="card-foot">' +
           '<button class="save-btn' + (isSaved ? ' is-saved' : '') + '" data-save="' + esc(r.id) + '" aria-pressed="' + isSaved + '" aria-label="Save ' + esc(r.title) + '">' + ICON.bookmark + '</button>' +
-          '<button class="btn btn-primary" data-inspect>' + ICON.download + 'Inspect &amp; Download</button>' +
+          '<button class="btn btn-primary" data-inspect>' + (locked ? ICON.clock + 'Coming Soon' : ICON.download + 'Inspect &amp; Download') + '</button>' +
         '</div>' +
       '</article>'
     );
@@ -1226,12 +1229,54 @@
       '</div>';
   }
 
+  /* -------------------------- release lock / countdown -------------------
+     A staged drop carries `releaseAt` (an ISO timestamp). Until that moment its
+     download stays sealed behind a live countdown; once the clock passes it the
+     normal verified-member gate takes over untouched. */
+  function releaseTime(r) { return r && r.releaseAt ? Date.parse(r.releaseAt) : NaN; }
+  function isLocked(r) { const t = releaseTime(r); return !isNaN(t) && Date.now() < t; }
+  function countdownParts(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    return { d: Math.floor(s / 86400), h: Math.floor((s % 86400) / 3600), m: Math.floor((s % 3600) / 60), s: s % 60 };
+  }
+  function cdCell(v, lab) {
+    return '<div class="cd-cell"><span class="cd-num mono">' + String(v).padStart(2, '0') + '</span><span class="cd-lab">' + lab + '</span></div>';
+  }
+  function cdCells(t) {
+    const p = countdownParts(t - Date.now());
+    return cdCell(p.d, 'days') + cdCell(p.h, 'hrs') + cdCell(p.m, 'min') + cdCell(p.s, 'sec');
+  }
+  function releaseWhen(t) {
+    return new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+  }
+  function countdownHTML(r) {
+    const t = releaseTime(r);
+    return '<div class="soon-panel">' +
+      '<p class="soon-kicker mono">' + ICON.clock + 'COMING SOON · STAY TUNED</p>' +
+      '<p class="soon-title">' + esc(r.title) + (r.version ? ' ' + esc(r.version) : '') + ' unlocks ' + esc(releaseWhen(t)) + '.</p>' +
+      '<div class="countdown" data-release="' + t + '">' + cdCells(t) + '</div>' +
+      '<a class="btn btn-ghost" href="' + INVITE_URL + '" target="_blank" rel="noopener noreferrer">' + ICON.discord + 'Get the drop in the Kyro Discord</a>' +
+      '</div>';
+  }
+  let cdTimer = null;
+  function tickCountdown() {
+    const el = modalBox && modalBox.querySelector('.countdown[data-release]');
+    if (!el) { stopCountdownTick(); return; }
+    const t = Number(el.getAttribute('data-release'));
+    if (Date.now() >= t) { stopCountdownTick(); const r = byId(modalId); if (r) wireDownloads(r); return; }
+    el.innerHTML = cdCells(t);
+  }
+  function startCountdownTick() { if (cdTimer) return; tickCountdown(); cdTimer = setInterval(tickCountdown, 1000); }
+  function stopCountdownTick() { if (cdTimer) { clearInterval(cdTimer); cdTimer = null; } }
+
   /* The gate, the rows and the password are one surface: rebuilt together
      whenever auth state changes, so a modal opened logged-out never keeps
      showing locked rows after the visitor verifies without closing it. */
   function wireDownloads(r) {
     const zone = modalBox.querySelector('.dl-zone');
     if (!zone) return;
+    if (isLocked(r)) { zone.innerHTML = countdownHTML(r); startCountdownTick(); return; }
+    stopCountdownTick();
     zone.innerHTML = gateBannerHTML(r) +
       '<div class="file-list">' + fileRowsHTML(r) + '</div>' +
       passwordHTML(r);
@@ -1373,6 +1418,7 @@
 
   function closeModal() {
     Preview.unpin($('#modalCanvas'));
+    stopCountdownTick();
     hideOverlay(modalOverlay);
     modalId = null;
     modalTab = 'overview';
