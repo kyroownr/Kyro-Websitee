@@ -41,16 +41,13 @@
   const writeSession = (k, v) => { try { sessionStorage.setItem(k, v); } catch { /* private mode */ } };
   const clearSession = (k) => { try { sessionStorage.removeItem(k); } catch { /* private mode */ } };
 
-  let resources = read(K_RES, null);
-  if (!Array.isArray(resources)) resources = [];
-  /* A returning visitor keeps the download counts they incremented, but a tool
-     added to the seed after their last visit must still show up — so the cache
-     is merged by id rather than trusted to be current. */
-  const cachedIds = new Set(resources.map(r => (r && r.id) || ''));
-  window.KYRO_SEED.forEach(r => {
-    if (!cachedIds.has(r.id)) resources.push(Object.assign({}, r));
-  });
-  write(K_RES, resources);
+  /* The seed is the single source of truth for what each tool is. Rebuilding
+     from it on every load means a catalogue edit — new files, copy, pricing, a
+     reset download baseline — reaches returning visitors instead of being
+     frozen by a stale cache. Saved vault state lives under its own key and
+     download totals live on the worker, so nothing user-specific is lost. */
+  let resources = (window.KYRO_SEED || []).map(r => Object.assign({}, r));
+  try { localStorage.removeItem(K_RES); } catch (err) { /* private mode */ }
   const saved = new Set(read(K_SAVED, []));
 
   /* --------------------------- auth state model ------------------------
@@ -1137,9 +1134,36 @@
     if (body) body.hidden = !open;
   }
 
+  /* The AppleFX guide is full prose — headings, sub-headings, paragraphs, fenced
+     commands, ordered steps, a blockquote and a troubleshooting table. Each
+     entry in `blocks` is one of those shapes; paragraph/list/quote/table cells
+     are authored HTML (links, <code>, <b>) so they render as written, while
+     headings and code are escaped because they are plain text. */
   function installBlock(ext, label) {
     const guide = window.KYRO_INSTALL[ext];
     if (!guide) return '';
+    if (guide.blocks) {
+      const code = (b) =>
+        '<pre class="install-code">' +
+        (b.lang ? '<span class="install-code-lang mono">' + esc(b.lang) + '</span>' : '') +
+        '<code>' + esc(b.code) + '</code></pre>';
+      const body = guide.blocks.map(b => {
+        if (b.h) return '<h4 class="install-h">' + esc(b.h) + '</h4>';
+        if (b.sub) return '<h5 class="install-sub">' + esc(b.sub) + '</h5>';
+        if (b.p) return '<p class="install-p">' + b.p + '</p>';
+        if (b.code) return code(b);
+        if (b.ol) return '<ol class="install-steps">' + b.ol.map(i => '<li>' + i + '</li>').join('') + '</ol>';
+        if (b.ul) return '<ul class="install-list">' + b.ul.map(i => '<li>' + i + '</li>').join('') + '</ul>';
+        if (b.quote) return '<blockquote class="install-quote">' + b.quote + '</blockquote>';
+        if (b.table) return '<div class="install-table-wrap"><table class="install-table"><thead><tr>' +
+          b.table.head.map(h => '<th>' + esc(h) + '</th>').join('') + '</tr></thead><tbody>' +
+          b.table.rows.map(r => '<tr>' + r.map(c => '<td>' + c + '</td>').join('') + '</tr>').join('') +
+          '</tbody></table></div>';
+        return '';
+      }).join('');
+      return '<div class="install-block">' +
+        (guide.title ? '<p class="install-title">' + esc(guide.title) + '</p>' : '') + body + '</div>';
+    }
     /* A sectioned guide is written prose, not a path walkthrough: heading and
        paragraph pairs under one title. */
     if (guide.sections) {

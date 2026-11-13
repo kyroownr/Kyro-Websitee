@@ -36,36 +36,46 @@ window.KYRO_SEED = [
   {
     id: 'applefx',
     title: 'AppleFX',
-    desc: 'Liquid-glass refraction, chromatic dispersion and iOS-style materials for After Effects — the Apple look, rendered fast.',
+    desc: 'AppleFX by 8bitbrain is a flagship After Effects extension/panel designed to give your edits Apple-grade, high-end motion and aesthetics in just one click.',
     category: 'extension',
     kind: 'tool',
     os: ['windows', 'macos'],
-    price: 0,
+    price: null,
     version: '1.2.5',
-    creator: 'Kyro',
-    downloads: 12840,
-    aeMin: 2024,
+    creator: '8bitbrain',
+    downloads: 0,
+    aeMin: 2022,
     featured: true,
     preview: 'glass',
     seed: 113,
     added: '2026-11-02',
     tags: ['glass', 'refraction', 'shader', 'ui', 'ios'],
+    gallery: [
+      '/assets/applefx-panel.webp',
+      '/assets/applefx-layers.webp',
+      '/assets/applefx-tutorial.webp'
+    ],
     files: [
-      { ext: '.zxp', name: 'AppleFX-1.2.5.zxp', size: '18.4 MB', label: 'CEP extension panel' },
-      { ext: '.jsxbin', name: 'AppleFX-1.2.5.jsxbin', size: '6.2 MB', label: 'ScriptUI panel build' },
-      { ext: '.ffx', name: 'AppleFX-1.2.5.ffx', size: '2.1 MB', label: '34 effect presets' }
+      {
+        ext: '.zxp',
+        name: 'AppleFX-1.2.5.zxp',
+        size: '',
+        label: 'Signed CEP extension panel',
+        url: 'https://1024terabox.com/s/1sxC_pFYaOWc7dpeTkzRUsw',
+        pass: 'Kyro'
+      }
     ],
     features: [
-      'Raymarched glass with real edge refraction and chromatic dispersion',
-      'Frosted, beveled and lensed material variants with live thumbnails',
-      'Editable thickness, roughness and IOR sliders — no expressions to break',
-      'Background-sampling mode that respects pre-compose depth',
-      'GPU-accelerated on the 2026 and 2025 renderers, CPU fallback for 2024'
+      'What it is: A native After Effects panel packed with over 70+ handcrafted presets and tools styled after Apple\u2019s clean, smooth UI and presentation design.',
+      'Easing & Springs: Gives your animations organic, smooth bounce and snap curves that feel expensive and native to iOS/macOS.',
+      'Text & Transitions: Instant text animations with direction controls and fluid transitions.',
+      'Liquid Glass & Styles: Frosted glass effects, gradients, and clean styling options.',
+      'Shakes & Expressions: Built-in motion dynamics without needing manual, complex scripting.',
+      'Workflow: It features live browser-like previews right inside the panel, real-time control sliders (for duration, scale, blur, etc.), and a one-click apply button that targets your active composition.',
+      'License: One-time purchase with a lifetime license (compatible with Mac & Windows for After Effects 2022+), which includes free monthly updates.'
     ],
     changelog: [
-      { v: '1.2.5', date: '2026-11-02', notes: 'Dispersion clamp on 8bpc comps, faster frosted roughness, AE 2026 render queue fix.' },
-      { v: '1.2.0', date: '2026-09-18', notes: 'Lensed material variant, per-layer depth mask, 34-preset pack rebuilt.' },
-      { v: '1.0.0', date: '2026-08-14', notes: 'First Kyro release — core glass raymarcher and CEP panel.' }
+      { v: '1.2.5', date: '2026-11-02', notes: 'Dispersion clamp on 8bpc comps, faster frosted roughness, AE 2026 render queue fix.' }
     ]
   },
   {
@@ -137,18 +147,79 @@ window.KYRO_INSTALL = {
     ]
   },
   '.zxp': {
-    intro: 'CEP extension — install with ZXP Installer, restart AE, open from Window ▸ Extensions.',
-    steps: [
-      'Download the <code>.zxp</code> archive — do not unzip it.',
-      'Open <code>ZXP Installer</code> and drag the file onto its window.',
-      'Wait for the green “Installed” confirmation, then restart After Effects.',
-      'Launch it from <code>Window ▸ Extensions (beta) ▸ AppleFX</code>.'
-    ],
-    paths: {
-      windows: 'C:\\Program Files\\Adobe\\Adobe After Effects 2026\\Support Files\\Scripts\\',
-      macos: '/Applications/Adobe After Effects 2026/Scripts/'
-    },
-    note: 'First launch may warn about unsigned extensions — expected for locally installed ZXPs.'
+    title: 'AppleFX 1.2.5 — Installation Guide',
+    blocks: [
+      { p: '<b>Package:</b> <code>AppleFX-1.2.5.zxp</code> (signed)<br/><b>Host:</b> After Effects 2022 (22.0) or newer, Windows and macOS' },
+      { p: 'The package is signed with a self-signed certificate (<code>CN=kyro</code>, valid until 2036-11-10). Because Adobe does not trust that certificate, After Effects only loads the panel when CEP <b>PlayerDebugMode</b> is enabled. Do step 1 before installing.' },
+
+      { h: '1. Enable PlayerDebugMode' },
+      { sub: 'Windows' },
+      { p: 'Open PowerShell and run:' },
+      { code: 'reg add "HKCU\\Software\\Adobe\\CSXS.11" /v PlayerDebugMode /t REG_SZ /d 1 /f\nreg add "HKCU\\Software\\Adobe\\CSXS.12" /v PlayerDebugMode /t REG_SZ /d 1 /f', lang: 'powershell' },
+      { sub: 'macOS' },
+      { p: 'Open Terminal and run:' },
+      { code: 'defaults write com.adobe.CSXS.11 PlayerDebugMode 1\ndefaults write com.adobe.CSXS.12 PlayerDebugMode 1', lang: 'bash' },
+      { p: 'Setting both keys is harmless — AE reads the one that matches its CEP version.' },
+
+      { h: '2. Install the panel' },
+      { sub: 'Option A — ZXP installer (recommended)' },
+      { ol: [
+        'Install <b>ZXP/UXP Installer</b> (Anastasiy): <a class="prose-link" href="https://install.anastasiy.com" target="_blank" rel="noopener noreferrer">https://install.anastasiy.com</a>',
+        'Drag <code>AppleFX-1.2.5.zxp</code> onto the installer window (or use <i>File → Install Extension</i>).',
+        'Fully quit and restart After Effects.',
+        'Open the panel from <b>Window → Extensions → AppleFX</b>.'
+      ] },
+      { sub: 'Option B — manual install' },
+      { ol: [
+        'Make a copy of <code>AppleFX-1.2.5.zxp</code>, rename the copy to <code>AppleFX-1.2.5.zip</code>, and extract it.',
+        'Copy the extracted folder — the one containing <code>CSXS</code>, <code>dist</code>, <code>extendscript</code>, <code>mimetype</code> — into the CEP extensions directory:<ul class="install-list"><li><b>Windows:</b> <code>%APPDATA%\\Adobe\\CEP\\extensions\\AppleFX</code></li><li><b>macOS:</b> <code>~/Library/Application Support/Adobe/CEP/extensions/AppleFX</code></li></ul>Create the <code>extensions</code> folder if it does not exist.',
+        'Fully quit and restart After Effects.',
+        'Open the panel from <b>Window → Extensions → AppleFX</b>.'
+      ] },
+      { p: 'Do not add, delete, or edit files inside the installed folder — the signature covers the exact file list, and a modified folder will be rejected.' },
+      { quote: 'If Windows marks the downloaded <code>.zxp</code> as blocked, right-click the file → <b>Properties</b> → tick <b>Unblock</b> → <b>OK</b> before installing.' },
+
+      { h: '3. Confirm it installed' },
+      { p: 'Open the panel, click the gear (Settings) and check the <b>About</b> section. It should show:' },
+      { code: 'AppleFX                         1.2.5\nHost                            After Effects\nDeveloper                       by kyro\nhttps://discord.gg/5ch7XeNg98' },
+      { p: '<code>by kyro</code> opens <a class="prose-link" href="https://kyro.new.tg/" target="_blank" rel="noopener noreferrer">https://kyro.new.tg/</a> in your browser.' },
+
+      { h: '4. Uninstall' },
+      { ol: [
+        'Quit After Effects.',
+        'Delete the <code>AppleFX</code> folder from the CEP extensions directory shown in Option B.',
+        'Optional — revert PlayerDebugMode:'
+      ] },
+      { p: '<b>Windows (PowerShell):</b>' },
+      { code: 'reg delete "HKCU\\Software\\Adobe\\CSXS.11" /v PlayerDebugMode /f\nreg delete "HKCU\\Software\\Adobe\\CSXS.12" /v PlayerDebugMode /f', lang: 'powershell' },
+      { p: '<b>macOS:</b>' },
+      { code: 'defaults delete com.adobe.CSXS.11 PlayerDebugMode\ndefaults delete com.adobe.CSXS.12 PlayerDebugMode', lang: 'bash' },
+
+      { h: 'Troubleshooting' },
+      { table: {
+        head: ['Symptom', 'Fix'],
+        rows: [
+          ['AppleFX missing from Window → Extensions', 'PlayerDebugMode not set for your AE build, or AE was not fully restarted. Check both registry/defaults keys and relaunch AE.'],
+          ['"The extension could not be loaded" / signature error', 'The extension folder was modified or incompletely extracted. Reinstall from the original <code>.zxp</code>.'],
+          ['Installed but panel is blank', 'Close the panel, reopen it from the Window menu. If it stays blank, enable remote debugging (below) and check the console.'],
+          ['Nothing happens after double-clicking the <code>.zxp</code>', '<code>.zxp</code> files are not executable — install with ZXP/UXP Installer or use the manual method.']
+        ]
+      } },
+      { p: '<b>Remote debugging:</b> the package ships a <code>.debug</code> config exposing Chrome DevTools at <a class="prose-link" href="http://localhost:8088" target="_blank" rel="noopener noreferrer">http://localhost:8088</a> while the panel is open. Open that URL in Chrome to inspect errors.' },
+
+      { h: 'Rebuilding the signed package (development)' },
+      { p: 'Signing uses Adobe\u2019s <code>ZXPSignCmd</code> (CEP-Resources 4.1.1), stored at <code>.tools/ZXPSignCmd.exe</code>.' },
+      { p: 'Certificate (keep this file for future updates so the signer stays the same):' },
+      { code: 'build/certs/applefx-signing.p12\npassword: applefx-kyro\nCN=kyro, valid 2026-11-13 to 2036-11-10, no timestamp server' },
+      { p: 'Rebuild steps:' },
+      { ol: [
+        'Stage only the runtime files — <code>CSXS/</code>, <code>Public/</code>, <code>dist/</code>, <code>extendscript/</code>, <code>index.html</code>, <code>mimetype</code>, <code>.debug</code>. Do <b>not</b> include <code>src/</code>, <code>build/</code>, <code>.tools/</code>, or backups.',
+        '<code>mimetype</code> and <code>.debug</code> are read-only in the repo; clear that on the staged copies before signing (<code>mimetype</code> in particular makes ZXPSignCmd fail with "Could not create pointer to file"):<pre class="install-code"><code>chmod -R u+w build/staging</code></pre>',
+        'Sign:<pre class="install-code"><code>./.tools/ZXPSignCmd.exe -sign build/staging AppleFX-1.2.5.zxp build/certs/applefx-signing.p12 applefx-kyro</code></pre>',
+        'Verify:<pre class="install-code"><code>./.tools/ZXPSignCmd.exe -verify AppleFX-1.2.5.zxp -skipOnlineRevocationChecks</code></pre>Expected: <code>Signature verified successfully</code>.'
+      ] },
+      { p: 'After re-signing, also refresh the in-repo <code>META-INF/signatures.xml</code> by extracting it from the new <code>.zxp</code>. Extra files (like <code>src/</code>) in the working folder make a folder-level <code>-verify</code> fail by design; only the extracted package contents are signed.' }
+    ]
   },
   '.jsxbin': {
     intro: 'Compiled ExtendScript panel — drop it into ScriptUI Panels and restart.',
