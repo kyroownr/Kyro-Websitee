@@ -41,14 +41,15 @@ const head = (p) => `<!DOCTYPE html>
   <meta property="og:url" content="https://kyro.new.tg/${p.id}" />
   <meta property="og:title" content="${p.title} — Kyro" />
   <meta property="og:description" content="${p.meta}" />
-  <meta property="og:image" content="https://kyro.new.tg/assets/kyro-banner.png" />
-  <meta property="og:image:width" content="512" />
-  <meta property="og:image:height" content="512" />
-  <meta property="og:image:alt" content="KYRO — est. Nov 2026" />
+  <meta property="og:image" content="https://kyro.new.tg/assets/kyro-preview.png" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Kyro — free tools and resources for editors" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="${p.title} — Kyro" />
   <meta name="twitter:description" content="${p.meta}" />
-  <meta name="twitter:image" content="https://kyro.new.tg/assets/kyro-banner.png" />
+  <meta name="twitter:image" content="https://kyro.new.tg/assets/kyro-preview.png" />
 
   <link rel="icon" type="image/png" href="/assets/kyro-icon.png" />
 

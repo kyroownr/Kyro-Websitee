@@ -104,6 +104,54 @@ async function main() {
       await send('Input.dispatchMouseEvent', {type:'mouseReleased',button:'left',clickCount:1,...point});
     };
     const openBoard = async () => evaluate(`(async()=>{ document.querySelector('#requestsOpen').click(); await (${waitExpression})(()=>document.querySelectorAll('.req-item').length>0); return document.querySelectorAll('.req-item').length; })()`);
+    for (const width of [1366, 390, 320]) {
+      await send('Emulation.setDeviceMetricsOverride', { width, height: width < 400 ? 844 : 900, deviceScaleFactor: 1, mobile: width < 400 });
+      await navigate('/?uiAuth=out');
+      assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
+      await screenshot('launch-home-' + width + '.png');
+      await evaluate("document.querySelector('#heroSearch').click()");
+      assert.equal(await evaluate("!document.querySelector('#paletteOverlay').hidden && document.querySelector('.palette').getBoundingClientRect().right <= innerWidth && document.querySelector('.palette').getBoundingClientRect().left >= 0"), true);
+      await evaluate("document.querySelector('#paletteInput').value='Cosmic'; document.querySelector('#paletteInput').dispatchEvent(new Event('input',{bubbles:true}))");
+      assert.equal(await evaluate("document.querySelector('#paletteResults').textContent.includes('Cosmic')"), true);
+      await screenshot('launch-search-' + width + '.png');
+      await evaluate("document.querySelector('.palette-row').click()");
+      assert.equal(await evaluate("!document.querySelector('#modalOverlay').hidden && document.querySelector('#modalBox').getBoundingClientRect().right <= innerWidth && document.querySelector('#modalBox').getBoundingClientRect().left >= 0 && document.querySelector('#modalBox').scrollWidth <= document.querySelector('#modalBox').clientWidth"), true);
+      await screenshot('launch-inspect-' + width + '.png');
+      await evaluate("document.querySelector('.modal-close').click(); document.querySelector('#heroSearch').click()");
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'k', code: 'KeyK', windowsVirtualKeyCode: 75, modifiers: 2 });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'k', code: 'KeyK', windowsVirtualKeyCode: 75, modifiers: 2 });
+      assert.equal(await evaluate("document.querySelector('#paletteOverlay').hidden"), false);
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await openBoard();
+      assert.equal(await evaluate("document.querySelector('#requestsDrawer').scrollWidth <= document.querySelector('#requestsDrawer').clientWidth && document.documentElement.scrollWidth <= innerWidth"), true);
+      await evaluate("document.querySelector('#requestsClose').click()");
+      await navigate('/missing/old-link');
+      assert.equal(await evaluate("document.title === 'Page Not Found — Kyro' && document.querySelector('h1').textContent === '404' && getComputedStyle(document.body).backgroundColor === 'rgb(8, 9, 13)'"), true);
+      assert.equal(await evaluate("document.documentElement.scrollWidth <= innerWidth && document.querySelector('.btn-primary').getAttribute('href') === '/' && document.querySelector('.btn-primary').textContent === 'Back to the Vault'"), true);
+      assert.equal(await evaluate("document.querySelector('meta[name=robots]').content"), 'noindex, follow');
+      assert.equal(await evaluate("(async()=>{const response=await fetch(location.href);return response.status})()"), 404);
+      await screenshot('launch-404-' + width + '.png');
+      const returned = new Promise(resolve => events.set('Page.loadEventFired', resolve));
+      await evaluate("document.querySelector('.btn-primary').click()");
+      await returned;
+      assert.equal(await evaluate('location.pathname'), '/');
+    }
+    for (const route of ['/', '/windows', '/macos', '/guide', '/about']) {
+      await navigate(route + '?uiAuth=out');
+      const metadata = await evaluate(`(()=>{const get=key=>document.querySelector('meta[property="'+key+'"]')?.content;return {title:get('og:title'),description:get('og:description'),image:get('og:image'),width:get('og:image:width'),height:get('og:image:height'),type:get('og:image:type'),url:get('og:url'),canonical:document.querySelector('link[rel=canonical]').href,unique:document.querySelectorAll('meta[property="og:image"]').length,twitter:document.querySelector('meta[name="twitter:image"]').content}})()`);
+      assert.ok(metadata.title && metadata.description);
+      assert.equal(metadata.image, 'https://kyro.new.tg/assets/kyro-preview.png');
+      assert.equal(metadata.width, '1200');
+      assert.equal(metadata.height, '630');
+      assert.equal(metadata.type, 'image/png');
+      assert.equal(metadata.canonical, metadata.url);
+      assert.equal(metadata.unique, 1);
+      assert.equal(metadata.twitter, metadata.image);
+    }
+    assert.deepEqual(await evaluate("(async()=>{const image=new Image();image.src='/assets/kyro-preview.png';await image.decode();return [image.naturalWidth,image.naturalHeight]})()"), [1200, 630]);
     await send('Emulation.setDeviceMetricsOverride', { width: 1366, height: 900, deviceScaleFactor: 1, mobile: false });
     await navigate('/windows');
     assert.equal(await evaluate("document.querySelector('#softwareSection').open"), false);
@@ -322,7 +370,7 @@ async function main() {
       await evaluate("document.querySelector('#profileBtn').click()");
       assert.equal(await evaluate("document.querySelector('.pm-state').textContent.includes('Not in the Kyro server') && document.querySelector('.pm-role') === null"), true);
     }
-    console.log(JSON.stringify({ realChrome: 'passed', ownerControls: 'role refresh, public owner submission badge, status, confirm/cancel deletion, member/admin gates, spoofed storage, desktop/mobile', mobileWidth: 390, softwareAccordion: 'mouse, Enter, Space, both OS pages, empty state', toolsAccordion: 'mouse, Enter, Space, both OS pages, desktop/mobile, independent shelves, empty state', toolDownloads: 'AutoCaption modal, Kyro copy, install guide', toonboom: 'download URL, Kyro password, install note, auth gates', boardFirst: true, composer: true, publicChecksumCopy: true, malformedAndMissingHashes: 'hidden', guide: '6 sections', authGates: 'passed', searchAndCatalog: 'passed', artifacts }));
+    console.log(JSON.stringify({ realChrome: 'passed', launchPolish: '1200x630 preview, unique Open Graph on five pages, custom 404 status and return button, search/Ctrl+K/drawers at 1366/390/320px', ownerControls: 'role refresh, public owner submission badge, status, confirm/cancel deletion, member/admin gates, spoofed storage, desktop/mobile', mobileWidth: 390, softwareAccordion: 'mouse, Enter, Space, both OS pages, empty state', toolsAccordion: 'mouse, Enter, Space, both OS pages, desktop/mobile, independent shelves, empty state', toolDownloads: 'AutoCaption modal, Kyro copy, install guide', toonboom: 'download URL, Kyro password, install note, auth gates', boardFirst: true, composer: true, publicChecksumCopy: true, malformedAndMissingHashes: 'hidden', guide: '6 sections', authGates: 'passed', searchAndCatalog: 'passed', artifacts }));
   } finally {
     if (ws && ws.readyState === WebSocket.OPEN) ws.close();
     chrome.kill();

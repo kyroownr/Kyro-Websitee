@@ -12,7 +12,13 @@ http.createServer((req, res) => {
   fs.stat(p, (err, st) => {
     if (!err && st.isDirectory()) p = path.join(p, 'index.html');
     fs.readFile(p, (e, buf) => {
-      if (e) { res.writeHead(404); return res.end('not found'); }
+      if (e) {
+        fs.readFile(path.join(root, '404.html'), (error, page) => {
+          res.writeHead(404, { 'content-type': 'text/html', 'cache-control': 'no-store' });
+          res.end(error ? 'not found' : page);
+        });
+        return;
+      }
       res.writeHead(200, { 'content-type': types[path.extname(p)] || 'application/octet-stream', 'cache-control': 'no-store' });
       res.end(buf);
     });
