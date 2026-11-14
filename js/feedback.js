@@ -7,6 +7,36 @@
   const K_RETURN = 'kyro.oauth.return.v1';
   const OUT = 0, LOGGED = 1, VERIFIED = 2;
 
+  function captureOAuthCallback() {
+    try {
+      const q = new URLSearchParams(location.search);
+      if (!q.has('token') && !q.has('username')) return;
+
+      const returned = q.get('state');
+      const expected = sessionStorage.getItem(K_STATE);
+      sessionStorage.removeItem(K_STATE);
+
+      // Save credentials into localStorage
+      const username = q.get('username') || 'editor';
+      const inServer = q.get('in_server');
+      const authData = {
+        state: inServer === 'true' ? VERIFIED : LOGGED,
+        user: {
+          username,
+          id: q.get('id') || '',
+          avatar: q.get('avatar') || '',
+          initials: username.slice(0, 1).toUpperCase()
+        },
+        token: q.get('token') || ''
+      };
+      localStorage.setItem(K_AUTH, JSON.stringify(authData));
+      window.history.replaceState({}, '', location.pathname);
+    } catch (e) {
+      console.warn('[feedback-auth]', e);
+    }
+  }
+  captureOAuthCallback();
+
   function readAuth() {
     try {
       const raw = localStorage.getItem(K_AUTH);
@@ -38,9 +68,9 @@
   }
 
   function startLogin() {
-    try { sessionStorage.setItem(K_RETURN, location.pathname); } catch {}
+    sessionStorage.setItem(K_RETURN, location.href);
     const state = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
-    try { sessionStorage.setItem(K_STATE, state); } catch {}
+    sessionStorage.setItem(K_STATE, state);
     const clientId = '1570702041993711706';
     const redirectUri = encodeURIComponent(AUTH_WORKER_URL + '/callback');
     const scope = encodeURIComponent('identify guilds');
