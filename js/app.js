@@ -292,7 +292,17 @@
       prompt: ''
     }
   };
-  const access = () => ACCESS[auth.state];
+  const access = () => {
+    const pendingGoogle = read('kyro.google.pending', null);
+    if (auth.state === OUT && pendingGoogle) {
+      return {
+        cls: 'is-partial', icon: ICON.discord,
+        text: '<b>Google connected (' + esc(pendingGoogle.name) + ').</b> Link your Discord account to verify Kyro server membership.',
+        prompt: 'Link Discord to verify server membership'
+      };
+    }
+    return ACCESS[auth.state];
+  };
 
   /* ============================ auth surface ============================ */
   /* Discord returns an avatar hash; the CDN URL needs the user id with it. */
@@ -323,11 +333,27 @@
 
   function renderAuth() {
     window.dispatchEvent(new CustomEvent('kyro:auth'));
+    const pendingGoogle = read('kyro.google.pending', null);
     if (auth.state === OUT) {
+      if (pendingGoogle) {
+        authSlot.innerHTML =
+          '<div style="display:flex;align-items:center;gap:6px;">' +
+            '<button type="button" class="login-btn" id="loginBtn">' + ICON.discord +
+            '<span class="lb-text">Link Discord (' + esc(pendingGoogle.name.split(' ')[0]) + ')</span></button>' +
+          '</div>';
+        $('#loginBtn').addEventListener('click', startLogin);
+        return;
+      }
       authSlot.innerHTML =
-        '<button type="button" class="login-btn" id="loginBtn">' + ICON.discord +
-        '<span class="lb-text">Login with Discord</span></button>';
+        '<div style="display:flex;align-items:center;gap:6px;">' +
+          '<button type="button" class="login-btn" id="loginBtn">' + ICON.discord +
+          '<span class="lb-text">Discord</span></button>' +
+          '<button type="button" class="login-btn" id="googleLoginBtn" style="background:#13151b;border-color:var(--line);">' +
+          '<svg width="15" height="15" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.7 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 9 5 12 5z"/><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.8z"/><path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.3s.2-1.6.4-2.3L1.9 7.3C.7 9.7 0 12.3 0 15s.7 5.3 1.9 7.7l3.7-2.9z"/><path fill="#34A853" d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.4-6.4-5.2L1.9 16c1.8 3.7 5.6 7 10.1 7z"/></svg>' +
+          '<span class="lb-text">Google</span></button>' +
+        '</div>';
       $('#loginBtn').addEventListener('click', startLogin);
+      $('#googleLoginBtn').addEventListener('click', startGoogleLogin);
       return;
     }
     const verified = auth.state === VERIFIED;
@@ -524,12 +550,28 @@
     }
   }
 
+  const ICON_GOOGLE = '<svg width="15" height="15" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.7 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 9 5 12 5z"/><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.8z"/><path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.3s.2-1.6.4-2.3L1.9 7.3C.7 9.7 0 12.3 0 15s.7 5.3 1.9 7.7l3.7-2.9z"/><path fill="#34A853" d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.4-6.4-5.2L1.9 16c1.8 3.7 5.6 7 10.1 7z"/></svg>';
+
   /* --------------------------- access strip ----------------------------- */
   function renderAccess() {
     const a = access();
+    const pendingGoogle = read('kyro.google.pending', null);
     let actions = '';
-    if (auth.state === OUT) actions = '<button type="button" class="btn btn-discord btn-sm" id="stripLogin">' + ICON.discord + 'Login with Discord</button>';
-    else if (auth.state === LOGGED) actions =
+    if (auth.state === OUT) {
+      if (pendingGoogle) {
+        actions =
+          '<div style="display:flex;align-items:center;gap:6px;">' +
+            '<button type="button" class="btn btn-discord btn-sm" id="stripLogin">' + ICON.discord + 'Link Discord</button>' +
+            '<button type="button" class="btn btn-ghost btn-sm" id="stripClearGoogle" title="Disconnect Google">✕</button>' +
+          '</div>';
+      } else {
+        actions =
+          '<div style="display:flex;align-items:center;gap:6px;">' +
+            '<button type="button" class="btn btn-discord btn-sm" id="stripLogin">' + ICON.discord + 'Discord</button>' +
+            '<button type="button" class="btn btn-sm" id="stripGoogleLogin" style="background:#13151b;border:1px solid var(--line);color:#eee;">' + ICON_GOOGLE + 'Google</button>' +
+          '</div>';
+      }
+    } else if (auth.state === LOGGED) actions =
       '<a class="btn btn-danger btn-sm" href="' + INVITE_URL + '" target="_blank" rel="noopener noreferrer">' + ICON.discord + 'Join Server</a>' +
       '<button type="button" class="btn btn-ghost btn-sm" id="stripRecheck">Refresh Verification</button>';
     else actions = '<span class="a-state mono">verified · ' + esc(auth.user.username) + '</span>';
@@ -540,6 +582,15 @@
 
     const sl = $('#stripLogin');
     if (sl) sl.addEventListener('click', startLogin);
+    const sgl = $('#stripGoogleLogin');
+    if (sgl) sgl.addEventListener('click', startGoogleLogin);
+    const scg = $('#stripClearGoogle');
+    if (scg) scg.addEventListener('click', () => {
+      localStorage.removeItem('kyro.google.pending');
+      renderAccess();
+      renderAuth();
+      toast({ title: 'Google disconnected', sub: 'You can sign in with Discord or Google.', icon: ICON.x });
+    });
     const sr = $('#stripRecheck');
     if (sr) sr.addEventListener('click', recheckMembership);
 
@@ -815,8 +866,11 @@
     let title, sub, primary, secondary, foot;
     if (auth.state === OUT) {
       title = 'Verify membership to unlock downloads.';
-      sub = 'Sign in and join the Kyro Discord to access exclusive tools.';
-      primary = '<button type="button" class="btn btn-primary" id="bannerLogin">Login with Discord</button>';
+      sub = 'Sign in with Discord or Google, and join the Kyro Discord to access exclusive tools.';
+      primary = '<div style="display:flex;align-items:center;gap:8px;">' +
+        '<button type="button" class="btn btn-primary" id="bannerLogin">' + ICON.discord + 'Discord</button>' +
+        '<button type="button" class="btn" id="bannerGoogleLogin" style="background:#181b22;border:1px solid var(--line);color:#eee;">' + ICON_GOOGLE + 'Google</button>' +
+        '</div>';
       secondary = inviteLink;
       foot = '';
     } else if (auth.state === LOGGED) {
@@ -851,6 +905,8 @@
 
     const bl = $('#bannerLogin');
     if (bl) bl.addEventListener('click', startLogin);
+    const bgl = $('#bannerGoogleLogin');
+    if (bgl) bgl.addEventListener('click', startGoogleLogin);
     const br = $('#bannerRecheck');
     if (br) br.addEventListener('click', recheckMembership);
     const bq = $('#bannerRequests');
@@ -1114,7 +1170,10 @@
   function reqGateHTML() {
     if (auth.state === OUT) {
       return '<p class="req-gate-text">Verified Kyro members post and vote on requests.</p>' +
-        '<button type="button" class="btn btn-ghost btn-sm" id="reqLogin">' + ICON.discord + 'Login with Discord</button>';
+        '<div style="display:flex;align-items:center;gap:6px;">' +
+          '<button type="button" class="btn btn-ghost btn-sm" id="reqLogin">' + ICON.discord + 'Discord</button>' +
+          '<button type="button" class="btn btn-ghost btn-sm" id="reqGoogleLogin">' + ICON_GOOGLE + 'Google</button>' +
+        '</div>';
     }
     return '<p class="req-gate-text">Join the Kyro Discord server to post and vote on requests.</p>' +
       '<a class="btn btn-ghost btn-sm" href="' + esc(INVITE_URL) + '" target="_blank" rel="noopener noreferrer">' + ICON.discord + 'Join Server</a>' +
@@ -1190,6 +1249,8 @@
     requestsDrawer.querySelectorAll('[data-req-filter]').forEach(btn => btn.setAttribute('aria-pressed', String(btn.dataset.reqFilter === reqFilter)));
     const rl = $('#reqLogin');
     if (rl) rl.addEventListener('click', startLogin);
+    const rgl = $('#reqGoogleLogin');
+    if (rgl) rgl.addEventListener('click', startGoogleLogin);
     const rr = $('#reqRecheck');
     if (rr) rr.addEventListener('click', recheckMembership);
     reqSubmit.disabled = reqBusy || !reqLoaded || Boolean(reqError);
@@ -1322,14 +1383,21 @@
       feedbackGate.hidden = false;
       feedbackGate.innerHTML =
         '<div class="req-gate-card">' +
-          '<div class="req-gate-title">Discord verification required</div>' +
-          '<div class="req-gate-sub">Feedback and community reviews are exclusively visible to verified server members. Sign in with Discord to view and share reviews.</div>' +
-          '<button type="button" class="btn btn-discord btn-sm mono" id="feedbackGateLogin">' +
-            ICON.discord + ' Sign in with Discord' +
-          '</button>' +
+          '<div class="req-gate-title">Verification required</div>' +
+          '<div class="req-gate-sub">Feedback and community reviews are exclusively visible to verified server members. Sign in to view and share reviews.</div>' +
+          '<div style="display:flex;align-items:center;gap:8px;justify-content:center;margin-top:8px;">' +
+            '<button type="button" class="btn btn-discord btn-sm mono" id="feedbackGateLogin">' +
+              ICON.discord + ' Sign in with Discord' +
+            '</button>' +
+            '<button type="button" class="btn btn-sm mono" id="feedbackGateGoogleLogin" style="background:#13151b;border:1px solid var(--line);color:#eee;">' +
+              ICON_GOOGLE + ' Sign in with Google' +
+            '</button>' +
+          '</div>' +
         '</div>';
       const gateBtn = $('#feedbackGateLogin');
       if (gateBtn) gateBtn.addEventListener('click', startLogin);
+      const gateGoogleBtn = $('#feedbackGateGoogleLogin');
+      if (gateGoogleBtn) gateGoogleBtn.addEventListener('click', startGoogleLogin);
       feedbackList.innerHTML = '';
       return;
     }
@@ -1699,6 +1767,8 @@
 
     const gl = zone.querySelector('#gateLogin');
     if (gl) gl.addEventListener('click', startLogin);
+    const ggl = zone.querySelector('#gateGoogleLogin');
+    if (ggl) ggl.addEventListener('click', startGoogleLogin);
     const gr = zone.querySelector('#gateRecheck');
     if (gr) gr.addEventListener('click', recheckMembership);
     zone.querySelectorAll('[data-file]').forEach(btn =>
@@ -1729,7 +1799,10 @@
     if (auth.state === OUT) {
       return '<div class="gate-banner gate-out"><span class="g-icon">' + ICON.lock + '</span>' +
         '<span class="g-text"><b>' + esc(a.prompt) + '</b><br/>Membership is checked after you sign in.</span>' +
-        '<button type="button" class="btn btn-discord btn-sm" id="gateLogin">' + ICON.discord + 'Login with Discord</button></div>';
+        '<div style="display:flex;align-items:center;gap:6px;">' +
+          '<button type="button" class="btn btn-discord btn-sm" id="gateLogin">' + ICON.discord + 'Discord</button>' +
+          '<button type="button" class="btn btn-sm" id="gateGoogleLogin" style="background:#13151b;border:1px solid var(--line);color:#eee;">' + ICON_GOOGLE + 'Google</button>' +
+        '</div></div>';
     }
     if (auth.state === LOGGED) {
       return '<div class="gate-banner gate-denied"><span class="g-icon">' + ICON.shield + '</span>' +
