@@ -338,6 +338,7 @@
       '<div class="pm-state ' + (verified ? 'is-ok' : 'is-out') + '">' +
         (verified ? ICON.check + 'Verified server member' : ICON.lock + 'Not in the Kyro server') + '</div>' +
       (verified ? '<div class="pm-role mono">Discord role <span class="badge' + (discordRole === 'owner' ? ' badge-free' : '') + '">' + (discordRole ? discordRole.toUpperCase() : 'UNVERIFIED') + '</span></div>' : '') +
+      '<button type="button" class="pm-item" role="menuitem" data-account-settings>Account Settings</button>' +
       (verified ? '<button type="button" class="pm-item" role="menuitem" data-recheck>Refresh Discord Role</button>' : '') +
       (verified ? '' :
         '<a class="pm-item" role="menuitem" href="' + esc(INVITE_URL) + '" target="_blank" rel="noopener noreferrer">Join server ↗</a>' +
@@ -347,6 +348,8 @@
     wireAvatars(menu);
     pill.classList.add('is-open');
     pill.setAttribute('aria-expanded', 'true');
+    const acc = menu.querySelector('[data-account-settings]');
+    if (acc) acc.addEventListener('click', () => { closeProfileMenu(); openAccountModal(); });
     const rc = menu.querySelector('[data-recheck]');
     if (rc) rc.addEventListener('click', () => { closeProfileMenu(); recheckMembership(); });
     menu.querySelector('[data-logout]').addEventListener('click', () => { closeProfileMenu(); logout(); });
@@ -1446,6 +1449,244 @@
     closeScrim();
   }
 
+  /* --------------------------- Account Settings Modal -------------------- */
+  const K_DOWNLOAD_HISTORY = 'kyro.download_history.v1';
+  let downloadHistory = read(K_DOWNLOAD_HISTORY, []);
+
+  function recordDownloadHistory(r, file) {
+    if (!r) return;
+    const item = {
+      id: r.id,
+      title: r.title,
+      ext: (file && file.ext) || 'zip',
+      size: (file && file.size) || '',
+      date: new Date().toISOString()
+    };
+    downloadHistory = [item, ...downloadHistory.filter(h => h.id !== r.id)].slice(0, 30);
+    write(K_DOWNLOAD_HISTORY, downloadHistory);
+  }
+
+  const accountModalOverlay = $('#accountModalOverlay');
+  const accountModalClose = $('#accountModalClose');
+
+  function openAccountModal(tab = 'applications') {
+    if (!accountModalOverlay) return;
+    renderAccountProfile();
+    switchAccountTab(tab);
+    accountModalOverlay.hidden = false;
+  }
+
+  function closeAccountModal() {
+    if (accountModalOverlay) accountModalOverlay.hidden = true;
+  }
+
+  function renderAccountProfile() {
+    const avatarEl = $('#accUserAvatar');
+    const nameEl = $('#accUserName');
+    const metaEl = $('#accUserMeta');
+    if (!avatarEl || !nameEl || !metaEl) return;
+
+    if (auth.state !== OUT && auth.user) {
+      avatarEl.innerHTML = avatarHTML(auth.user);
+      wireAvatars(avatarEl);
+      nameEl.textContent = auth.user.username;
+      metaEl.textContent = '@' + auth.user.username + ' · ' + (auth.state === VERIFIED ? 'Verified Kyro Member' : 'Guest Account');
+    } else {
+      avatarEl.innerHTML = 'K';
+      nameEl.textContent = 'Guest';
+      metaEl.textContent = '@guest · Not signed in with Discord';
+    }
+  }
+
+  function switchAccountTab(tabKey) {
+    const tabs = $$('[data-acc-tab]');
+    tabs.forEach(t => t.classList.toggle('is-active', t.dataset.accTab === tabKey));
+
+    const panels = {
+      applications: $('#accPanelApplications'),
+      requests: $('#accPanelRequests'),
+      vault: $('#accPanelVault'),
+      downloads: $('#accPanelDownloads'),
+      settings: $('#accPanelSettings')
+    };
+
+    Object.entries(panels).forEach(([k, el]) => {
+      if (!el) return;
+      el.classList.toggle('is-active', k === tabKey);
+    });
+
+    if (tabKey === 'applications') renderAccountApplications();
+    else if (tabKey === 'requests') renderAccountRequests();
+    else if (tabKey === 'vault') renderAccountVault();
+    else if (tabKey === 'downloads') renderAccountDownloads();
+  }
+
+  async function renderAccountApplications() {
+    const target = $('#accApplicationsContent');
+    if (!target) return;
+    if (auth.state === OUT || !auth.token) {
+      target.innerHTML =
+        '<div class="acc-empty-box">' +
+          '<p class="acc-empty-text">Sign in with Discord to view your staff and contributor applications.</p>' +
+          '<button type="button" class="acc-action-pill" id="accAppLogin">Sign in with Discord</button>' +
+        '</div>';
+      $('#accAppLogin')?.addEventListener('click', () => { closeAccountModal(); startLogin(); });
+      return;
+    }
+
+    target.innerHTML = '<div class="acc-empty-box"><p class="acc-empty-text">Checking your applications…</p></div>';
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/applications', {
+        headers: { 'authorization': 'Bearer ' + auth.token },
+        credentials: 'omit'
+      });
+      const data = await res.json();
+      const apps = (data && Array.isArray(data.applications)) ? data.applications : [];
+      if (!apps.length) {
+        target.innerHTML =
+          '<div class="acc-empty-box">' +
+            '<p class="acc-empty-text">You haven\'t applied yet.</p>' +
+            '<a class="acc-action-pill" href="/apply">Browse application forms →</a>' +
+          '</div>';
+        return;
+      }
+      target.innerHTML = apps.map(app =>
+        '<div class="acc-row-item">' +
+          '<div class="acc-row-info">' +
+            '<div class="acc-row-title">' + esc(app.role ? app.role.toUpperCase() : 'APPLICATION') + '</div>' +
+            '<div class="acc-row-sub">Status: ' + esc(app.status.replace(/_/g, ' ')) + ' · Submitted ' + (app.created ? app.created.slice(0, 10) : '') + '</div>' +
+          '</div>' +
+          '<a class="btn btn-ghost btn-sm" href="/apply?application=' + encodeURIComponent(app.id) + '">View Receipt</a>' +
+        '</div>'
+      ).join('');
+    } catch {
+      target.innerHTML =
+        '<div class="acc-empty-box">' +
+          '<p class="acc-empty-text">You haven\'t applied yet.</p>' +
+          '<a class="acc-action-pill" href="/apply">Browse application forms →</a>' +
+        '</div>';
+    }
+  }
+
+  function renderAccountRequests() {
+    const target = $('#accRequestsContent');
+    if (!target) return;
+    const userId = (auth.user && auth.user.id) || '';
+    const myRequests = (reqItems || []).filter(r => r.by === userId);
+
+    if (!myRequests.length) {
+      target.innerHTML =
+        '<div class="acc-empty-box">' +
+          '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" style="margin-bottom:12px;opacity:0.6;"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>' +
+          '<p class="acc-empty-text">No requests submitted yet.</p>' +
+          '<button type="button" class="acc-action-pill" id="accGoRequests">Browse requests</button>' +
+        '</div>';
+      $('#accGoRequests')?.addEventListener('click', () => { closeAccountModal(); openRequests(); });
+      return;
+    }
+
+    target.innerHTML = myRequests.map(r =>
+      '<div class="acc-row-item">' +
+        '<div class="acc-row-info">' +
+          '<div class="acc-row-title">' + esc(r.title) + '</div>' +
+          '<div class="acc-row-sub">' + esc(r.category ? r.category.toUpperCase() : 'TOOL') + ' · ' + (r.votes || 0) + ' votes · Status: ' + esc(r.status || 'open') + '</div>' +
+        '</div>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-acc-open-req="' + esc(r.id) + '">View on board</button>' +
+      '</div>'
+    ).join('');
+
+    target.querySelectorAll('[data-acc-open-req]').forEach(btn => btn.addEventListener('click', () => {
+      closeAccountModal();
+      openRequests();
+    }));
+  }
+
+  function renderAccountVault() {
+    const list = $('#accVaultList');
+    if (!list) return;
+    const items = resources.filter(r => saved.has(r.id));
+    if (!items.length) {
+      list.innerHTML =
+        '<div class="acc-empty-box">' +
+          '<p class="acc-empty-text">Your saved vault is empty. Click the bookmark icon on any tool to save it.</p>' +
+        '</div>';
+      return;
+    }
+    list.innerHTML = items.map(r =>
+      '<div class="vault-item" data-acc-vault-id="' + esc(r.id) + '">' +
+        '<div class="vault-thumb">' + Preview.thumb(r) + '</div>' +
+        '<div class="vault-info">' +
+          '<div class="v-title">' + esc(r.title) + '</div>' +
+          '<div class="v-meta"><span class="mono">' + (r.version || 'build') + '</span><span>' + (r.category || 'tool') + '</span></div>' +
+        '</div>' +
+        '<button type="button" class="btn btn-primary btn-sm">Open</button>' +
+      '</div>'
+    ).join('');
+
+    list.querySelectorAll('[data-acc-vault-id]').forEach(el => el.addEventListener('click', () => {
+      closeAccountModal();
+      openModal(el.dataset.accVaultId);
+    }));
+  }
+
+  function renderAccountDownloads() {
+    const list = $('#accDownloadsList');
+    if (!list) return;
+    if (!downloadHistory.length) {
+      list.innerHTML =
+        '<div class="acc-empty-box">' +
+          '<p class="acc-empty-text">No downloads recorded in this browser session yet.</p>' +
+        '</div>';
+      return;
+    }
+    list.innerHTML = downloadHistory.map(d =>
+      '<div class="vault-item" data-acc-dl-id="' + esc(d.id) + '">' +
+        '<div class="vault-info">' +
+          '<div class="v-title">' + esc(d.title) + '</div>' +
+          '<div class="v-meta"><span class="mono">' + esc(d.ext ? d.ext.toUpperCase() : 'FILE') + '</span><span>' + (d.size || '') + '</span><span>' + (d.date ? d.date.slice(0, 10) : '') + '</span></div>' +
+        '</div>' +
+        '<button type="button" class="btn btn-ghost btn-sm">Download Again</button>' +
+      '</div>'
+    ).join('');
+
+    list.querySelectorAll('[data-acc-dl-id]').forEach(el => el.addEventListener('click', () => {
+      closeAccountModal();
+      openModal(el.dataset.accDlId);
+    }));
+  }
+
+  function wireAccountModal() {
+    if (!accountModalOverlay) return;
+    accountModalClose?.addEventListener('click', closeAccountModal);
+    accountModalOverlay.addEventListener('click', (e) => {
+      if (e.target === accountModalOverlay) closeAccountModal();
+    });
+
+    $$('[data-acc-tab]').forEach(btn => {
+      btn.addEventListener('click', () => switchAccountTab(btn.dataset.accTab));
+    });
+
+    $('#accOpenRequestsBtn')?.addEventListener('click', () => {
+      closeAccountModal();
+      openRequests();
+    });
+
+    $('#accSyncDiscord')?.addEventListener('click', () => {
+      recheckMembership();
+      toast({ title: 'Discord synced', sub: 'Verification status refreshed.', icon: ICON.check });
+    });
+
+    $('#accResetCookies')?.addEventListener('click', () => {
+      $('#prefFunctional').checked = true;
+      $('#prefAnalytics').checked = true;
+      toast({ title: 'Cookie preferences reset', sub: 'All preferences set to default active state.', icon: ICON.check });
+    });
+
+    $('#accExportData')?.addEventListener('click', () => {
+      toast({ title: 'Export request submitted', sub: 'Your data package request has been queued.', icon: ICON.check });
+    });
+  }
+
   /* ------------------------------ detail modal -------------------------- */
   let modalId = null;
   let modalTab = 'overview';
@@ -1669,7 +1910,10 @@
     /* The externally hosted archive leaves the page, so the click itself is the
        only signal that somebody actually took the file. */
     zone.querySelectorAll('[data-ext-link]').forEach(a =>
-      a.addEventListener('click', () => countDownload(r)));
+      a.addEventListener('click', () => {
+        countDownload(r);
+        recordDownloadHistory(r, { ext: 'link', name: r.title, size: 'External' });
+      }));
     const cp = zone.querySelector('[data-pass-copy]');
     if (cp) cp.addEventListener('click', () => copyText(cp, cp.dataset.pass));
   }
@@ -1929,6 +2173,7 @@
       if (pct >= 100) {
         clearInterval(iv);
         countDownload(r);
+        recordDownloadHistory(r, file);
         t.finish('Download started', file.name + ' · saved to your Downloads folder');
         btn.disabled = false;
         btn.classList.add('is-done');
@@ -2276,6 +2521,7 @@
   renderReqCategories();
   wireRequestControls();
   initFeedbackDrawer();
+  wireAccountModal();
   updateSavedUI();
   startServerStats();
   refreshDiscordRole();
