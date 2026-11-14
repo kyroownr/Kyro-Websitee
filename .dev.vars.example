@@ -6,3 +6,20 @@ DISCORD_CLIENT_SECRET=replace-with-the-discord-app-client-secret
 KYRO_GUILD_ID=1539961184323772498
 KYRO_SITE_URL=https://kyro.new.tg
 KYRO_ALLOWED_ORIGINS=https://kyro.new.tg
+
+# Staff & contributor applications (/apply). All four are required before the
+# application form accepts submissions — the Worker reports `open: false`
+# until every one of them is present. The bot needs Manage Channels in the
+# guild, and its interactions endpoint must point at
+# https://kyro-auth.kyro-ownr.workers.dev/applications/interactions
+# with the same public key. Run tools/open-applications.ps1 to set them
+# as encrypted secrets without touching this file.
+DISCORD_BOT_TOKEN=replace-with-the-discord-bot-token
+DISCORD_APPLICATIONS_CATEGORY_ID=replace-with-the-applications-category-id
+DISCORD_MOD_ROLE_ID=replace-with-the-moderator-role-id
+DISCORD_PUBLIC_KEY=replace-with-the-bot-public-key
+
+# Optional: set to "false" to close applications again without a redeploy.
+# KYRO_APPLICATIONS_OPEN=false
+# Optional: let an applicant see their own private review channel.
+# KYRO_APPLICATION_INTERVIEW_ENABLED=true
