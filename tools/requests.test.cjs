@@ -6,6 +6,13 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'worker.js'), 'utf8');
 let webhookFailure = false;
 let ownerUser = 'owner';
 const deliveries = [];
+const waitFor = async predicate => {
+  const deadline = Date.now() + 10000;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('Webhook delivery timed out');
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+};
 const make = (webhook = true, admins = 'admin') => new Miniflare(convertV4MiniflareOptions({
   modules: true,
   script: source,
@@ -22,7 +29,9 @@ const make = (webhook = true, admins = 'admin') => new Miniflare(convertV4Minifl
     if (url.hostname !== 'discord.com') throw new Error('Unexpected outbound request');
     if (url.pathname.startsWith('/api/webhooks/')) {
       deliveries.push(await request.json());
-      return new Response(null, { status: webhookFailure ? 503 : 204 });
+      assert.equal(url.searchParams.get('wait'), 'true');
+      assert.equal(url.searchParams.get('with_components'), 'true');
+      return new Response(null, { status: webhookFailure ? 400 : 204 });
     }
     if (url.pathname === '/api/oauth2/token') return Response.json({ access_token: 'member' });
     const id = (request.headers.get('authorization') || '').replace('Bearer ', '');
@@ -69,12 +78,22 @@ async function main() {
       { reference: 'javascript:alert(1)' }, { reference: 'https://user:pass@example.com' }
     ]) expect((await call('/requests', { ...base, ...bad }, 'member')).status === 400, 'input boundary ' + JSON.stringify(bad));
     out = await call('/requests', base, 'member');
-    expect(out.status === 201 && out.data.notification === 'sent', 'create and notify');
+    expect(out.status === 201 && out.data.notification === 'queued', 'save without waiting for Discord');
+    await waitFor(() => deliveries.length === 1);
     const row = out.data.requests.find(r => r.id === out.data.id);
     expect(row.os === 'macos' && row.ae_versions.join(',') === '2024,2026' && row.reference === base.reference && row.votes === 1 && row.you_voted, 'new fields and author vote');
     expect(!('by' in row) && !('voters' in row), 'private voter IDs');
-    expect(deliveries.length === 1 && deliveries[0].allowed_mentions.parse.length === 0 && deliveries[0].embeds[0].color === 0x08090d, 'dark embed with mentions disabled');
-    expect(deliveries[0].embeds[0].fields.find(f => f.name === 'Requested by').value === 'member-editor', 'Discord username');
+    const payload = deliveries[0];
+    const embed = payload.embeds[0];
+    const field = name => embed.fields.find(f => f.name === name).value;
+    expect(payload.allowed_mentions.parse.length === 0 && payload.allowed_mentions.users.length === 0 && payload.allowed_mentions.roles.length === 0 && embed.color === 0x5865f2, 'colored accent with mentions disabled');
+    expect(payload.username === 'Kyro Request Monitor' && embed.author.icon_url === payload.avatar_url && embed.thumbnail.url === payload.avatar_url, 'Kyro header and icon');
+    expect(embed.title === base.title && embed.url === base.reference && embed.description.startsWith('**Details**\n'), 'linked exact title and labeled details');
+    expect(field('Requested By') === 'member-editor' && field('Product / Category') === 'Script', 'Discord username and category');
+    expect(field('Status') === '⏳ PENDING' && field('AE Version') === 'AE 2024 / 2026' && field('OS Target') === 'macOS', 'readable request targets');
+    expect(row.number === 1 && field('Request ID') === '#1', 'atomic sequential request number');
+    expect(embed.footer.text.includes('1 vote at submission') && !embed.footer.text.includes('views'), 'honest engagement snapshot');
+    expect(payload.components[0].components.every(button => button.style === 5 && !button.custom_id) && payload.components[0].components[1].url === base.reference, 'working URL buttons only');
     expect((await call('/requests', { ...base, title: ' MOTION   EASING helper!!!' }, 'member')).status === 409 && deliveries.length === 1, 'normalized duplicate prevention');
     expect((await call('/requests/vote', { id: 'missing' }, 'member')).status === 404, 'missing vote target');
     expect((await call('/requests/status', { id: row.id, status: 'planned' }, 'member')).status === 403, 'admin-only status');
@@ -93,7 +112,9 @@ async function main() {
     expect(simultaneous.filter(r => r.status === 201).length === 1 && simultaneous.filter(r => r.status === 409).length === 7, 'atomic duplicate insertion');
     webhookFailure = true;
     out = await call('/requests', { ...base, title: 'Saved despite webhook failure' }, 'member');
-    expect(out.status === 201 && out.data.notification === 'failed' && out.data.requests.some(r => r.title === 'Saved despite webhook failure'), 'notification failure does not lose request');
+    expect(out.status === 201 && out.data.notification === 'queued' && out.data.requests.some(r => r.title === 'Saved despite webhook failure'), 'notification failure does not lose request');
+    await waitFor(() => deliveries.some(p => p.embeds[0].title === 'Saved despite webhook failure'));
+    webhookFailure = false;
     expect((await call('/requests', undefined, 'expired')).status === 200, 'public board survives expired token');
     const callback = await mf.dispatchFetch('http://localhost/callback?code=test&state=state-test', { redirect: 'manual' });
     expect(callback.status === 302 && callback.headers.get('location').includes('in_server=true'), 'OAuth unchanged');
@@ -108,8 +129,12 @@ async function main() {
     out = await call('/requests', { ...base, title: 'Owner test request' }, 'owner');
     const ownerRow = out.data.requests.find(r => r.id === out.data.id);
     expect(ownerRow.author_name === 'owner-editor' && ownerRow.author_role === 'owner', 'owner author metadata server-derived');
+    await waitFor(() => deliveries.some(p => p.embeds[0].title === 'Owner test request'));
+    expect(deliveries.find(p => p.embeds[0].title === 'Owner test request').embeds[0].fields.find(f => f.name === 'Requested By').value.includes('✅ OWNER'), 'verified owner embed badge');
     out = await call('/requests', { ...base, title: 'Forged owner request', author_name: 'owner-editor', author_role: 'owner', is_owner: true }, 'member');
     expect(out.data.requests.find(r => r.id === out.data.id).author_role === 'member', 'author role spoof rejected');
+    await waitFor(() => deliveries.some(p => p.embeds[0].title === 'Forged owner request'));
+    expect(!deliveries.find(p => p.embeds[0].title === 'Forged owner request').embeds[0].fields.find(f => f.name === 'Requested By').value.includes('OWNER'), 'forged owner badge absent from embed');
     expect((await call('/requests')).data.requests.find(r => r.id === ownerRow.id).author_role === 'owner', 'owner submission badge public');
     expect((await call('/requests/status', { id: ownerRow.id, status: 'planned' }, 'owner')).status === 200, 'owner may update status');
     expect((await call('/requests/delete', { id: ownerRow.id })).status === 401, 'anonymous deletion denied');
@@ -137,6 +162,14 @@ async function main() {
     expect((await call('/requests/delete', { id: 'starter-glow' }, 'owner')).status === 403, 'previous owner revoked after transfer');
     expect((await call('/requests/delete', { id: 'starter-glow' }, 'successor')).status === 200, 'new owner recognized automatically');
     ownerUser = 'owner';
+    const numbered = await Promise.all(Array.from({ length: 8 }, (_, i) => call('/requests', { ...base, title: 'Numbered request ' + i }, 'member')));
+    const newRows = numbered.map(result => result.data.requests.find(r => r.id === result.data.id));
+    const numbers = newRows.map(r => r.number).sort((a, b) => a - b);
+    expect(new Set(numbers).size === 8 && numbers.every((n, i) => n === numbers[0] + i), 'concurrent unique consecutive request numbers');
+    const highest = newRows.find(r => r.number === numbers[7]);
+    await call('/requests/delete', { id: highest.id }, 'owner');
+    out = await call('/requests', { ...base, title: 'Number after deletion' }, 'member');
+    expect(out.data.requests.find(r => r.id === out.data.id).number === highest.number + 1, 'deleted request numbers never reused');
     console.log(JSON.stringify({ checks, concurrentVotes: 20, duplicateRace: '1 created / 7 rejected', webhooks: 'mocked only', runtime: 'SQLite Durable Object', result: 'passed' }));
   } finally { await mf.dispose(); }
   const legacy = make(false, '');
@@ -173,4 +206,95 @@ async function main() {
     console.log(JSON.stringify({ legacyRequests: 2, votesPreserved: true, legacyKVUntouched: true, statusMigration: 'passed', missingWebhook: 'request still saved' }));
   } finally { await legacy.dispose(); }
 }
-main().catch(err => { console.error(err); process.exitCode = 1; });
+async function testWebhookRetries() {
+  const { pathToFileURL } = require('node:url');
+  const { KyroRequests } = await import(pathToFileURL(path.join(__dirname, '..', 'worker.js')).href);
+  const entries = new Map([['board', []]]);
+  let scheduled = null;
+  const storage = {
+    get: async key => structuredClone(entries.get(key)),
+    put: async (key, value) => { entries.set(key, structuredClone(value)); },
+    delete: async key => entries.delete(key),
+    list: async ({ prefix, limit }) => new Map([...entries].filter(([key]) => key.startsWith(prefix)).sort(([a], [b]) => a.localeCompare(b)).slice(0, limit)),
+    getAlarm: async () => scheduled,
+    setAlarm: async time => { scheduled = time; },
+    transaction: async fn => fn(storage)
+  };
+  let ready;
+  const env = { DISCORD_REQUESTS_WEBHOOK_URL: 'https://discord.com/api/webhooks/123/testtoken' };
+  const board = new KyroRequests({ storage, blockConcurrencyWhile: fn => { ready = fn(); } }, env);
+  await ready;
+  const row = {
+    id: 'retry-test', title: 'MINI *Shake* [Pack]', category: 'preset', os: 'both', ae_versions: ['any'], reference: '',
+    desc: 'Notes with @everyone and **formatting**', status: 'in_progress', created: '2026-11-14T00:00:00.000Z',
+    voters: ['owner'], author_name: 'owner_editor', author_role: 'owner'
+  };
+  const create = async (id, extra = {}) => {
+    const result = await board.fetch(new Request('https://requests.internal/', { method: 'POST', body: JSON.stringify({ action: 'create', row: { ...row, id, title: row.title + ' ' + id, ...extra } }) }));
+    assert.equal(result.status, 200);
+  };
+  const fire = async () => { scheduled = null; await board.alarm(); };
+  const jobs = () => [...entries.keys()].filter(key => key.startsWith('notification:'));
+  const originalFetch = global.fetch;
+  let calls = 0;
+  const payloads = [];
+  let response = () => Response.json({ retry_after: 0.015 }, { status: 429, headers: { 'retry-after': '0.02', 'x-ratelimit-reset-after': '0.035' } });
+  global.fetch = async (url, options) => {
+    calls++;
+    assert.equal(new URL(url).searchParams.get('wait'), 'true');
+    assert.equal(options.redirect, 'manual');
+    payloads.push(JSON.parse(options.body));
+    return response();
+  };
+  try {
+    await create('a');
+    await create('b');
+    assert.equal(calls, 0, 'submission never waits for Discord');
+    const before = Date.now();
+    await fire();
+    assert.equal(entries.get('notification:a').attempts, 1);
+    assert.ok(scheduled >= before + 35 && scheduled <= Date.now() + 35, 'fractional retry hints honored');
+    assert.equal(jobs().length, 2, '429 preserves the durable job');
+    response = () => new Response(null, { status: 204, headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset-after': '0.05' } });
+    await fire();
+    assert.equal(jobs().length, 1, 'successful delivery is never retried');
+    assert.ok(scheduled >= Date.now() + 45, 'exhausted bucket delays the next job');
+    const embed = payloads[1].embeds[0];
+    assert.equal(embed.title, 'MINI \\*Shake\\* \\[Pack\\] a');
+    assert.equal(embed.url, undefined, 'missing reference does not invent a title link');
+    assert.equal(payloads[1].components[0].components.length, 1);
+    assert.equal(embed.fields.find(f => f.name === 'Status').value, '🛠️ IN PROGRESS');
+    assert.equal(embed.fields.find(f => f.name === 'AE Version').value, 'Any AE version');
+    assert.equal(embed.fields.find(f => f.name === 'OS Target').value, 'Both');
+    response = () => new Response(null, { status: 204 });
+    await fire();
+    assert.equal(jobs().length, 0);
+    await create('server-error');
+    response = () => new Response(null, { status: 503 });
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      await fire();
+      assert.equal(jobs().length, attempt < 5 ? 1 : 0, 'transient failures have bounded retries');
+    }
+    for (const status of [400, 401, 403, 404, 302]) {
+      await create('permanent-' + status);
+      response = () => new Response(null, { status });
+      const count = calls;
+      await fire();
+      assert.equal(calls, count + 1);
+      assert.equal(jobs().length, 0, 'permanent errors and redirects are not retried');
+    }
+    await create('network-error');
+    response = () => { throw new TypeError('Simulated network failure'); };
+    await fire();
+    assert.equal(jobs().length, 0, 'ambiguous failed sends are not duplicated');
+    env.DISCORD_REQUESTS_WEBHOOK_URL = 'https://example.com/not-discord';
+    await create('invalid-hook');
+    const count = calls;
+    await fire();
+    assert.equal(calls, count, 'untrusted webhook destinations are never contacted');
+    assert.equal(jobs().length, 0);
+    assert.equal(entries.get('board').length, 10, 'delivery errors never remove requests');
+    console.log(JSON.stringify({ webhookRetries: 'fractional 429 delays, shared cooldown, bounded 5xx retries, permanent failures, redirect and destination guards', backgroundDelivery: 'nonblocking durable jobs', result: 'passed' }));
+  } finally { global.fetch = originalFetch; }
+}
+main().then(testWebhookRetries).catch(err => { console.error(err); process.exitCode = 1; });

@@ -1166,7 +1166,7 @@
       renderReqCategories();
       renderRequests();
       reqNewRequest.focus({ preventScroll: true });
-      toast({ title: 'Request posted', sub: data.notification === 'sent' ? 'Saved to the board and sent to Discord.' : 'Saved to the board. Discord notification is unavailable.', icon: ICON.check });
+      toast({ title: 'Request posted', sub: data.notification === 'queued' ? 'Saved to the board. Discord notification queued.' : 'Saved to the board. Discord notification is unavailable.', icon: ICON.check });
     });
   }
 

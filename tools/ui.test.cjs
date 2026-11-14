@@ -285,6 +285,7 @@ async function main() {
       assert.ok(await evaluate("document.querySelectorAll('[data-req-delete]').length"));
       await evaluate("document.querySelector('#reqNewRequest').click(); document.querySelector('#reqTitle').value='Owner UI request " + width + "'; document.querySelector('#reqTitle').dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('#reqSubmit').click()");
       await evaluate(`(${waitExpression})(()=>Array.from(document.querySelectorAll('.req-title')).some(e=>e.textContent === 'Owner UI request ${width}'))`);
+      await evaluate(`(${waitExpression})(()=>document.querySelector('#toasts').textContent.includes('Saved to the board. Discord notification queued.'))`);
       const requestId = await evaluate("Array.from(document.querySelectorAll('.req-item')).find(e=>e.querySelector('.req-title').textContent==='Owner UI request " + width + "').dataset.requestId");
       await navigate('/windows?uiAuth=out');
       await openBoard();

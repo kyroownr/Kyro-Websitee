@@ -27,12 +27,12 @@
  * Plain vars:
  *   KYRO_ADMIN_IDS  comma separated Discord user ids allowed to move a request
  *                   between OPEN / PLANNED / IN PROGRESS / SHIPPED.
- *   DISCORD_REQUESTS_WEBHOOK_URL  secret containing the #vault-requests webhook.
  *
  * Secrets (Settings → Variables; a plain text var is fine, the encrypted
  * "secret" type is better):
  *   DISCORD_CLIENT_ID      1570702041993711706  (same id that is public in js/app.js)
  *   DISCORD_CLIENT_SECRET  from the Discord app — never committed, never shipped
+ *   DISCORD_REQUESTS_WEBHOOK_URL  encrypted secret for request notifications.
  *   KYRO_GUILD_ID          1539961184323772498  (numeric snowflake, Server
  *                          Settings → Widgets; matches js/app.js)
  *
@@ -207,6 +207,7 @@ function starterRequests() {
 export class KyroRequests {
   constructor(state, env) {
     this.state = state;
+    this.env = env;
     state.blockConcurrencyWhile(async () => {
       if (await state.storage.get('board') !== undefined) return;
       const legacy = await env.KYRO_DATA.get(REQ_KEY, { type: 'json' });
@@ -233,7 +234,14 @@ export class KyroRequests {
         if (input.action === 'create') {
           const duplicate = all.find(row => requestTitleKey(row.title) === requestTitleKey(input.row.title));
           if (duplicate) throw fail(409, 'duplicate_request', 'This request already exists. Upvote "' + duplicate.title + '" instead.');
-          next = all.concat([input.row]);
+          const number = (await storage.get('requestNumber') || all.reduce((max, row) => Math.max(max, row.number || 0), 0)) + 1;
+          const row = { ...input.row, number };
+          next = all.concat([row]);
+          await storage.put('requestNumber', number);
+          if (this.env.DISCORD_REQUESTS_WEBHOOK_URL) {
+            await storage.put('notification:' + row.id, { row, attempts: 0 });
+            if (await storage.getAlarm() === null) await storage.setAlarm(Date.now());
+          }
         } else {
           const row = all.find(item => item.id === input.id);
           if (!row) throw fail(404, 'unknown_request', 'That request no longer exists.');
@@ -253,6 +261,28 @@ export class KyroRequests {
     } catch (err) {
       return json({ error: err.message, code: err.code || 'board_error' }, err.status || 500, {});
     }
+  }
+
+  async alarm() {
+    const storage = this.state.storage;
+    const pending = await storage.list({ prefix: 'notification:', limit: 1 });
+    const entry = pending.entries().next().value;
+    if (!entry) return;
+    const [key, job] = entry;
+    const result = await notifyRequest(job.row, this.env);
+    await storage.transaction(async tx => {
+      const current = await tx.get(key);
+      if (!current) return;
+      const attempts = current.attempts + 1;
+      if (!result.sent && result.retryAfter !== undefined && attempts < 5) {
+        await tx.put(key, { ...current, attempts });
+        await tx.setAlarm(Date.now() + result.retryAfter);
+      } else {
+        await tx.delete(key);
+        if (!result.sent) console.warn('[kyro-requests] Discord notification failed for request #' + job.row.number + '.');
+        if (result.retryAfter !== undefined || (await tx.list({ prefix: 'notification:', limit: 1 })).size) await tx.setAlarm(Date.now() + (result.retryAfter || 0));
+      }
+    });
   }
 }
 
@@ -276,38 +306,80 @@ function requestReference(value) {
   try {
     const url = new URL(raw);
     if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error();
+    if (url.href.length > 500) throw new Error();
     return url.href;
-  } catch { throw fail(400, 'bad_reference', 'Use an HTTP or HTTPS reference link without login details.'); }
+  } catch { throw fail(400, 'bad_reference', 'Use an HTTP or HTTPS reference link of 500 characters or fewer without login details.'); }
 }
 
-async function notifyRequest(row, session, env) {
-  if (!env.DISCORD_REQUESTS_WEBHOOK_URL) return 'not_configured';
+const KYRO_ICON_URL = 'https://raw.githubusercontent.com/kyroownr/Kyro-Websitee/main/assets/kyro-icon.png';
+const REQUEST_CATEGORY_LABELS = { extension: 'Extension', script: 'Script', preset: 'Preset', project: 'Project', soundfx: 'Sound FX', other: 'Other' };
+const REQUEST_OS_LABELS = { windows: 'Windows', macos: 'macOS', both: 'Both' };
+const REQUEST_DISCORD_STATUSES = {
+  open: { label: '⏳ PENDING', color: 0x5865f2 },
+  planned: { label: '📋 PLANNED', color: 0xf0b232 },
+  in_progress: { label: '🛠️ IN PROGRESS', color: 0x3498db },
+  shipped: { label: '✅ SHIPPED', color: 0x23a55a }
+};
+
+function discordText(value) {
+  return value.replace(/[\\`*_{}\[\]()<>|~]/g, '\\$&');
+}
+
+function requestWebhookPayload(row, env) {
+  const status = REQUEST_DISCORD_STATUSES[row.status];
+  const site = env.KYRO_SITE_URL || 'https://kyro.new.tg';
+  const buttons = [{ type: 2, style: 5, label: 'View Kyro', url: site }];
+  if (row.reference) buttons.push({ type: 2, style: 5, label: 'View Reference', url: row.reference });
+  const votes = row.voters.length;
+  return {
+    username: 'Kyro Request Monitor', avatar_url: KYRO_ICON_URL,
+    allowed_mentions: { parse: [], users: [], roles: [], replied_user: false },
+    embeds: [{
+      author: { name: 'Kyro Request Monitor', icon_url: KYRO_ICON_URL, url: site },
+      thumbnail: { url: KYRO_ICON_URL },
+      title: discordText(row.title), ...(row.reference ? { url: row.reference } : {}),
+      description: '**Details**\n' + discordText(row.desc || 'No description supplied.'),
+      color: status.color,
+      fields: [
+        { name: 'Product / Category', value: REQUEST_CATEGORY_LABELS[row.category], inline: true },
+        { name: 'Requested By', value: discordText(row.author_name) + (row.author_role === 'owner' ? '\n✅ OWNER · verified server owner' : ''), inline: true },
+        { name: 'Status', value: status.label, inline: true },
+        { name: 'AE Version', value: row.ae_versions.includes('any') ? 'Any AE version' : 'AE ' + row.ae_versions.join(' / '), inline: true },
+        { name: 'OS Target', value: REQUEST_OS_LABELS[row.os], inline: true },
+        { name: 'Request ID', value: '#' + row.number, inline: true }
+      ],
+      footer: { text: 'Kyro Requests · 👍 ' + votes + (votes === 1 ? ' vote' : ' votes') + ' at submission · React to discuss', icon_url: KYRO_ICON_URL },
+      timestamp: row.created
+    }],
+    components: [{ type: 1, components: buttons }]
+  };
+}
+
+function discordRetryAfter(response, data = {}) {
+  const seconds = [response.headers.get('retry-after'), response.headers.get('x-ratelimit-reset-after'), data.retry_after]
+    .filter(value => value !== null && value !== undefined && value !== '')
+    .map(Number).filter(value => Number.isFinite(value) && value >= 0);
+  return seconds.length ? Math.max(1, Math.ceil(Math.max(...seconds) * 1000)) : 30000;
+}
+
+async function notifyRequest(row, env) {
   try {
     const url = new URL(env.DISCORD_REQUESTS_WEBHOOK_URL);
-    if (url.protocol !== 'https:' || url.hostname !== 'discord.com' || !/^\/api(?:\/v\d+)?\/webhooks\/\d+\/[\w-]+$/.test(url.pathname)) throw new Error();
+    if (url.protocol !== 'https:' || url.hostname !== 'discord.com' || url.port || url.username || url.password || !/^\/api(?:\/v\d+)?\/webhooks\/\d+\/[\w-]+$/.test(url.pathname)) throw new Error();
+    url.searchParams.set('wait', 'true');
+    url.searchParams.set('with_components', 'true');
     const response = await fetch(url.href, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(8000),
-      body: JSON.stringify({
-        allowed_mentions: { parse: [] },
-        embeds: [{
-          title: row.title, description: row.desc || 'No description supplied.', color: 0x08090d,
-          fields: [
-            { name: 'Category', value: row.category.toUpperCase(), inline: true },
-            { name: 'OS', value: row.os.toUpperCase(), inline: true },
-            { name: 'AE Versions', value: row.ae_versions.join(' / ').toUpperCase(), inline: true },
-            { name: 'Status', value: 'OPEN', inline: true },
-            { name: 'Requested by', value: cleanText(session.username, 100), inline: true },
-            { name: 'Reference', value: row.reference || 'None supplied.' }
-          ],
-          footer: { text: 'Kyro Vault Requests · ' + row.id }, timestamp: row.created
-        }]
-      })
+      method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(8000), redirect: 'manual',
+      body: JSON.stringify(requestWebhookPayload(row, env))
     });
-    if (!response.ok) { console.warn('[kyro-requests] Discord notification failed: HTTP ' + response.status); return 'failed'; }
-    return 'sent';
-  } catch {
-    console.warn('[kyro-requests] Discord notification could not be delivered.');
-    return 'failed';
+    if (response.status === 429) return { sent: false, retryAfter: discordRetryAfter(response, await response.json().catch(() => ({}))) };
+    if (response.status >= 500) return { sent: false, retryAfter: 5000 };
+    if (!response.ok) return { sent: false };
+    return { sent: true, ...(response.headers.get('x-ratelimit-remaining') === '0' ? { retryAfter: discordRetryAfter(response) } : {}) };
+  } catch (err) {
+    console.warn('[kyro-requests] Discord send error: ' + err.name);
+    // A timed-out send may already exist in Discord; retrying can duplicate it.
+    return { sent: false };
   }
 }
 
@@ -317,6 +389,7 @@ function project(rows, viewerId) {
   return rows
     .map(r => ({
       id: r.id,
+      number: r.number || null,
       title: r.title,
       category: r.category,
       os: r.os,
@@ -382,9 +455,8 @@ async function handleRequests(request, url, env, cors) {
     status: 'open', created: new Date().toISOString(), by: session.id, voters: [session.id],
     author_name: session.username, author_role: session.isOwner ? 'owner' : 'member'
   };
-  await requestBoard(env, { action: 'create', row });
-  const notification = await notifyRequest(row, session, env);
-  const written = await requestBoard(env, { action: 'read' });
+  const written = await requestBoard(env, { action: 'create', row });
+  const notification = env.DISCORD_REQUESTS_WEBHOOK_URL ? 'queued' : 'not_configured';
   return json({ id: row.id, requests: project(written, session.id), is_admin: isAdmin(session, env), is_owner: Boolean(session && session.isOwner), notification }, 201, cors);
 }
 
