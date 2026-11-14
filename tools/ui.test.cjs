@@ -9,7 +9,7 @@ fs.mkdirSync(artifacts, { recursive: true });
 
 async function main() {
   const { applicationConfiguration } = await import(pathToFileURL(path.join(root, 'applications-worker.js')));
-  const applicationConfig = applicationConfiguration({ KYRO_GUILD_ID: '1539961184323772498', DISCORD_BOT_TOKEN: 'dummy', DISCORD_APPLICATIONS_CATEGORY_ID: '1539961184323772499', DISCORD_MOD_ROLE_ID: '1539961184323772500', DISCORD_PUBLIC_KEY: '0'.repeat(64), KYRO_APPLICATIONS: {} });
+  const applicationConfig = applicationConfiguration({ KYRO_GUILD_ID: '1539961184323772498', DISCORD_BOT_TOKEN: 'dummy', DISCORD_APPLICATIONS_CATEGORY_ID: '1539961184323772499', DISCORD_MOD_ROLE_ID: '1539961184323772500', DISCORD_PUBLIC_APPS_CHANNEL_ID: '1542135796369457182', DISCORD_APPLICATION_PUBLIC_KEY: '0'.repeat(64), KYRO_APPLICATIONS: {} });
   const chrome = spawn(process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', [
     '--headless=new', '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check',
     '--user-data-dir=' + path.join(artifacts, 'chrome-' + process.pid), 'about:blank'

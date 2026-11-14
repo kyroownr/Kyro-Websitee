@@ -13,6 +13,11 @@ const AGREEMENTS = [
   { id: 'safety', label: 'I agree to follow community rules, protect members’ privacy, and never share malware, unsafe files, or license/access bypasses.', type: 'checkbox', required: true },
   { id: 'questions', label: 'Any questions? (Optional)', type: 'textarea', required: false, maxLength: 600 }
 ];
+const ROLE_IDS = {
+  support: '1571073534103527504',
+  moderator: '1542090972765360208',
+  contributor: '1571073124328276078'
+};
 const ROLES = [
   { id: 'support', title: 'Community Support', prefix: 'support', description: 'Help editors find resources, understand installations, and get respectful support.', rules: ['Participate regularly in the Kyro Discord.', 'Explain editing and installation steps patiently; never request passwords or private files.'], fields: [{ id: 'scenario', label: 'How would you help an editor whose installation is not working?', type: 'textarea', required: true, minLength: 20, maxLength: 1000 }] },
   { id: 'moderator', title: 'Moderator', prefix: 'mod', description: 'Keep the community welcoming, handle reports, and apply rules consistently.', rules: ['Be active in the server and able to respond consistently.', 'Handle harassment, spam, and disputes calmly; keep reports confidential.'], fields: [{ id: 'scenario', label: 'How would you handle harassment or a disagreement between members?', type: 'textarea', required: true, minLength: 20, maxLength: 1000 }] },
@@ -33,7 +38,7 @@ export function applicationConfiguration(env) {
   const accountDays = Number(env.KYRO_APPLICATION_ACCOUNT_DAYS || 30);
   const validPolicy = Number.isInteger(minAge) && minAge >= 13 && minAge <= 120 && Number.isInteger(accountDays) && accountDays >= 0 && accountDays <= 3650;
   const guildId = String(env.DISCORD_GUILD_ID || env.KYRO_GUILD_ID || '');
-  const configured = Boolean(env.DISCORD_BOT_TOKEN && snowflake(guildId) && guildId === String(env.KYRO_GUILD_ID) && snowflake(env.DISCORD_APPLICATIONS_CATEGORY_ID) && snowflake(env.DISCORD_MOD_ROLE_ID) && String(env.DISCORD_MOD_ROLE_ID) !== guildId && /^[a-f\d]{64}$/i.test(env.DISCORD_PUBLIC_KEY || '') && validPolicy && env.KYRO_APPLICATIONS);
+  const configured = Boolean(env.DISCORD_BOT_TOKEN && snowflake(guildId) && guildId === String(env.KYRO_GUILD_ID) && snowflake(env.DISCORD_APPLICATIONS_CATEGORY_ID) && snowflake(env.DISCORD_PUBLIC_APPS_CHANNEL_ID) && snowflake(env.DISCORD_MOD_ROLE_ID) && String(env.DISCORD_MOD_ROLE_ID) !== guildId && /^[a-f\d]{64}$/i.test(env.DISCORD_APPLICATION_PUBLIC_KEY || '') && validPolicy && env.KYRO_APPLICATIONS);
   const minimum = validPolicy ? minAge : 16;
   const days = validPolicy ? accountDays : 30;
   return {
@@ -171,7 +176,9 @@ function applicationMessage(row) {
     const value = safeText(String(row.answers[field.id] === true ? 'Agreed' : row.answers[field.id] || 'Not provided'));
     for (let offset = 0; offset < value.length; offset += 1000) fields.push({ name: field.label + (offset ? ' (continued)' : ''), value: value.slice(offset, offset + 1000), inline: false });
   }
-  fields.push({ name: 'Reviewed By', value: row.reviewed_by || 'Not reviewed', inline: true });
+    const claiming = row.claimed_by ? ' (Claimed by <@' + row.claimed_by + '>)' : '';
+    fields.push({ name: 'Reviewed By', value: (row.reviewed_by ? row.reviewed_by : 'Not reviewed') + claiming, inline: true });
+    if (row.claimed_by && !row.reviewed_by) fields.push({ name: 'Claimed By', value: '<@' + row.claimed_by + '>', inline: true });
   const embeds = [];
   let current, length = 0;
   for (const field of fields) {
@@ -183,10 +190,34 @@ function applicationMessage(row) {
   }
   return embeds.map((embed, index) => ({
     embeds: [embed], allowed_mentions: { parse: [], users: [], roles: [] },
-    components: index === embeds.length - 1 ? [{ type: 1, components: [
-      { type: 2, style: 3, label: 'Approve', custom_id: 'kyro-app:approved:' + row.by + ':' + row.id, disabled: row.status !== 'pending' },
-      { type: 2, style: 4, label: 'Decline', custom_id: 'kyro-app:declined:' + row.by + ':' + row.id, disabled: row.status !== 'pending' }
-    ] }] : []
+    components: index === embeds.length - 1 ? [
+      {
+        type: 1,
+        components: [
+          {
+            type: 3,
+            custom_id: 'kyro-app:role:' + row.by + ':' + row.id,
+            placeholder: 'Choose role to grant upon approval...',
+            disabled: row.status !== 'pending',
+            options: [
+              { label: 'Grant Support Role', value: ROLE_IDS.support, description: 'Assigns @Support role', default: row.role === 'support' },
+              { label: 'Grant Contributor Role', value: ROLE_IDS.contributor, description: 'Assigns @Contributor role', default: row.role === 'contributor' },
+              { label: 'Grant Mod+ Role', value: ROLE_IDS.moderator, description: 'Assigns @Mod+ role', default: row.role === 'moderator' },
+              { label: 'Do not assign a role', value: 'none', description: 'Approve without granting Discord role' }
+            ]
+          }
+        ]
+      },
+      {
+        type: 1,
+        components: [
+          { type: 2, style: 3, label: 'Approve', custom_id: 'kyro-app:approved:' + row.by + ':' + row.id, disabled: row.status !== 'pending' },
+          { type: 2, style: 4, label: 'Decline', custom_id: 'kyro-app:declined:' + row.by + ':' + row.id, disabled: row.status !== 'pending' },
+          { type: 2, style: 1, label: row.claimed_by ? 'Claimed' : 'Claim Ticket', custom_id: 'kyro-app:claim:' + row.by + ':' + row.id, disabled: Boolean(row.claimed_by) || row.status !== 'pending' },
+          { type: 2, style: 2, label: 'Close Ticket', custom_id: 'kyro-app:close:' + row.by + ':' + row.id }
+        ]
+      }
+    ] : []
   }));
 }
 
@@ -208,6 +239,54 @@ export class KyroApplications {
         if (!row) throw error(404, 'application_not_found', 'Application not found.');
         return response({ application: publicApplication(row, this.env) });
       }
+      if (input.action === 'select_role') {
+        return await storage.transaction(async tx => {
+          const row = await tx.get(applicationKey(input.id));
+          if (!row) throw error(404, 'application_not_found', 'Application not found.');
+          row.selected_role_id = input.roleId;
+          await tx.put(applicationKey(row.id), row);
+          return response({ ok: true, roleId: input.roleId });
+        });
+      }
+      if (input.action === 'claim') {
+        const guild = await botCall(this.env, '/guilds/' + (this.env.DISCORD_GUILD_ID || this.env.KYRO_GUILD_ID));
+        if (guild.owner_id !== input.reviewer) {
+          const member = await botCall(this.env, '/guilds/' + (this.env.DISCORD_GUILD_ID || this.env.KYRO_GUILD_ID) + '/members/' + input.reviewer);
+          if (!member.roles?.includes(String(this.env.DISCORD_MOD_ROLE_ID))) throw error(403, 'not_a_reviewer', 'Only the server owner or configured moderator role can claim applications.');
+        }
+        return await storage.transaction(async tx => {
+          const row = await tx.get(applicationKey(input.id));
+          if (!row) throw error(404, 'application_not_found', 'Application not found.');
+          row.claimed_by = input.reviewer;
+          await tx.put(applicationKey(row.id), row);
+          await tx.put('job:' + row.id, { id: row.id, stage: 'review', attempts: 0 });
+          if (await tx.getAlarm() === null) await tx.setAlarm(Date.now());
+          return response({ ok: true, claimed_by: input.reviewer });
+        });
+      }
+      if (input.action === 'close') {
+        const guild = await botCall(this.env, '/guilds/' + (this.env.DISCORD_GUILD_ID || this.env.KYRO_GUILD_ID));
+        if (guild.owner_id !== input.reviewer) {
+          const member = await botCall(this.env, '/guilds/' + (this.env.DISCORD_GUILD_ID || this.env.KYRO_GUILD_ID) + '/members/' + input.reviewer);
+          if (!member.roles?.includes(String(this.env.DISCORD_MOD_ROLE_ID))) throw error(403, 'not_a_reviewer', 'Only the server owner or configured moderator role can close applications.');
+        }
+        const row = await storage.get(applicationKey(input.id));
+        if (row) {
+          if (row.notice_channel_id && row.notice_message_id) {
+            try { await botCall(this.env, '/channels/' + row.notice_channel_id + '/messages/' + row.notice_message_id, 'DELETE'); } catch {}
+          }
+          if (row.channel_id) {
+            try { await botCall(this.env, '/channels/' + row.channel_id, 'DELETE'); } catch {}
+          }
+          await storage.delete('job:' + row.id);
+          await storage.delete('auto_close:' + row.id);
+        }
+        return response({ ok: true });
+      }
+      if (input.action === 'reset_all') {
+        await storage.deleteAll();
+        return response({ ok: true, message: 'All applications cleared.' });
+      }
       if (input.action === 'create') {
         return await storage.transaction(async tx => {
           const active = await tx.get('active:' + input.row.role);
@@ -221,9 +300,9 @@ export class KyroApplications {
         });
       }
       if (input.action === 'review') {
-        const guild = await botCall(this.env, '/guilds/' + this.env.KYRO_GUILD_ID);
+        const guild = await botCall(this.env, '/guilds/' + (this.env.DISCORD_GUILD_ID || this.env.KYRO_GUILD_ID));
         if (guild.owner_id !== input.reviewer) {
-          const member = await botCall(this.env, '/guilds/' + this.env.KYRO_GUILD_ID + '/members/' + input.reviewer);
+          const member = await botCall(this.env, '/guilds/' + (this.env.DISCORD_GUILD_ID || this.env.KYRO_GUILD_ID) + '/members/' + input.reviewer);
           if (!member.roles?.includes(String(this.env.DISCORD_MOD_ROLE_ID))) throw error(403, 'not_a_reviewer', 'Only the server owner or configured moderator role can review applications.');
         }
         return await storage.transaction(async tx => {
@@ -248,6 +327,24 @@ export class KyroApplications {
 
   async deliver() {
     const storage = this.state.storage;
+
+    // Check auto_close tickets
+    const autoCloseEntries = await storage.list({ prefix: 'auto_close:', limit: 5 });
+    for (const [key, item] of autoCloseEntries) {
+      if (Date.now() >= (item.closeAt || 0)) {
+        const row = await storage.get(applicationKey(item.id));
+        if (row) {
+          if (row.notice_channel_id && row.notice_message_id) {
+            try { await botCall(this.env, '/channels/' + row.notice_channel_id + '/messages/' + row.notice_message_id, 'DELETE'); } catch {}
+          }
+          if (row.channel_id) {
+            try { await botCall(this.env, '/channels/' + row.channel_id, 'DELETE'); } catch {}
+          }
+        }
+        await storage.delete(key);
+      }
+    }
+
     const jobs = await storage.list({ prefix: 'job:', limit: 1 });
     const entry = jobs.entries().next().value;
     if (!entry) return;
@@ -257,14 +354,18 @@ export class KyroApplications {
     try {
       if (!applicationConfiguration(this.env).open && job.stage !== 'review') throw error(503, 'applications_closed', 'Applications are closed.');
       if (job.stage === 'create') {
-        const guildId = String(this.env.KYRO_GUILD_ID);
-        const [bot, category, roles] = await Promise.all([
-          botCall(this.env, '/users/@me'), botCall(this.env, '/channels/' + this.env.DISCORD_APPLICATIONS_CATEGORY_ID), botCall(this.env, '/guilds/' + guildId + '/roles')
+        const guildId = String((this.env.DISCORD_GUILD_ID || this.env.KYRO_GUILD_ID));
+        const [bot, category, roles, publicChannel, guild] = await Promise.all([
+          botCall(this.env, '/users/@me'), botCall(this.env, '/channels/' + this.env.DISCORD_APPLICATIONS_CATEGORY_ID), botCall(this.env, '/guilds/' + guildId + '/roles'),
+          botCall(this.env, '/channels/' + this.env.DISCORD_PUBLIC_APPS_CHANNEL_ID), botCall(this.env, '/guilds/' + guildId)
         ]);
-        if (!bot.bot || !snowflake(bot.id) || category.type !== 4 || category.guild_id !== guildId || !roles.some(role => role.id === String(this.env.DISCORD_MOD_ROLE_ID))) throw error(502, 'discord_configuration', 'Check the bot, category, and moderator role configuration.');
+        if (!bot.bot || !snowflake(bot.id) || category.type !== 4 || category.guild_id !== guildId || !roles.some(role => role.id === String(this.env.DISCORD_MOD_ROLE_ID)) || publicChannel.type !== 0 || publicChannel.guild_id !== guildId || !snowflake(guild.owner_id)) throw error(502, 'discord_configuration', 'Check the bot, category, public text channel, and moderator role configuration.');
+        row.notice_channel_id = publicChannel.id;
+        row.owner_id = guild.owner_id;
         const role = ROLES.find(item => item.id === row.role);
         const username = row.username.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}-]/gu, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || row.by;
         await storage.transaction(async tx => {
+          await tx.put(applicationKey(row.id), row);
           await tx.put(key, { ...job, stage: 'reconcile' });
           await tx.setAlarm(Date.now() + 10000);
         });
@@ -273,9 +374,9 @@ export class KyroApplications {
           name: (role.prefix + '-' + username).slice(0, 100), type: 0, parent_id: String(this.env.DISCORD_APPLICATIONS_CATEGORY_ID), topic: 'Kyro application ' + row.id,
           permission_overwrites: [
             { id: guildId, type: 0, deny: '1024', allow: '0' },
-            { id: String(this.env.DISCORD_MOD_ROLE_ID), type: 0, allow: '3072', deny: '0' },
-            { id: bot.id, type: 1, allow: '3072', deny: '0' },
-            ...(this.env.KYRO_APPLICATION_INTERVIEW_ENABLED === 'true' ? [{ id: row.by, type: 1, allow: '3072', deny: '0' }] : [])
+            { id: String(this.env.DISCORD_MOD_ROLE_ID), type: 0, allow: '68608', deny: '0' },
+            { id: bot.id, type: 1, allow: '68608', deny: '0' },
+            { id: row.by, type: 1, allow: '68608', deny: '0' }
           ]
         });
         if (!snowflake(channel.id)) throw Object.assign(error(502, 'discord_uncertain', 'Discord channel creation needs staff attention.'), { uncertain: true });
@@ -288,7 +389,7 @@ export class KyroApplications {
         return;
       }
       if (job.stage === 'reconcile') {
-        const channels = await botCall(this.env, '/guilds/' + this.env.KYRO_GUILD_ID + '/channels');
+        const channels = await botCall(this.env, '/guilds/' + (this.env.DISCORD_GUILD_ID || this.env.KYRO_GUILD_ID) + '/channels');
         const matches = channels.filter(channel => channel.topic === 'Kyro application ' + row.id && channel.parent_id === String(this.env.DISCORD_APPLICATIONS_CATEGORY_ID) && channel.type === 0);
         if (matches.length !== 1) throw error(502, 'discord_uncertain', 'Channel creation needs staff attention; no duplicate channel was created.');
         row.channel_id = matches[0].id;
@@ -296,6 +397,25 @@ export class KyroApplications {
           await tx.put(applicationKey(row.id), row);
           await tx.put(key, { id: row.id, stage: 'message', index: 0, attempts: 0 });
           await tx.setAlarm(Date.now());
+        });
+        return;
+      }
+      if (job.stage === 'notice') {
+        job.started ||= Date.now();
+        if (Date.now() - job.started >= 240000) throw error(502, 'discord_nonce_expired', 'Public notice delivery needs staff attention.');
+        await storage.transaction(async tx => { await tx.put(key, job); await tx.setAlarm(Date.now() + 10000); });
+        const message = await botCall(this.env, '/channels/' + row.notice_channel_id + '/messages', 'POST', {
+          content: 'A staff application ticket is ready for private review.\nTicket: <#' + row.channel_id + '>\nReviewers: <@' + row.owner_id + '> and <@&' + this.env.DISCORD_MOD_ROLE_ID + '>.\nApplication answers are visible only in the private ticket.',
+          allowed_mentions: { parse: [], users: [], roles: [] },
+          nonce: row.id.replace(/-/g, '').slice(0, 20) + '-pub', enforce_nonce: true
+        });
+        if (!snowflake(message.id)) throw Object.assign(error(502, 'discord_bad_message', 'Discord did not confirm the public notice.'), { uncertain: true });
+        row.notice_message_id = message.id;
+        row.status = 'pending';
+        await storage.transaction(async tx => {
+          await tx.put(applicationKey(row.id), row);
+          await tx.delete(key);
+          if ((await tx.list({ prefix: 'job:', limit: 1 })).size) await tx.setAlarm(Date.now());
         });
         return;
       }
@@ -310,14 +430,32 @@ export class KyroApplications {
           if (!snowflake(message.id)) throw Object.assign(error(502, 'discord_bad_message', 'Discord did not confirm the review message.'), { uncertain: true });
           row.message_ids ||= [];
           row.message_ids[index] = message.id;
-          if (index === parts.length - 1) { row.message_id = message.id; row.status = 'pending'; }
+          if (index === parts.length - 1) { row.message_id = message.id; }
         } else {
           await botCall(this.env, '/channels/' + row.channel_id + '/messages/' + row.message_ids[index], 'PATCH', parts[index]);
+          if (row.status === 'approved' && row.selected_role_id !== 'none') {
+            const roleToAssign = row.selected_role_id || ROLE_IDS[row.role];
+            if (roleToAssign && snowflake(roleToAssign)) {
+              try {
+                const guildId = String((this.env.DISCORD_GUILD_ID || this.env.KYRO_GUILD_ID));
+                await botCall(this.env, '/guilds/' + guildId + '/members/' + row.by + '/roles/' + roleToAssign, 'PUT');
+              } catch (roleErr) {
+                console.warn('[kyro-applications] Role assignment failed on approval:', roleErr);
+              }
+            }
+          }
         }
         await storage.transaction(async tx => {
           await tx.put(applicationKey(row.id), row);
           if (index < parts.length - 1) await tx.put(key, { id: row.id, stage: job.stage, index: index + 1, attempts: 0 });
-          else await tx.delete(key);
+          else if (job.stage === 'message') await tx.put(key, { id: row.id, stage: 'notice', attempts: 0 });
+          else {
+            await tx.delete(key);
+            if (row.status === 'approved' || row.status === 'declined') {
+              await tx.put('auto_close:' + row.id, { id: row.id, closeAt: Date.now() + 5 * 60 * 1000 });
+              await tx.setAlarm(Date.now() + 5 * 60 * 1000);
+            }
+          }
           if ((await tx.list({ prefix: 'job:', limit: 1 })).size) await tx.setAlarm(Date.now());
         });
       }
@@ -325,7 +463,7 @@ export class KyroApplications {
       if (channelAttempted && (err.uncertain || !err.code)) {
         await storage.put(key, { id: job.id, stage: 'reconcile', attempts: 0 });
         await storage.setAlarm(Date.now() + 5000);
-      } else if ((err.retryAfter !== undefined || err.uncertain) && job.attempts < 4 && (job.stage !== 'message' || Date.now() + (err.retryAfter || 5000) - job.started < 240000)) {
+      } else if ((err.retryAfter !== undefined || err.uncertain) && job.attempts < 4 && (!['message', 'notice'].includes(job.stage) || Date.now() + (err.retryAfter || 5000) - job.started < 240000)) {
         await storage.put(key, { ...job, attempts: job.attempts + 1 });
         await storage.setAlarm(Date.now() + (err.retryAfter || 5000));
       } else {
@@ -343,24 +481,46 @@ export async function handleApplicationInteractions(request, env, ctx) {
   if (request.method !== 'POST') return response({ error: 'Use POST.' }, 405);
   const signature = request.headers.get('x-signature-ed25519') || '';
   const timestamp = request.headers.get('x-signature-timestamp') || '';
-  if (!/^[a-f\d]{128}$/i.test(signature) || !/^\d{10}$/.test(timestamp) || Math.abs(Date.now() / 1000 - Number(timestamp)) > 300 || !/^[a-f\d]{64}$/i.test(env.DISCORD_PUBLIC_KEY || '')) return response({ error: 'Invalid interaction signature.' }, 401);
+  if (!/^[a-f\d]{128}$/i.test(signature) || !/^\d{10}$/.test(timestamp) || Math.abs(Date.now() / 1000 - Number(timestamp)) > 300 || !/^[a-f\d]{64}$/i.test(env.DISCORD_APPLICATION_PUBLIC_KEY || '')) return response({ error: 'Invalid interaction signature.' }, 401);
   const raw = await request.text();
   if (new TextEncoder().encode(raw).length > 32000) return response({ error: 'Interaction too large.' }, 413);
-  const key = await crypto.subtle.importKey('raw', hexBytes(env.DISCORD_PUBLIC_KEY), 'Ed25519', false, ['verify']);
+  const key = await crypto.subtle.importKey('raw', hexBytes(env.DISCORD_APPLICATION_PUBLIC_KEY), 'Ed25519', false, ['verify']);
   if (!await crypto.subtle.verify('Ed25519', key, hexBytes(signature), new TextEncoder().encode(timestamp + raw))) return response({ error: 'Invalid interaction signature.' }, 401);
   let interaction;
   try { interaction = JSON.parse(raw); } catch { return response({ error: 'Invalid interaction.' }, 400); }
   if (!interaction || typeof interaction !== 'object' || Array.isArray(interaction)) return response({ error: 'Invalid interaction.' }, 400);
   if (interaction.type === 1) return response({ type: 1 });
-  const match = /^kyro-app:(approved|declined):(\d{17,20}):([a-f\d-]{36})$/.exec(interaction.data?.custom_id || '');
-  if (interaction.type !== 3 || !match || interaction.guild_id !== String(env.KYRO_GUILD_ID) || !snowflake(interaction.member?.user?.id) || !snowflake(interaction.application_id) || !/^[\w.-]+$/.test(interaction.token || '')) return response({ type: 4, data: { content: 'This application review control is not valid here.', flags: 64 } });
+  const selectMatch = /^kyro-app:role:(\d{17,20}):([a-f\d-]{36})$/.exec(interaction.data?.custom_id || '');
+  if (interaction.type === 3 && selectMatch) {
+    const selectedRole = interaction.data?.values?.[0] || 'none';
+    ctx.waitUntil((async () => {
+      try {
+        await storageCall(env, selectMatch[1], { action: 'select_role', id: selectMatch[2], roleId: selectedRole });
+      } catch (err) { console.warn('[kyro-applications] Failed to save role selection:', err); }
+    })());
+    return response({ type: 4, data: { content: selectedRole === 'none' ? 'Set to: Do not assign role on approval.' : `Set role to assign on approval: <@&${selectedRole}>`, flags: 64 } });
+  }
+
+  const actionMatch = /^kyro-app:(approved|declined|claim|close):(\d{17,20}):([a-f\d-]{36})$/.exec(interaction.data?.custom_id || '');
+  if (interaction.type !== 3 || !actionMatch || interaction.guild_id !== String(env.KYRO_GUILD_ID) || !snowflake(interaction.member?.user?.id) || !snowflake(interaction.application_id) || !/^[\w.-]+$/.test(interaction.token || '')) return response({ type: 4, data: { content: 'This application review control is not valid here.', flags: 64 } });
   ctx.waitUntil((async () => {
     let content;
+    const action = actionMatch[1];
     try {
-      const result = await storageCall(env, match[2], { action: 'review', id: match[3], status: match[1], reviewer: interaction.member.user.id, channelId: interaction.channel_id, messageId: interaction.message?.id });
-      const data = await result.json();
-      content = result.ok ? 'Application ' + data.application.status + '. This does not automatically assign a staff role.' : data.error;
-    } catch { content = 'Review could not be completed. Try again or contact the server owner.'; }
+      if (action === 'claim') {
+        const result = await storageCall(env, actionMatch[2], { action: 'claim', id: actionMatch[3], reviewer: interaction.member.user.id });
+        const data = await result.json();
+        content = result.ok ? 'Ticket claimed by <@' + interaction.member.user.id + '>.' : data.error;
+      } else if (action === 'close') {
+        const result = await storageCall(env, actionMatch[2], { action: 'close', id: actionMatch[3], reviewer: interaction.member.user.id });
+        const data = await result.json();
+        content = result.ok ? 'Ticket closed.' : data.error;
+      } else {
+        const result = await storageCall(env, actionMatch[2], { action: 'review', id: actionMatch[3], status: action, reviewer: interaction.member.user.id, channelId: interaction.channel_id, messageId: interaction.message?.id });
+        const data = await result.json();
+        content = result.ok ? 'Application ' + data.application.status + '. Ticket will automatically close in 5 minutes if not closed manually.' : data.error;
+      }
+    } catch { content = 'Action could not be completed. Try again or contact the server owner.'; }
     try {
       await fetch(DISCORD_API + '/webhooks/' + interaction.application_id + '/' + interaction.token + '/messages/@original', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ content, allowed_mentions: { parse: [] } }), redirect: 'manual', signal: AbortSignal.timeout(8000) });
     } catch { console.warn('[kyro-applications] Review acknowledgement delivery failed.'); }

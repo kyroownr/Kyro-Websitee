@@ -18,7 +18,11 @@
   // Plaintext. Without KYRO_GUILD_ID readSession() can never report a member,
   // so verification would silently fail for everyone.
   "vars": {
-    "KYRO_GUILD_ID": "1539961184323772498"
+    "KYRO_GUILD_ID": "1539961184323772498",
+    "DISCORD_GUILD_ID": "1539961184323772498",
+    "DISCORD_APPLICATIONS_CATEGORY_ID": "1542144948835582004",
+    "DISCORD_PUBLIC_APPS_CHANNEL_ID": "1542135796369457182",
+    "DISCORD_MOD_ROLE_ID": "1542090972765360208"
   },
 
   "kv_namespaces": [

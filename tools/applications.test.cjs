@@ -22,9 +22,9 @@ async function main() {
   const module = await import(pathToFileURL(path.join(root, 'applications-worker.js')));
   const keys = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const publicKey = Buffer.from(await crypto.subtle.exportKey('raw', keys.publicKey)).toString('hex');
-  const env = { KYRO_GUILD_ID: guild, DISCORD_BOT_TOKEN: 'dummy-bot-secret', DISCORD_APPLICATIONS_CATEGORY_ID: category, DISCORD_MOD_ROLE_ID: mod, DISCORD_PUBLIC_KEY: publicKey };
+  const env = { KYRO_GUILD_ID: guild, DISCORD_GUILD_ID: guild, DISCORD_PUBLIC_APPS_CHANNEL_ID: '1542135796369457182', DISCORD_BOT_TOKEN: 'dummy-bot-secret', DISCORD_APPLICATIONS_CATEGORY_ID: category, DISCORD_MOD_ROLE_ID: mod, DISCORD_APPLICATION_PUBLIC_KEY: publicKey };
   const channels = [], messages = [], patches = [], nonces = new Map();
-  let rateLimit = false, uncertainChannel = false, invalidCategory = false;
+  let rateLimit = false, uncertainChannel = false, invalidCategory = false, uncertainNotice = false, invalidPublicChannel = false;
   let channelPosts = 0;
   const mf = new Miniflare(convertV4MiniflareOptions({
     modules: true, script: source, compatibilityDate: '2025-09-01', kvNamespaces: ['KYRO_DATA'],
@@ -40,6 +40,8 @@ async function main() {
       }
       if (url.pathname === '/api/users/@me/guilds') return Response.json(auth === 'Bearer outsider' ? [] : [{ id: guild, owner: false }]);
       assert.equal(auth, 'Bot dummy-bot-secret');
+      if (url.pathname === '/api/v10/channels/' + env.DISCORD_PUBLIC_APPS_CHANNEL_ID) return Response.json({ id: env.DISCORD_PUBLIC_APPS_CHANNEL_ID, type: 0, guild_id: invalidPublicChannel ? category : guild });
+      if (url.pathname === '/api/v10/guilds/' + guild) return Response.json({ owner_id: userId('owner') });
       if (url.pathname === '/api/v10/users/@me') return Response.json({ id: bot, bot: true });
       if (url.pathname === '/api/v10/channels/' + category) return Response.json({ id: category, type: invalidCategory ? 0 : 4, guild_id: guild });
       if (url.pathname === '/api/v10/guilds/' + guild + '/roles') return Response.json([{ id: mod }]);
@@ -60,6 +62,7 @@ async function main() {
         if (nonces.has(data.nonce)) return Response.json(nonces.get(data.nonce));
         const message = { ...data, id: String(BigInt(bot) + 1000n + BigInt(messages.length)) };
         nonces.set(data.nonce, message); messages.push(message);
+        if (uncertainNotice && data.nonce.endsWith('-pub')) { uncertainNotice = false; return Response.json({}, { status: 503 }); }
         return Response.json(message);
       }
       if (/^\/api\/v10\/channels\/\d+\/messages\/\d+$/.test(url.pathname) && request.method === 'PATCH') { patches.push(await request.json()); return Response.json({}); }
@@ -96,17 +99,23 @@ async function main() {
     check(channels.length === 1 && channels[0].name === 'support-member-editor' && channels[0].parent_id === category, 'private category channel');
     const overwrites = channels[0].permission_overwrites;
     check(overwrites.length === 3 && overwrites[0].id === guild && overwrites[0].deny === '1024', 'everyone denied view');
-    check(overwrites[1].id === mod && overwrites[1].type === 0 && overwrites[1].allow === '3072' && overwrites[2].id === bot && overwrites[2].type === 1 && overwrites[2].allow === '3072', 'configured mod and bot grants');
+    check(overwrites[1].id === mod && overwrites[1].type === 0 && overwrites[1].allow === '68608' && overwrites[2].id === bot && overwrites[2].type === 1 && overwrites[2].allow === '68608', 'configured mod and bot grants');
     check(!overwrites.some(o => o.id === profile.id), 'applicant excluded by default');
     check(messages[0].embeds[0].fields.some(f => f.name === 'Discord User ID' && f.value === profile.id), 'forged identity ignored');
     check(messages[0].components[0].components.every(b => !b.disabled), 'ready review controls');
+    const notice = messages.find(message => message.nonce.endsWith('-pub'));
+    check(notice && notice.content.includes('<#' + channels[0].id + '>') && notice.content.includes('<@&' + mod + '>') && notice.content.includes('<@' + userId('owner') + '>'), 'public notice links private ticket and reviewers');
+    check(!notice.embeds && !notice.components && !notice.content.includes(profile.id) && !notice.content.includes(answers.handle) && notice.allowed_mentions.parse.length === 0, 'public notice excludes identity answers and review controls');
+    const ping = await signed({ type: 1 });
+    const pingResult = await mf.dispatchFetch('http://localhost/api/discord/interactions', { method: 'POST', headers: ping.headers, body: await ping.text() });
+    check(pingResult.status === 200 && (await pingResult.json()).type === 1, 'new interaction endpoint verifies signed PING');
     check((await call('/applications/status?id=' + id, 'other')).status === 404, 'cross-account status denied');
     const publicRow = await status(id);
     check(!('answers' in publicRow) && !('channel_id' in publicRow) && !('interview_url' in publicRow), 'status privacy');
     const large = { ...answers, experience: '*'.repeat(1000), scenario: '_'.repeat(1000), availability: '`'.repeat(500), questions: '*'.repeat(600), originality: true, portfolio: 'https://example.com/portfolio' };
     const out = await call('/applications', 'long', { role: 'contributor', answers: large });
     await waitFor(async () => (await status(out.data.application.id, 'long'))?.status === 'pending');
-    const parts = messages.filter(m => m.embeds[0].footer.text.includes(out.data.application.id));
+    const parts = messages.filter(m => m.embeds?.[0].footer.text.includes(out.data.application.id));
     check(parts.length > 1, 'long full answers split across messages');
     for (const part of parts) {
       const embed = part.embeds[0];
@@ -125,6 +134,17 @@ async function main() {
     await waitFor(async () => (await status(invalid.data.application.id, 'badconfig'))?.status === 'needs_attention');
     check((await call('/applications', 'badconfig', { role: 'support', answers })).status === 409, 'failed delivery retains active guard');
     check(channels.length === 3, 'misconfigured category creates no channel');
+    invalidCategory = false;
+    invalidPublicChannel = true;
+    const foreignChannel = await call('/applications', 'fc', { role: 'support', answers });
+    await waitFor(async () => (await status(foreignChannel.data.application.id, 'fc'))?.status === 'needs_attention');
+    check(channels.length === 3, 'foreign public channel rejected before ticket creation');
+    invalidPublicChannel = false;
+    uncertainNotice = true;
+    const retried = await call('/applications', 'nr', { role: 'support', answers });
+    await waitFor(async () => (await status(retried.data.application.id, 'nr'))?.status === 'pending');
+    const nonce = retried.data.application.id.replace(/-/g, '').slice(0, 20) + '-pub';
+    check(messages.filter(message => message.nonce === nonce).length === 1, 'uncertain public notice retries without duplicate');
   } finally { await mf.dispose(); }
 
   check(!module.applicationConfiguration({ ...env, KYRO_APPLICATIONS: {} , DISCORD_BOT_TOKEN: undefined }).open, 'missing bot closes applications');
@@ -134,7 +154,7 @@ async function main() {
   await assert.rejects(() => module.handleApplications(new Request('https://local/applications'), {}, {}, { id: userId('member') }), e => e.status === 503);
   checks++;
 
-  const signed = async (body, timestamp = String(Math.floor(Date.now() / 1000))) => {
+  async function signed(body, timestamp = String(Math.floor(Date.now() / 1000))) {
     const raw = JSON.stringify(body);
     const signature = Buffer.from(await crypto.subtle.sign('Ed25519', keys.privateKey, new TextEncoder().encode(timestamp + raw))).toString('hex');
     return new Request('https://local/applications/interactions', { method: 'POST', headers: { 'x-signature-ed25519': signature, 'x-signature-timestamp': timestamp }, body: raw });

@@ -66,7 +66,7 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
 
     try {
-      if (url.pathname === '/applications/interactions') return await handleApplicationInteractions(request, env, ctx);
+      if (url.pathname === '/api/discord/interactions' || url.pathname === '/applications/interactions') return await handleApplicationInteractions(request, env, ctx);
       if (url.pathname === '/applications/config' && request.method === 'GET') return json(applicationConfiguration(env), 200, { ...cors, 'cache-control': 'no-store' });
       if (url.pathname === '/applications' || url.pathname === '/applications/status') {
         const token = (request.headers.get('authorization') || '').match(/^Bearer\s+(\S+)$/i)?.[1] || '';
@@ -80,7 +80,8 @@ export default {
       if (url.pathname === '/requests/status') return await handleStatus(request, env, cors);
       if (url.pathname === '/requests/delete') return await handleDelete(request, env, cors);
       if (url.pathname === '/downloads') return await handleDownloads(request, url, env, cors);
-      return json({ error: 'Unknown route. Use /callback, /verify, /requests or /downloads.' }, 404, cors);
+      if (url.pathname === '/feedback') return await handleFeedback(request, url, env, cors);
+      return json({ error: 'Unknown route. Use /callback, /verify, /requests, /feedback or /downloads.' }, 404, cors);
     } catch (err) {
       const message = (err && err.message) || String(err);
       // A callback failure belongs in the URL, not in a JSON body the browser cannot render.
@@ -508,6 +509,138 @@ async function handleDelete(request, env, cors) {
   if (!id) throw fail(400, 'bad_id', 'Missing request id.');
   const written = await requestBoard(env, { action: 'delete', id });
   return json({ requests: project(written, session.id), is_admin: true, is_owner: true }, 200, cors);
+}
+
+/* ------------------------------ feedback board ---------------------------- */
+const FEEDBACK_KEY = 'kyro.feedback.v1';
+
+async function handleFeedback(request, url, env, cors) {
+  if (request.method === 'GET') {
+    const token = bearerToken(request, url);
+    await requireMember(token, env);
+    const doc = (await readDoc(env, FEEDBACK_KEY, { items: [] })).value || { items: [] };
+    const items = (Array.isArray(doc.items) ? doc.items : []).map(item => {
+      if (item.anonymous) {
+        return {
+          id: item.id,
+          rating: item.rating,
+          feedback: item.feedback,
+          improvements: item.improvements || '',
+          anonymous: true,
+          author_name: 'Anonymous Editor',
+          author_avatar: '',
+          created: item.created
+        };
+      }
+      return {
+        id: item.id,
+        rating: item.rating,
+        feedback: item.feedback,
+        improvements: item.improvements || '',
+        anonymous: false,
+        author_name: item.author_name || 'Member',
+        author_avatar: item.author_avatar || '',
+        created: item.created
+      };
+    });
+    return json({ feedback: items }, 200, cors);
+  }
+
+  if (request.method !== 'POST') return json({ error: 'Use GET or POST.' }, 405, cors);
+
+  const input = await jsonBody(request);
+  const session = await requireMember(bearerToken(request, url) || input.token, env);
+
+  const rating = Number(input.rating);
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+    throw fail(400, 'bad_rating', 'Rating must be an integer between 1 and 5 stars.');
+  }
+
+  const feedback = cleanText(input.feedback, 1000);
+  if (!feedback || feedback.length < 5) {
+    throw fail(400, 'bad_feedback', 'Please share feedback of at least 5 characters.');
+  }
+
+  const improvements = cleanText(input.improvements, 1000);
+  const anonymous = Boolean(input.anonymous);
+
+  const entry = {
+    id: crypto.randomUUID(),
+    rating,
+    feedback,
+    improvements,
+    anonymous,
+    author_id: session.id,
+    author_name: session.username,
+    author_avatar: session.avatar ? `https://cdn.discordapp.com/avatars/${session.id}/${session.avatar}.png?size=64` : '',
+    created: new Date().toISOString()
+  };
+
+  const written = await mutateDoc(env, FEEDBACK_KEY, { items: [] }, current => {
+    const items = Array.isArray(current?.items) ? current.items : [];
+    return { items: [entry, ...items].slice(0, 200) };
+  });
+
+  if (env.DISCORD_FEEDBACK_WEBHOOK_URL) {
+    const starText = '★'.repeat(entry.rating) + '☆'.repeat(5 - entry.rating);
+    const authorField = entry.anonymous ? 'Anonymous Editor' : `${session.username} (<@${session.id}>)`;
+    const fields = [
+      { name: 'Rating', value: `${starText} (${entry.rating}/5)`, inline: true },
+      { name: 'Author', value: authorField, inline: true },
+      { name: 'Feedback', value: entry.feedback, inline: false }
+    ];
+    if (entry.improvements) {
+      fields.push({ name: 'Requested Improvements', value: entry.improvements, inline: false });
+    }
+    const payload = {
+      embeds: [{
+        title: '⭐ New Community Feedback',
+        color: entry.rating >= 4 ? 0x10b981 : entry.rating === 3 ? 0xf59e0b : 0xef4444,
+        fields,
+        author: {
+          name: entry.anonymous ? 'Anonymous Editor' : session.username,
+          icon_url: entry.anonymous || !entry.author_avatar ? 'https://raw.githubusercontent.com/kyroownr/Kyro-Websitee/main/assets/kyro-icon.png' : entry.author_avatar
+        },
+        timestamp: entry.created
+      }]
+    };
+    try {
+      await fetch(env.DISCORD_FEEDBACK_WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch (e) {
+      console.warn('[kyro-feedback] Discord webhook failed:', e);
+    }
+  }
+
+  const responseItems = (written.items || []).map(item => {
+    if (item.anonymous) {
+      return {
+        id: item.id,
+        rating: item.rating,
+        feedback: item.feedback,
+        improvements: item.improvements || '',
+        anonymous: true,
+        author_name: 'Anonymous Editor',
+        author_avatar: '',
+        created: item.created
+      };
+    }
+    return {
+      id: item.id,
+      rating: item.rating,
+      feedback: item.feedback,
+      improvements: item.improvements || '',
+      anonymous: false,
+      author_name: item.author_name || 'Member',
+      author_avatar: item.author_avatar || '',
+      created: item.created
+    };
+  });
+
+  return json({ feedback: responseItems }, 201, cors);
 }
 
 /* ------------------------------ download counts -------------------------- */
