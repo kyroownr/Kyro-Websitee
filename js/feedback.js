@@ -3,17 +3,23 @@
 
   const AUTH_WORKER_URL = 'https://kyro-auth.kyro-ownr.workers.dev';
   const K_AUTH = 'kyro.auth.v1';
+  const K_STATE = 'kyro.oauth.state.v1';
+  const K_RETURN = 'kyro.oauth.return.v1';
   const OUT = 0, LOGGED = 1, VERIFIED = 2;
 
   function readAuth() {
     try {
       const raw = localStorage.getItem(K_AUTH);
-      return raw ? JSON.parse(raw) : null;
+      if (!raw) return null;
+      const v = JSON.parse(raw);
+      if (!v || typeof v !== 'object') return null;
+      // Normalise if needed
+      return v;
     } catch { return null; }
   }
 
-  const auth = readAuth();
-  const isVerified = Boolean(auth && auth.state === VERIFIED && auth.token);
+  let auth = readAuth();
+  let isVerified = Boolean(auth && (auth.state === VERIFIED || auth.verified === true || auth.in_server === true) && (auth.token || auth.user));
 
   const gate = document.querySelector('#feedbackGate');
   const container = document.querySelector('#feedbackContainer');
@@ -35,23 +41,24 @@
   }
 
   function startLogin() {
-    const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
-    try { sessionStorage.setItem('kyro.oauth.state', state); } catch {}
+    try { sessionStorage.setItem(K_RETURN, location.pathname); } catch {}
+    const state = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+    try { sessionStorage.setItem(K_STATE, state); } catch {}
     const clientId = '1570702041993711706';
     const redirectUri = encodeURIComponent(AUTH_WORKER_URL + '/callback');
     const scope = encodeURIComponent('identify guilds');
-    location.href = 'https://discord.com/api/oauth2/authorize?client_id=' + clientId +
+    location.assign('https://discord.com/api/oauth2/authorize?client_id=' + clientId +
       '&redirect_uri=' + redirectUri +
       '&response_type=code&scope=' + scope +
-      '&state=' + state +
-      '&prompt=consent';
+      '&state=' + encodeURIComponent(state));
   }
 
   if (gateLoginBtn) gateLoginBtn.addEventListener('click', startLogin);
 
   // Render top right auth button
-  if (authSlot) {
-    if (isVerified && auth.user) {
+  function renderNavAuth() {
+    if (!authSlot) return;
+    if (auth && auth.user && isVerified) {
       const avatarUrl = auth.user.avatar
         ? 'https://cdn.discordapp.com/avatars/' + auth.user.id + '/' + auth.user.avatar + '.png?size=32'
         : '';
@@ -62,7 +69,7 @@
         '<div class="auth-pill" style="display:flex;align-items:center;gap:6px;padding:4px 10px;background:var(--panel);border:1px solid var(--line);font-size:0.75rem;">' +
           avatarEl +
           '<span class="mono">' + escapeHtml(auth.user.username) + '</span>' +
-          '<span class="badge badge-free" style="font-size:0.55rem;padding:1px 4px;">MEMBER</span>' +
+          '<span class="badge badge-free" style="font-size:0.55rem;padding:1px 4px;">VERIFIED</span>' +
         '</div>';
     } else {
       authSlot.innerHTML =
@@ -126,6 +133,7 @@
 
   // Load reviews from Cloudflare Worker
   async function loadFeedback() {
+    renderNavAuth();
     if (!isVerified) {
       gate.hidden = false;
       container.hidden = true;
@@ -137,7 +145,8 @@
     fbReviewsList.innerHTML = '<div class="req-empty mono" style="padding:20px;color:var(--dim);">Loading feedback…</div>';
 
     try {
-      const headers = { 'Accept': 'application/json', 'Authorization': 'Bearer ' + auth.token };
+      const headers = { 'Accept': 'application/json' };
+      if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
       const res = await fetch(AUTH_WORKER_URL + '/feedback', { headers, credentials: 'omit' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load feedback');
@@ -172,9 +181,9 @@
 
       try {
         const headers = {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + auth.token
+          'Content-Type': 'application/json'
         };
+        if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
         const res = await fetch(AUTH_WORKER_URL + '/feedback', {
           method: 'POST',
           headers,

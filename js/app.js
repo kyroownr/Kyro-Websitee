@@ -136,7 +136,7 @@
       clearSession(K_RETURN);
       if (returnPath) {
         const destination = new URL(returnPath, location.origin);
-        if (destination.origin === location.origin && destination.pathname === '/apply') location.replace(destination.href);
+        if (destination.origin === location.origin && (destination.pathname === '/apply' || destination.pathname === '/feedback')) location.replace(destination.href);
       }
 
       queueMicrotask(() => toast(auth.state === VERIFIED
@@ -370,7 +370,9 @@
   }
 
   function startLogin() {
-    if (document.body.dataset.page === 'apply') writeSession(K_RETURN, location.pathname + location.search);
+    if (document.body.dataset.page === 'apply' || document.body.dataset.page === 'feedback') {
+      writeSession(K_RETURN, location.pathname + location.search);
+    }
     const state = (window.crypto && crypto.randomUUID)
       ? crypto.randomUUID()
       : Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
