@@ -1758,7 +1758,36 @@
         '<span class="spec-badges">' + badges.join('') + '</span></div>'
       : '';
 
-    return '<div class="spec-row">' +
+    // Calculate or format the 6ure specs
+    const creator = r.creator || (r.credits ? r.credits : 'Kyro Vault');
+    const vaultId = r.vault_id || ('#' + Math.abs((r.id || '').split('').reduce((a, b) => { a = ((a << 5) - a) + b.charCodeAt(0); return a & a; }, 0) % 900000 + 100000));
+    const size = (r.files && r.files[0] && r.files[0].size) ? r.files[0].size : (r.size || 'Vault Build');
+    const category = r.category === 'software' ? 'Software' : (r.category ? r.category.charAt(0).toUpperCase() + r.category.slice(1) : 'Adobe After Effects');
+    const osLabels = (r.os || []).map(o => o === 'windows' ? 'Windows' : o === 'macos' ? 'macOS' : o).join(' & ') || 'Windows';
+    const statusLabel = r.status_label || (r.version ? 'Updated' : 'Verified');
+
+    const infoGrid =
+      '<div class="vault-6ure-specs" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px 16px;margin:16px 0;font-size:0.85rem;">' +
+        '<div>' +
+          '<div style="font-weight:700;color:#fff;margin-bottom:6px;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--dim);">Information</div>' +
+          '<div style="display:flex;flex-direction:column;gap:4px;color:#cbd5e1;">' +
+            '<div>• <strong>Creator:</strong> <span class="mono" style="background:rgba(255,255,255,0.08);padding:1px 6px;border-radius:4px;font-size:0.8rem;">' + esc(creator) + '</span></div>' +
+            '<div>• <strong>ID:</strong> <span class="mono" style="background:rgba(255,255,255,0.08);padding:1px 6px;border-radius:4px;font-size:0.8rem;">' + esc(vaultId) + '</span></div>' +
+            '<div>• <strong>Size:</strong> <span class="mono" style="background:rgba(255,255,255,0.08);padding:1px 6px;border-radius:4px;font-size:0.8rem;">' + esc(size) + '</span></div>' +
+            '<div>• <strong>Category:</strong> <span class="mono" style="background:rgba(255,255,255,0.08);padding:1px 6px;border-radius:4px;font-size:0.8rem;">' + esc(category) + '</span></div>' +
+          '</div>' +
+        '</div>' +
+        '<div>' +
+          '<div style="font-weight:700;color:#fff;margin-bottom:6px;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--dim);">Platform &amp; Status</div>' +
+          '<div style="display:flex;flex-direction:column;gap:4px;color:#cbd5e1;">' +
+            '<div>• <strong>Platform:</strong> <span class="mono" style="background:rgba(255,255,255,0.08);padding:1px 6px;border-radius:4px;font-size:0.8rem;">' + esc(osLabels) + '</span></div>' +
+            '<div>• <strong>Tier:</strong> <span class="mono" style="background:rgba(16,185,129,0.15);color:#34d399;padding:1px 6px;border-radius:4px;font-size:0.8rem;font-weight:600;">Free</span></div>' +
+            '<div>• <strong>Status:</strong> <span class="mono" style="background:rgba(59,130,246,0.15);color:#60a5fa;padding:1px 6px;border-radius:4px;font-size:0.8rem;font-weight:600;">' + esc(statusLabel) + '</span></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    return infoGrid + '<div class="spec-row">' +
       group('AE Compatibility', r.aeMin
         ? ['<span class="badge badge-spec">AE ' + esc(r.aeMin) + '+</span>'] : []) +
       group('OS / Architecture', OS_BADGES.filter(b => (r.os || []).includes(b.value)).map(b =>

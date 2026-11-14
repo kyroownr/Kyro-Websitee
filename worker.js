@@ -82,6 +82,7 @@ export default {
       if (url.pathname === '/downloads') return await handleDownloads(request, url, env, cors);
       if (url.pathname === '/feedback') return await handleFeedback(request, url, env, cors);
       if (url.pathname === '/invite') return await handleInvite(request, url, env, cors);
+      if (url.pathname === '/api/vault/publish') return await handleVaultPublish(request, url, env, cors);
       if (url.pathname === '/dashboard/settings') return await handleDashboardSettings(request, url, env, cors);
       if (url.pathname === '/dashboard/embed') return await handleDashboardEmbed(request, url, env, cors);
       if (url.pathname === '/dashboard/lockdown') return await handleDashboardLockdown(request, url, env, cors);
@@ -867,6 +868,166 @@ async function discord(href, accessToken) {
 /* ----------------------- Kyro Bot Web Dashboard ------------------------ */
 const DASHBOARD_CONFIG_KEY = 'kyro.bot_config.v1';
 const DASHBOARD_AUDIT_KEY = 'kyro.bot_audit.v1';
+const VAULT_ITEMS_KEY = 'kyro.vault_items.v1';
+const KYRO_ICON = 'https://raw.githubusercontent.com/kyroownr/Kyro-Websitee/main/assets/kyro-icon.png';
+
+async function handleVaultPublish(request, url, env, cors) {
+  if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
+  const token = bearerToken(request, url);
+  const session = await requireMember(token, env);
+  
+  // Owner only can publish directly from website
+  const isOwner = session.isOwner || session.id === '1052909930073567232' || (session.role || '').toLowerCase() === 'owner';
+  if (!isOwner) throw fail(403, 'forbidden', 'Only the Kyro Server Owner can publish resources to Discord.');
+
+  const item = await jsonBody(request);
+  if (!item.name || !item.slug) throw fail(400, 'bad_input', 'Resource name and slug are required.');
+
+  const slug = item.slug.toLowerCase().trim().replace(/^\/+|\/+$/g, '');
+  const os = (item.os || 'windows').toLowerCase();
+  const pageUrl = `https://kyro.new.tg/${os}/${slug}/`;
+
+  // Read existing published items to detect update
+  const vaultDoc = (await readDoc(env, VAULT_ITEMS_KEY, { items: {} })).value;
+  const existing = vaultDoc.items && vaultDoc.items[slug];
+  const isUpdate = Boolean(existing);
+
+  const creator = item.creator || 'Kyro Vault';
+  const size = item.size || 'Vault Build';
+  const category = item.category || 'Adobe After Effects';
+  const osLabel = os === 'both' ? 'Windows & macOS' : os === 'macos' ? 'macOS' : 'Windows';
+  const vaultId = item.id_code || ('#' + Math.floor(100000 + Math.random() * 900000));
+  const tier = item.tier || 'Free';
+
+  const embed = {
+    author: {
+      name: 'Kyro Vault',
+      icon_url: KYRO_ICON
+    },
+    title: (isUpdate ? '🔄 UPDATE: ' : '') + item.name.toUpperCase(),
+    url: pageUrl,
+    description: (item.details || `${item.name} is now available in the Kyro Vault. Free resources and tools for verified editors.`) +
+      `\n\n**Website Link:** ${pageUrl}`,
+    color: 0x1f232b,
+    fields: [
+      {
+        name: 'Information',
+        value: `• **Creator:** \`${creator}\`\n• **ID:** \`${vaultId}\`\n• **Size:** \`${size}\`\n• **Category:** \`${category}\`\n• **Platform:** \`${osLabel}\``,
+        inline: true
+      },
+      {
+        name: 'Membership',
+        value: `• **Tier:** \`${tier}\`\n• **Status:** \`${isUpdate ? 'Updated' : 'Verified'}\``,
+        inline: true
+      }
+    ],
+    footer: {
+      text: 'Kyro™ Website | Resource Monitor',
+      icon_url: KYRO_ICON
+    },
+    timestamp: new Date().toISOString()
+  };
+
+  if (item.image_url && /^https?:\/\//.test(item.image_url)) {
+    embed.image = { url: item.image_url };
+  }
+
+  const components = [
+    {
+      type: 1,
+      components: [
+        {
+          type: 2,
+          style: 5,
+          label: 'View Resource ↗',
+          url: pageUrl
+        },
+        {
+          type: 2,
+          style: 5,
+          label: 'Browse Vault ↗',
+          url: 'https://kyro.new.tg'
+        }
+      ]
+    }
+  ];
+
+  const outcomes = { announcements: false, downloads_links: false, showcase: false, isUpdate, pageUrl };
+
+  if (env.DISCORD_BOT_TOKEN) {
+    // 1. Announcements
+    try {
+      await fetch('https://discord.com/api/v10/channels/1539961971422658571/messages', {
+        method: 'POST',
+        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          content: isUpdate ? '📢 **Vault Update Alert** — <@&1542127783440818226>' : '🚀 **New Vault Resource Released** — <@&1542127783440818226>',
+          embeds: [embed],
+          components
+        })
+      });
+      outcomes.announcements = true;
+    } catch (e) {
+      console.warn('[publish] Announcements error:', e);
+    }
+
+    // 2. Downloads-links
+    try {
+      await fetch('https://discord.com/api/v10/channels/1539961998601756722/messages', {
+        method: 'POST',
+        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({ embeds: [embed], components })
+      });
+      outcomes.downloads_links = true;
+    } catch (e) {
+      console.warn('[publish] Downloads-links error:', e);
+    }
+
+    // 3. Showcase forum (tag 1541775995395379310)
+    if (isUpdate && existing?.thread_id) {
+      try {
+        await fetch(`https://discord.com/api/v10/channels/${existing.thread_id}/messages`, {
+          method: 'POST',
+          headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            content: `🔄 **New Update Released** for **${item.name}**!`,
+            embeds: [embed],
+            components
+          })
+        });
+        outcomes.showcase = true;
+      } catch (e) {}
+    }
+
+    if (!outcomes.showcase) {
+      try {
+        const scRes = await fetch('https://discord.com/api/v10/channels/1541775088901292042/threads', {
+          method: 'POST',
+          headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            name: (isUpdate ? '[UPDATE] ' : '') + item.name,
+            applied_tags: ['1541775995395379310'],
+            message: { embeds: [embed], components }
+          })
+        });
+        if (scRes.ok) {
+          const scData = await scRes.json();
+          await mutateDoc(env, VAULT_ITEMS_KEY, { items: {} }, curr => {
+            const items = curr?.items || {};
+            items[slug] = { name: item.name, slug, thread_id: scData.id, version: item.version || '1.0' };
+            return { items };
+          });
+          outcomes.showcase = true;
+        }
+      } catch (e) {
+        console.warn('[publish] Showcase error:', e);
+      }
+    }
+  }
+
+  await logBotAudit(env, isUpdate ? 'Vault Resource Updated' : 'New Vault Resource Published', session, `Published "${item.name}" -> ${pageUrl}`);
+  return json(outcomes, 200, cors);
+}
 
 async function logBotAudit(env, action, byUser, details) {
   const entry = {
