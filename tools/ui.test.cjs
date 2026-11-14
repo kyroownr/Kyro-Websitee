@@ -58,7 +58,7 @@ async function main() {
       const parameters = new URLSearchParams(location.search);
       const role = parameters.get('uiAuth') || 'member';
       if (role === 'out') localStorage.removeItem('kyro.auth.v1');
-      else localStorage.setItem('kyro.auth.v1', JSON.stringify({state:role === 'logged' ? 'logged' : 'verified',user:{id:role === 'logged' ? 'outsider' : role,username:role + '-editor',initials:'E'},token:role === 'logged' ? 'outsider' : role}));
+      else localStorage.setItem('kyro.auth.v1', JSON.stringify({state:role === 'logged' ? 'logged' : 'verified',user:{id:role === 'logged' ? 'outsider' : role,username:role + '-editor',initials:'E'},token:role === 'logged' || role === 'departed' ? 'outsider' : role,is_owner:role === 'forged',role:role === 'forged' ? 'owner' : 'member'}));
       const nativeFetch = window.fetch.bind(window);
       window.fetch = (input, init) => {
         const raw = typeof input === 'string' ? input : input.url;
@@ -273,7 +273,55 @@ async function main() {
     assert.equal(await evaluate("document.querySelector('#toolsSection').open && !document.querySelector('#toolsEmpty').hidden && document.querySelector('#toolsNote').textContent === '· coming soon'"), true);
     await toggleTools();
     assert.equal(await evaluate("document.querySelector('#toolsSection').open"), false);
-    console.log(JSON.stringify({ realChrome: 'passed', mobileWidth: 390, softwareAccordion: 'mouse, Enter, Space, both OS pages, empty state', toolsAccordion: 'mouse, Enter, Space, both OS pages, desktop/mobile, independent shelves, empty state', toolDownloads: 'AutoCaption modal, Kyro copy, install guide', toonboom: 'download URL, Kyro password, install note, auth gates', boardFirst: true, composer: true, publicChecksumCopy: true, malformedAndMissingHashes: 'hidden', guide: '6 sections', authGates: 'passed', searchAndCatalog: 'passed', artifacts }));
+    for (const width of [1366, 390]) {
+      await send('Emulation.setDeviceMetricsOverride', { width, height: width === 390 ? 844 : 900, deviceScaleFactor: 1, mobile: width === 390 });
+      await navigate('/windows?uiAuth=owner');
+      await evaluate(`(${waitExpression})(()=>document.querySelector('.profile-role')?.textContent === 'OWNER')`);
+      await evaluate("document.querySelector('#profileBtn').click()");
+      assert.equal(await evaluate("document.querySelector('.pm-role').textContent.includes('OWNER')"), true);
+      await screenshot('owner-profile-' + width + '.png');
+      await evaluate("document.querySelector('#profileBtn').click()");
+      await openBoard();
+      assert.ok(await evaluate("document.querySelectorAll('[data-req-delete]').length"));
+      await evaluate("document.querySelector('#reqNewRequest').click(); document.querySelector('#reqTitle').value='Owner UI request " + width + "'; document.querySelector('#reqTitle').dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('#reqSubmit').click()");
+      await evaluate(`(${waitExpression})(()=>Array.from(document.querySelectorAll('.req-title')).some(e=>e.textContent === 'Owner UI request ${width}'))`);
+      const requestId = await evaluate("Array.from(document.querySelectorAll('.req-item')).find(e=>e.querySelector('.req-title').textContent==='Owner UI request " + width + "').dataset.requestId");
+      await navigate('/windows?uiAuth=out');
+      await openBoard();
+      assert.equal(await evaluate("document.querySelector('[data-request-id=\"" + requestId + "\"]').textContent.includes('OWNER')"), true);
+      assert.equal(await evaluate("document.querySelector('[data-req-delete]') === null"), true);
+      await navigate('/windows?uiAuth=owner');
+      await openBoard();
+      await evaluate("document.querySelector('[data-req-status=\"" + requestId + "\"]').value='planned'; document.querySelector('[data-req-status=\"" + requestId + "\"]').dispatchEvent(new Event('change',{bubbles:true}))");
+      await evaluate(`(${waitExpression})(()=>document.querySelector('[data-request-id="${requestId}"] .req-meta').textContent.includes('PLANNED'))`);
+      await evaluate("document.querySelector('[data-req-delete=\"" + requestId + "\"]').click()");
+      assert.equal(await evaluate("document.querySelector('[data-req-delete=\"" + requestId + "\"]').textContent"), 'Confirm Delete');
+      await evaluate("document.querySelector('[data-req-delete-cancel]').click()");
+      assert.equal(await evaluate("document.querySelector('[data-req-delete=\"" + requestId + "\"]').textContent"), 'Delete Request');
+      await evaluate("document.querySelector('[data-req-delete=\"" + requestId + "\"]').click()");
+      await screenshot('owner-delete-' + width + '.png');
+      assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
+      await evaluate("document.querySelector('[data-req-delete=\"" + requestId + "\"]').click()");
+      await evaluate(`(${waitExpression})(()=>!document.querySelector('[data-request-id="${requestId}"]'))`);
+      await navigate('/windows?uiAuth=member');
+      await openBoard();
+      assert.equal(await evaluate("document.querySelector('[data-request-id=\"" + requestId + "\"]') === null && document.querySelector('[data-req-delete]') === null"), true);
+      await evaluate("document.querySelector('#requestsClose').click(); document.querySelector('#profileBtn').click()");
+      assert.equal(await evaluate("document.querySelector('.pm-role').textContent.includes('MEMBER')"), true);
+      await navigate('/windows?uiAuth=forged');
+      await openBoard();
+      assert.equal(await evaluate("document.querySelector('.profile-role') === null && document.querySelector('[data-req-delete]') === null"), true);
+      await navigate('/windows?uiAuth=admin');
+      await openBoard();
+      assert.ok(await evaluate("document.querySelectorAll('[data-req-status]').length"));
+      assert.equal(await evaluate("document.querySelector('[data-req-delete]') === null"), true);
+      await navigate('/windows?uiAuth=departed');
+      await evaluate(`(${waitExpression})(()=>document.querySelector('#stripRecheck'))`);
+      assert.equal(await evaluate("document.querySelector('.status-dot.is-verified') === null && document.querySelector('.profile-role') === null"), true);
+      await evaluate("document.querySelector('#profileBtn').click()");
+      assert.equal(await evaluate("document.querySelector('.pm-state').textContent.includes('Not in the Kyro server') && document.querySelector('.pm-role') === null"), true);
+    }
+    console.log(JSON.stringify({ realChrome: 'passed', ownerControls: 'role refresh, public owner submission badge, status, confirm/cancel deletion, member/admin gates, spoofed storage, desktop/mobile', mobileWidth: 390, softwareAccordion: 'mouse, Enter, Space, both OS pages, empty state', toolsAccordion: 'mouse, Enter, Space, both OS pages, desktop/mobile, independent shelves, empty state', toolDownloads: 'AutoCaption modal, Kyro copy, install guide', toonboom: 'download URL, Kyro password, install note, auth gates', boardFirst: true, composer: true, publicChecksumCopy: true, malformedAndMissingHashes: 'hidden', guide: '6 sections', authGates: 'passed', searchAndCatalog: 'passed', artifacts }));
   } finally {
     if (ws && ws.readyState === WebSocket.OPEN) ws.close();
     chrome.kill();

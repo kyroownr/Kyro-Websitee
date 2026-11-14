@@ -58,6 +58,7 @@
   const OUT = 'out', LOGGED = 'logged', VERIFIED = 'verified';
 
   let auth = normaliseAuth(read(K_AUTH, null));
+  let discordRole = '';
   function normaliseAuth(v) {
     if (!v || (v.state !== LOGGED && v.state !== VERIFIED)) return { state: OUT, user: null, token: '' };
     const user = v.user && v.user.username
@@ -304,6 +305,7 @@
         '<span class="avatar">' + avatarHTML(auth.user) +
           '<i class="status-dot' + (verified ? ' is-verified' : '') + '" aria-hidden="true"></i></span>' +
         '<span class="profile-name">' + esc(auth.user.username) + '</span>' +
+        (discordRole === 'owner' ? '<span class="badge badge-free mono profile-role">OWNER</span>' : '') +
         '<span class="profile-caret" aria-hidden="true">▾</span>' +
       '</button>';
     const pill = $('#profileBtn');
@@ -324,6 +326,8 @@
         '<div class="pm-sub">Discord' + (auth.user.id ? ' · id ' + esc(auth.user.id) : '') + '</div></div></div>' +
       '<div class="pm-state ' + (verified ? 'is-ok' : 'is-out') + '">' +
         (verified ? ICON.check + 'Verified server member' : ICON.lock + 'Not in the Kyro server') + '</div>' +
+      (verified ? '<div class="pm-role mono">Discord role <span class="badge' + (discordRole === 'owner' ? ' badge-free' : '') + '">' + (discordRole ? discordRole.toUpperCase() : 'UNVERIFIED') + '</span></div>' : '') +
+      (verified ? '<button type="button" class="pm-item" role="menuitem" data-recheck>Refresh Discord Role</button>' : '') +
       (verified ? '' :
         '<a class="pm-item" role="menuitem" href="' + esc(INVITE_URL) + '" target="_blank" rel="noopener noreferrer">Join server ↗</a>' +
         '<button type="button" class="pm-item" role="menuitem" data-recheck>Refresh Verification</button>') +
@@ -366,12 +370,53 @@
   }
 
   function logout() {
+    discordRole = '';
+    reqOwner = false;
+    reqAdmin = false;
+    reqDeleteId = '';
     auth = { state: OUT, user: null, token: '' };
     saveAuth();
     renderAuth();
     renderAccess();
     if (modalId) openModal(modalId);
     toast({ title: 'Logged out', sub: 'Discord session cleared from this browser.', icon: ICON.x });
+  }
+
+  function setDiscordRole(isOwner) {
+    const role = auth.state === VERIFIED ? (isOwner === true ? 'owner' : 'member') : '';
+    if (role !== 'owner') reqOwner = false;
+    if (role === discordRole) return;
+    discordRole = role;
+    const menuOpen = Boolean(authSlot.querySelector('.profile-menu'));
+    renderAuth();
+    if (menuOpen) toggleProfileMenu($('#profileBtn'));
+  }
+
+  async function refreshDiscordRole() {
+    const token = auth.token;
+    if (!token) return;
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/verify', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token }), credentials: 'omit'
+      });
+      const data = await res.json();
+      if (auth.token !== token) return;
+      if (res.status === 401) { logout(); return; }
+      if (!res.ok) throw new Error('Discord role verification failed.');
+      const state = data.in_server ? VERIFIED : LOGGED;
+      const stateChanged = auth.state !== state;
+      auth.state = state;
+      saveAuth();
+      setDiscordRole(data.is_owner);
+      if (stateChanged) renderAuth();
+      renderAccess();
+    } catch {
+      if (auth.token === token) {
+        discordRole = '';
+        renderAuth();
+      }
+    }
   }
 
   /* Re-reads guild membership with the stored token — the session survives. */
@@ -407,6 +452,7 @@
 
       const member = Boolean(data.in_server);
       auth = { state: member ? VERIFIED : LOGGED, user: auth.user, token: data.token || auth.token };
+      setDiscordRole(data.is_owner);
       saveAuth();
       renderAuth();
       renderAccess();
@@ -864,6 +910,8 @@
   let reqComposeOpen = false;
   let reqLoaded = false;
   let reqAdmin = false;
+  let reqOwner = false;
+  let reqDeleteId = '';
 
   function reqHeaders() {
     const h = { Accept: 'application/json' };
@@ -873,12 +921,16 @@
   }
 
   async function loadRequests() {
+    const token = auth.token;
     try {
       const res = await fetch(AUTH_WORKER_URL + '/requests', { headers: reqHeaders(), credentials: 'omit' });
       const data = await res.json().catch(() => ({}));
+      if (auth.token !== token) return;
       if (!res.ok) throw new Error('requests responded ' + res.status + (data.error ? ': ' + data.error : ''));
       requests = Array.isArray(data.requests) ? data.requests : [];
       reqAdmin = Boolean(data.is_admin);
+      reqOwner = data.is_owner === true;
+      if (auth.token) setDiscordRole(data.is_owner);
       reqLoaded = true;
       reqError = '';
     } catch (err) {
@@ -928,9 +980,9 @@
         return null;
       }
       if (!res.ok) {
-        if (data.code === 'duplicate_request') await loadRequests();
+        if (data.code === 'duplicate_request' || data.code === 'not_the_owner' || data.code === 'not_an_admin') await loadRequests();
         toast({
-          title: 'Nothing was posted',
+          title: 'Request not changed',
           sub: data.error || 'The requests board responded ' + res.status + '.',
           icon: ICON.x, warn: true, ttl: 6500
         });
@@ -938,6 +990,8 @@
       }
       if (Array.isArray(data.requests)) requests = data.requests;
       reqAdmin = Boolean(data.is_admin);
+      reqOwner = data.is_owner === true;
+      if (auth.token) setDiscordRole(data.is_owner);
       reqError = '';
       return data;
     } catch (err) {
@@ -977,6 +1031,8 @@
           '<p class="req-meta">' +
             '<span class="' + (REQ_STATUS_CLASS[r.status] || 'badge') + '">' + status + '</span>' +
             (r.starter ? '<span class="req-cat mono">STARTER IDEA</span>' : '') +
+            (r.author_name ? '<span class="req-cat mono">' + esc(r.author_name) + '</span>' : '') +
+            (r.author_role === 'owner' ? '<span class="badge badge-free mono" title="Discord server owner at submission">OWNER</span>' : '') +
             '<span class="req-cat mono">' + esc((window.KYRO_CATEGORY_LABEL[r.category] || 'Other').toUpperCase()) + '</span>' +
             (r.os ? '<span class="req-cat mono">' + esc(r.os.toUpperCase()) + '</span>' : '') +
             (versions.length ? '<span class="req-cat mono">AE ' + esc(versions.join(' / ').toUpperCase()) + '</span>' : '') +
@@ -984,6 +1040,9 @@
           '</p>' +
           (admin ? '<select class="field-input req-status-select mono" data-req-status="' + esc(r.id) + '" aria-label="Status for ' + esc(r.title) + '"' + (reqBusy ? ' disabled' : '') + '>' +
             Object.entries(REQ_STATUS_LABEL).map(([value, label]) => '<option value="' + value + '"' + (r.status === value ? ' selected' : '') + '>' + label + '</option>').join('') + '</select>' : '') +
+          (reqOwner && auth.state === VERIFIED ? '<div class="req-delete-actions">' +
+            (reqDeleteId === r.id ? '<span class="req-desc">Delete this request and all its votes?</span><button type="button" class="btn btn-danger btn-sm" data-req-delete="' + esc(r.id) + '"' + (reqBusy ? ' disabled' : '') + '>Confirm Delete</button><button type="button" class="btn btn-ghost btn-sm" data-req-delete-cancel' + (reqBusy ? ' disabled' : '') + '>Cancel</button>' :
+              '<button type="button" class="btn btn-ghost btn-sm" data-req-delete="' + esc(r.id) + '"' + (reqBusy ? ' disabled' : '') + '>Delete Request</button>') + '</div>' : '') +
         '</div>' +
       '</article>';
   }
@@ -1052,6 +1111,17 @@
     requestList.querySelectorAll('[data-req-status]').forEach(select => select.addEventListener('change', () => {
       reqWrite('/requests/status', { token: auth.token, id: select.dataset.reqStatus, status: select.value });
     }));
+    requestList.querySelectorAll('[data-req-delete]').forEach(btn => btn.addEventListener('click', () => {
+      const id = btn.dataset.reqDelete;
+      if (reqDeleteId !== id) { reqDeleteId = id; renderRequests(); return; }
+      reqWrite('/requests/delete', { id }).then(data => {
+        if (!data) return;
+        reqDeleteId = '';
+        renderRequests();
+        toast({ title: 'Request deleted', sub: 'Removed from the board with its votes.', icon: ICON.check });
+      });
+    }));
+    requestList.querySelectorAll('[data-req-delete-cancel]').forEach(btn => btn.addEventListener('click', () => { reqDeleteId = ''; renderRequests(); }));
     requestsDrawer.querySelectorAll('[data-req-sort]').forEach(btn => btn.setAttribute('aria-pressed', String(btn.dataset.reqSort === reqSort)));
     requestsDrawer.querySelectorAll('[data-req-filter]').forEach(btn => btn.setAttribute('aria-pressed', String(btn.dataset.reqFilter === reqFilter)));
     const rl = $('#reqLogin');
@@ -1130,6 +1200,8 @@
     if (drawer.classList.contains('is-open')) hide(drawer);
     reqComposeOpen = false;
     reqAdmin = false;
+    reqOwner = false;
+    reqDeleteId = '';
     renderRequests();
     openScrim();
     requestsDrawer.classList.add('is-open');
@@ -1953,6 +2025,7 @@
   wireRequestControls();
   updateSavedUI();
   startServerStats();
+  refreshDiscordRole();
 
   // Deep links: #r-<asset> opens its modal, #login starts the Discord OAuth redirect.
   const hash = location.hash;

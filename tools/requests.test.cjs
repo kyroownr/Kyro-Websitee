@@ -4,15 +4,16 @@ const path = require('node:path');
 const { Miniflare, convertV4MiniflareOptions } = require('miniflare');
 const source = fs.readFileSync(path.join(__dirname, '..', 'worker.js'), 'utf8');
 let webhookFailure = false;
+let ownerUser = 'owner';
 const deliveries = [];
-const make = (webhook = true) => new Miniflare(convertV4MiniflareOptions({
+const make = (webhook = true, admins = 'admin') => new Miniflare(convertV4MiniflareOptions({
   modules: true,
   script: source,
   compatibilityDate: '2025-09-01',
   kvNamespaces: ['KYRO_DATA'],
   durableObjects: { KYRO_REQUESTS: { className: 'KyroRequests', useSQLite: true } },
   bindings: {
-    KYRO_GUILD_ID: 'guild', KYRO_ADMIN_IDS: 'admin',
+    KYRO_GUILD_ID: 'guild', KYRO_ADMIN_IDS: admins,
     DISCORD_CLIENT_ID: 'test-client', DISCORD_CLIENT_SECRET: 'test-secret',
     ...(webhook ? { DISCORD_REQUESTS_WEBHOOK_URL: 'https://discord.com/api/webhooks/123/testtoken' } : {})
   },
@@ -27,7 +28,10 @@ const make = (webhook = true) => new Miniflare(convertV4MiniflareOptions({
     const id = (request.headers.get('authorization') || '').replace('Bearer ', '');
     if (id === 'expired') return new Response('{}', { status: 401 });
     if (url.pathname === '/api/users/@me') return Response.json({ id, username: id + '-editor', avatar: null });
-    if (url.pathname === '/api/users/@me/guilds') return Response.json(id === 'outsider' ? [] : [{ id: 'guild' }]);
+    if (url.pathname === '/api/users/@me/guilds') return Response.json(id === 'outsider' ? [] : [
+      { id: 'guild', owner: id === ownerUser, permissions: id === 'admin' ? '8' : '0' },
+      { id: 'other-guild', owner: id === 'foreign-owner' }
+    ]);
     throw new Error('Unexpected Discord endpoint');
   }
 }));
@@ -94,9 +98,48 @@ async function main() {
     const callback = await mf.dispatchFetch('http://localhost/callback?code=test&state=state-test', { redirect: 'manual' });
     expect(callback.status === 302 && callback.headers.get('location').includes('in_server=true'), 'OAuth unchanged');
     expect((await call('/downloads')).status === 200, 'download counts unchanged');
+    expect((await call('/verify', { token: 'owner' })).data.is_owner === true, 'Discord owner detected');
+    expect((await call('/verify', { token: 'member', is_owner: true })).data.is_owner === false, 'client owner flag ignored');
+    expect((await call('/verify', { token: 'foreign-owner' })).data.is_owner === false, 'other guild ownership ignored');
+    expect((await call('/verify', { token: 'admin' })).data.is_owner === false, 'administrator permission is not ownership');
+    out = await call('/requests', undefined, 'owner');
+    expect(out.data.is_owner && out.data.is_admin, 'owner board capabilities');
+    expect((await call('/requests')).data.is_owner === false, 'anonymous has no owner capability');
+    out = await call('/requests', { ...base, title: 'Owner test request' }, 'owner');
+    const ownerRow = out.data.requests.find(r => r.id === out.data.id);
+    expect(ownerRow.author_name === 'owner-editor' && ownerRow.author_role === 'owner', 'owner author metadata server-derived');
+    out = await call('/requests', { ...base, title: 'Forged owner request', author_name: 'owner-editor', author_role: 'owner', is_owner: true }, 'member');
+    expect(out.data.requests.find(r => r.id === out.data.id).author_role === 'member', 'author role spoof rejected');
+    expect((await call('/requests')).data.requests.find(r => r.id === ownerRow.id).author_role === 'owner', 'owner submission badge public');
+    expect((await call('/requests/status', { id: ownerRow.id, status: 'planned' }, 'owner')).status === 200, 'owner may update status');
+    expect((await call('/requests/delete', { id: ownerRow.id })).status === 401, 'anonymous deletion denied');
+    expect((await call('/requests/delete', { id: ownerRow.id }, 'expired')).status === 401, 'expired deletion denied');
+    expect((await call('/requests/delete', { id: ownerRow.id }, 'outsider')).status === 403, 'nonmember deletion denied');
+    for (const token of ['member', 'admin', 'foreign-owner']) {
+      expect((await call('/requests/delete', { id: ownerRow.id, is_owner: true, user: 'owner' }, token)).status === 403, 'nonowner deletion denied ' + token);
+    }
+    expect((await call('/requests/delete', {}, 'owner')).status === 400, 'missing deletion ID');
+    expect((await call('/requests/delete', null, 'owner')).status === 400, 'invalid deletion body');
+    expect((await call('/requests/delete', { id: 'unknown' }, 'owner')).status === 404, 'unknown deletion target');
+    expect((await call('/requests/delete', undefined, 'owner')).status === 405, 'GET cannot delete');
+    const beforeDelete = (await call('/requests')).data.requests;
+    const deliveryCount = deliveries.length;
+    out = await call('/requests/delete', { id: ownerRow.id }, 'owner');
+    expect(out.status === 200 && out.data.is_owner && !out.data.requests.some(r => r.id === ownerRow.id), 'owner deletes request');
+    expect(out.data.requests.length === beforeDelete.length - 1 && deliveries.length === deliveryCount, 'delete preserves unrelated requests and sends no webhook');
+    expect((await call('/requests/delete', { id: ownerRow.id }, 'owner')).status === 404, 'duplicate deletion does not recreate request');
+    await Promise.all([
+      call('/requests/vote', { id: 'starter-bounce' }, 'member'),
+      call('/requests/delete', { id: 'starter-bounce' }, 'owner')
+    ]);
+    expect(!(await call('/requests')).data.requests.some(r => r.id === 'starter-bounce'), 'vote-delete race does not resurrect request');
+    ownerUser = 'successor';
+    expect((await call('/requests/delete', { id: 'starter-glow' }, 'owner')).status === 403, 'previous owner revoked after transfer');
+    expect((await call('/requests/delete', { id: 'starter-glow' }, 'successor')).status === 200, 'new owner recognized automatically');
+    ownerUser = 'owner';
     console.log(JSON.stringify({ checks, concurrentVotes: 20, duplicateRace: '1 created / 7 rejected', webhooks: 'mocked only', runtime: 'SQLite Durable Object', result: 'passed' }));
   } finally { await mf.dispose(); }
-  const legacy = make(false);
+  const legacy = make(false, '');
   try {
     const kv = await legacy.getKVNamespace('KYRO_DATA');
     await kv.put('kyro.requests.v1', JSON.stringify([
@@ -118,6 +161,15 @@ async function main() {
     data = await res.json();
     assert.equal(res.status, 201);
     assert.equal(data.notification, 'not_configured');
+    res = await legacy.dispatchFetch('http://localhost/requests/status', {
+      method: 'POST', headers: { authorization: 'Bearer owner' }, body: JSON.stringify({ id: 'old-1', status: 'planned' })
+    });
+    assert.equal(res.status, 200);
+    res = await legacy.dispatchFetch('http://localhost/requests/delete', {
+      method: 'POST', headers: { authorization: 'Bearer owner' }, body: JSON.stringify({ id: 'old-1' })
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await kv.get('kyro.requests.v1', { type: 'json' })).length, 2);
     console.log(JSON.stringify({ legacyRequests: 2, votesPreserved: true, legacyKVUntouched: true, statusMigration: 'passed', missingWebhook: 'request still saved' }));
   } finally { await legacy.dispose(); }
 }

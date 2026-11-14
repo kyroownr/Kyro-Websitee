@@ -12,7 +12,8 @@
  *                                  you_voted for that member only.
  *   POST /requests   { token, title, category, os, ae_versions, reference, desc }
  *   POST /requests/vote   { token, id }   → toggle one vote, returns the board
- *   POST /requests/status { token, id, status } → members listed in KYRO_ADMIN_IDS only
+ *   POST /requests/status { token, id, status } → server owner or KYRO_ADMIN_IDS
+ *   POST /requests/delete { token, id } → Discord server owner only
  *   GET  /downloads  →  { counts } live download totals, one per asset id.
  *   POST /downloads  { token, id }  →  records one download for that member;
  *                                      repeat clicks by the same member are
@@ -67,6 +68,7 @@ export default {
       if (url.pathname === '/requests') return await handleRequests(request, url, env, cors);
       if (url.pathname === '/requests/vote') return await handleVote(request, env, cors);
       if (url.pathname === '/requests/status') return await handleStatus(request, env, cors);
+      if (url.pathname === '/requests/delete') return await handleDelete(request, env, cors);
       if (url.pathname === '/downloads') return await handleDownloads(request, url, env, cors);
       return json({ error: 'Unknown route. Use /callback, /verify, /requests or /downloads.' }, 404, cors);
     } catch (err) {
@@ -135,6 +137,7 @@ async function handleVerify(request, url, env, cors) {
   const session = await readSession(token, env);
   return json({
     in_server: session.inServer,
+    is_owner: session.isOwner,
     username: session.username,
     id: session.id,
     avatar: session.avatar,
@@ -239,6 +242,8 @@ export class KyroRequests {
             next = all.map(item => item.id === input.id ? { ...item, voters } : item);
           } else if (input.action === 'status') {
             next = all.map(item => item.id === input.id ? { ...item, status: input.status } : item);
+          } else if (input.action === 'delete') {
+            next = all.filter(item => item.id !== input.id);
           } else throw fail(400, 'bad_action', 'Unknown requests operation.');
         }
         await storage.put('board', next);
@@ -261,7 +266,7 @@ async function requestBoard(env, input) {
 }
 
 function isAdmin(session, env) {
-  return Boolean(session && session.inServer && String(env.KYRO_ADMIN_IDS || '').split(',').map(id => id.trim()).includes(session.id));
+  return Boolean(session && session.inServer && (session.isOwner || String(env.KYRO_ADMIN_IDS || '').split(',').map(id => id.trim()).includes(session.id)));
 }
 
 function requestReference(value) {
@@ -318,6 +323,8 @@ function project(rows, viewerId) {
       ae_versions: r.ae_versions,
       reference: r.reference,
       starter: Boolean(r.starter),
+      author_name: r.author_name || '',
+      author_role: r.author_role === 'owner' ? 'owner' : 'member',
       desc: r.desc,
       status: REQ_STATUSES.includes(r.status) ? r.status : 'open',
       created: r.created,
@@ -354,7 +361,7 @@ async function handleRequests(request, url, env, cors) {
       try { session = await readSession(token, env); } catch { session = null; }
     }
     const rows = await requestBoard(env, { action: 'read' });
-    return json({ requests: project(rows, session && session.inServer ? session.id : ''), is_admin: isAdmin(session, env) }, 200, cors);
+    return json({ requests: project(rows, session && session.inServer ? session.id : ''), is_admin: isAdmin(session, env), is_owner: Boolean(session && session.isOwner) }, 200, cors);
   }
   if (request.method !== 'POST') return json({ error: 'Use GET or POST.' }, 405, cors);
   const input = await jsonBody(request);
@@ -372,12 +379,13 @@ async function handleRequests(request, url, env, cors) {
   const row = {
     id: crypto.randomUUID(), title, category: input.category, os: input.os,
     ae_versions: versions, reference: requestReference(input.reference), desc: cleanText(input.desc, 280),
-    status: 'open', created: new Date().toISOString(), by: session.id, voters: [session.id]
+    status: 'open', created: new Date().toISOString(), by: session.id, voters: [session.id],
+    author_name: session.username, author_role: session.isOwner ? 'owner' : 'member'
   };
   await requestBoard(env, { action: 'create', row });
   const notification = await notifyRequest(row, session, env);
   const written = await requestBoard(env, { action: 'read' });
-  return json({ id: row.id, requests: project(written, session.id), is_admin: isAdmin(session, env), notification }, 201, cors);
+  return json({ id: row.id, requests: project(written, session.id), is_admin: isAdmin(session, env), is_owner: Boolean(session && session.isOwner), notification }, 201, cors);
 }
 
 async function handleVote(request, env, cors) {
@@ -388,7 +396,7 @@ async function handleVote(request, env, cors) {
   if (!id) throw fail(400, 'bad_id', 'Missing request id.');
 
   const written = await requestBoard(env, { action: 'vote', id, viewerId: session.id });
-  return json({ requests: project(written, session.id), is_admin: isAdmin(session, env) }, 200, cors);
+  return json({ requests: project(written, session.id), is_admin: isAdmin(session, env), is_owner: Boolean(session && session.isOwner) }, 200, cors);
 }
 
 async function handleStatus(request, env, cors) {
@@ -396,11 +404,7 @@ async function handleStatus(request, env, cors) {
   const input = await jsonBody(request);
   const session = await requireMember(bearerToken(request, new URL(request.url)) || input.token, env);
 
-  const admins = String(env.KYRO_ADMIN_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
-  if (!admins.length) {
-    throw fail(501, 'no_admins_set', 'Set KYRO_ADMIN_IDS on the worker before statuses can change.');
-  }
-  if (admins.indexOf(session.id) === -1) throw fail(403, 'not_an_admin', 'Only Kyro admins can change a request status.');
+  if (!isAdmin(session, env)) throw fail(403, 'not_an_admin', 'Only the Discord server owner or Kyro admins can change a request status.');
 
   const status = cleanText(input.status, 20);
   if (REQ_STATUSES.indexOf(status) === -1) {
@@ -410,7 +414,18 @@ async function handleStatus(request, env, cors) {
   const id = cleanText(input.id, 60);
   if (!id) throw fail(400, 'bad_id', 'Missing request id.');
   const written = await requestBoard(env, { action: 'status', id, status });
-  return json({ requests: project(written, session.id), is_admin: true }, 200, cors);
+  return json({ requests: project(written, session.id), is_admin: true, is_owner: session.isOwner }, 200, cors);
+}
+
+async function handleDelete(request, env, cors) {
+  if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
+  const input = await jsonBody(request);
+  const session = await requireMember(bearerToken(request, new URL(request.url)) || input.token, env);
+  if (!session.isOwner) throw fail(403, 'not_the_owner', 'Only the Discord server owner can delete a request.');
+  const id = cleanText(input.id, 60);
+  if (!id) throw fail(400, 'bad_id', 'Missing request id.');
+  const written = await requestBoard(env, { action: 'delete', id });
+  return json({ requests: project(written, session.id), is_admin: true, is_owner: true }, 200, cors);
 }
 
 /* ------------------------------ download counts -------------------------- */
@@ -500,11 +515,13 @@ async function readSession(accessToken, env) {
   const user = await discord('https://discord.com/api/users/@me', accessToken);
   const guilds = await discord('https://discord.com/api/users/@me/guilds', accessToken);
   const guildId = String(env.KYRO_GUILD_ID || '');
+  const guild = guildId ? guilds.find(g => String(g.id) === guildId) : undefined;
   return {
     username: user.username,
     id: String(user.id),
     avatar: user.avatar || '',
-    inServer: guildId !== '' && guilds.some(g => String(g.id) === guildId)
+    inServer: Boolean(guild),
+    isOwner: Boolean(guild && guild.owner === true)
   };
 }
 
