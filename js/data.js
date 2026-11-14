@@ -423,6 +423,13 @@ window.KYRO_SEED = [
         size: '',
         label: 'Direct mirror link for SaaSor Plus toolkit',
         url: 'https://filez.stream/w6wtU5qd47#d0xs_-wVX4uyQsxzHkRdQQWtemLVaYJXJ2OUPDR_lJo'
+      },
+      {
+        ext: 'form',
+        name: 'SaaSor Plus — alternate link (Google Form)',
+        size: '',
+        label: 'Access / Request mirror via Google Forms',
+        url: 'https://forms.gle/eaVG8ys3pDCmKxwg8'
       }
     ],
     features: [

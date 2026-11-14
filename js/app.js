@@ -1275,7 +1275,8 @@
       feedbackCompose.classList.toggle('is-open', feedbackComposeOpen);
     }
 
-    if (!member) {
+    const verified = auth.state === VERIFIED;
+    if (!verified) {
       feedbackGate.hidden = false;
       feedbackGate.innerHTML =
         '<div class="req-gate-card">' +
@@ -1335,7 +1336,7 @@
   }
 
   async function loadFeedback() {
-    if (!member) {
+    if (auth.state !== VERIFIED) {
       feedbackLoading = false;
       renderFeedback();
       return;
@@ -1343,7 +1344,9 @@
     feedbackLoading = true;
     renderFeedback();
     try {
-      const res = await apiRequest('/feedback');
+      const headers = { 'Accept': 'application/json' };
+      if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
+      const res = await fetch(AUTH_WORKER_URL + '/feedback', { headers, credentials: 'omit' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load feedback');
       feedbackItems = Array.isArray(data.feedback) ? data.feedback : [];
@@ -1358,7 +1361,7 @@
 
   async function submitFeedback(e) {
     e.preventDefault();
-    if (!member) {
+    if (auth.state !== VERIFIED) {
       toast({ title: 'Sign in required', sub: 'Log in with Discord first.', icon: ICON.lock });
       return;
     }
@@ -1373,9 +1376,12 @@
     if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Posting…'; }
 
     try {
-      const res = await apiRequest('/feedback', {
+      const headers = { 'Content-Type': 'application/json' };
+      if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
+      const res = await fetch(AUTH_WORKER_URL + '/feedback', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
+        credentials: 'omit',
         body: JSON.stringify({
           rating: feedbackRating,
           feedback: text,
@@ -1402,7 +1408,7 @@
     if (!feedbackDrawer) return;
     if (feedbackNewBtn) {
       feedbackNewBtn.addEventListener('click', () => {
-        if (!member) {
+        if (auth.state !== VERIFIED) {
           startLogin();
           return;
         }
