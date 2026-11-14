@@ -1858,7 +1858,145 @@
   function wireVaultUploadForm() {
     const form = $('#vaultUploadForm');
     const btn = $('#vUpSubmitBtn');
+    const dropzone = $('#vUpDropzone');
+    const fileInput = $('#vUpFileInput');
+    const imgPreview = $('#vUpImgPreview');
+    const previewWrap = $('#vUpPreviewWrap');
+    const removeImgBtn = $('#vUpRemoveImg');
+    const imageUrlInput = $('#vUpImageUrl');
+    const dropzoneText = $('#vUpDropzoneText');
     if (!form || !btn) return;
+
+    let stagedImageBase64 = null;
+
+    async function uploadImageFile(file) {
+      if (!file || !file.type.startsWith('image/')) {
+        toast({ title: 'Invalid file', sub: 'Please select an image file (PNG, JPG, WEBP).', icon: ICON.x });
+        return;
+      }
+      if (file.size > 8 * 1024 * 1024) {
+        toast({ title: 'Image too large', sub: 'Image must be under 8MB.', icon: ICON.x });
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        stagedImageBase64 = e.target.result;
+        if (imgPreview && previewWrap && dropzoneText) {
+          imgPreview.src = stagedImageBase64;
+          previewWrap.style.display = 'flex';
+          dropzoneText.style.display = 'none';
+        }
+
+        // Upload to server to get permanent Discord CDN URL
+        toast({ title: 'Uploading image…', sub: 'Storing screenshot to CDN.', icon: ICON.shield });
+        try {
+          const upRes = await fetch(AUTH_WORKER_URL + '/vault/upload-image', {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              authorization: 'Bearer ' + auth.token
+            },
+            body: JSON.stringify({
+              image: stagedImageBase64,
+              filename: file.name || 'screenshot.png'
+            }),
+            credentials: 'omit'
+          });
+          const upData = await upRes.json();
+          if (upRes.ok && upData.url) {
+            if (imageUrlInput) imageUrlInput.value = upData.url;
+            toast({ title: 'Image uploaded!', sub: 'Saved to Kyro media network.', icon: ICON.check });
+          } else {
+            console.warn('CDN upload response:', upData);
+          }
+        } catch (err) {
+          console.warn('Image upload failed, fallback to direct data:', err);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+
+    if (dropzone && fileInput) {
+      dropzone.addEventListener('click', (e) => {
+        if (e.target === removeImgBtn) return;
+        fileInput.click();
+      });
+
+      fileInput.addEventListener('change', () => {
+        if (fileInput.files && fileInput.files[0]) {
+          uploadImageFile(fileInput.files[0]);
+        }
+      });
+
+      // Drag and drop handlers
+      ['dragenter', 'dragover'].forEach(name => {
+        dropzone.addEventListener(name, (e) => {
+          e.preventDefault();
+          dropzone.style.borderColor = '#38bdf8';
+          dropzone.style.background = 'rgba(56,189,248,0.06)';
+        });
+      });
+
+      ['dragleave', 'drop'].forEach(name => {
+        dropzone.addEventListener(name, (e) => {
+          e.preventDefault();
+          dropzone.style.borderColor = 'rgba(255,255,255,0.15)';
+          dropzone.style.background = 'rgba(255,255,255,0.02)';
+        });
+      });
+
+      dropzone.addEventListener('drop', (e) => {
+        const files = e.dataTransfer?.files;
+        if (files && files[0]) {
+          uploadImageFile(files[0]);
+        }
+      });
+    }
+
+    // Paste handler across modal / form
+    form.addEventListener('paste', (e) => {
+      const items = (e.clipboardData || e.originalEvent?.clipboardData)?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.kind === 'file' && item.type.startsWith('image/')) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          uploadImageFile(file);
+          toast({ title: 'Screenshot pasted!', sub: 'Image added from clipboard.', icon: ICON.check });
+          break;
+        }
+      }
+    });
+
+    if (removeImgBtn) {
+      removeImgBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        stagedImageBase64 = null;
+        if (fileInput) fileInput.value = '';
+        if (imageUrlInput) imageUrlInput.value = '';
+        if (previewWrap) previewWrap.style.display = 'none';
+        if (dropzoneText) dropzoneText.style.display = 'flex';
+        toast({ title: 'Image removed', sub: 'Upload reset.', icon: ICON.x });
+      });
+    }
+
+    // Auto-clean slug if user pasted a full URL
+    const slugInput = $('#vUpSlug');
+    if (slugInput) {
+      slugInput.addEventListener('blur', () => {
+        let val = slugInput.value.trim();
+        if (/^https?:\/\//i.test(val)) {
+          try {
+            const u = new URL(val);
+            const pathParts = u.pathname.split('/').filter(Boolean);
+            val = pathParts[pathParts.length - 1] || u.hostname.replace(/\./g, '-');
+          } catch {}
+        }
+        val = val.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        slugInput.value = val;
+      });
+    }
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -1869,9 +2007,19 @@
       btn.disabled = true;
       btn.textContent = 'Submitting…';
 
+      let cleanSlug = $('#vUpSlug')?.value.trim() || '';
+      if (/^https?:\/\//i.test(cleanSlug)) {
+        try {
+          const u = new URL(cleanSlug);
+          const parts = u.pathname.split('/').filter(Boolean);
+          cleanSlug = parts[parts.length - 1] || u.hostname.replace(/\./g, '-');
+        } catch {}
+      }
+      cleanSlug = cleanSlug.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
       const payload = {
         title: $('#vUpTitle')?.value.trim(),
-        slug: $('#vUpSlug')?.value.trim(),
+        slug: cleanSlug,
         os: $('#vUpOs')?.value || 'windows',
         category: $('#vUpCategory')?.value.trim() || 'Adobe After Effects',
         size: $('#vUpSize')?.value.trim() || 'Vault Build',
@@ -1896,6 +2044,7 @@
             icon: ICON.check
           });
           form.reset();
+          if (removeImgBtn) removeImgBtn.click();
           renderAccountUploads();
         } else {
           toast({ title: 'Submission failed', sub: data.error || 'Check fields and try again', icon: ICON.x });

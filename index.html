@@ -544,8 +544,25 @@
                   <input type="url" id="vUpDownloadUrl" placeholder="https://..." required style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
                 </div>
                 <div>
-                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Banner / Screenshot Image URL</label>
-                  <input type="url" id="vUpImageUrl" placeholder="https://..." style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Banner / Screenshot Image URL (or upload below)</label>
+                  <input type="url" id="vUpImageUrl" placeholder="https://... (or drop image below)" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                </div>
+              </div>
+
+              <!-- Drag, Drop, Paste or Select Picture Box -->
+              <div>
+                <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Upload Picture (Drag &amp; Drop, Select from PC, or Paste)</label>
+                <div id="vUpDropzone" style="border:2px dashed rgba(255,255,255,0.15);border-radius:10px;padding:20px;text-align:center;background:rgba(255,255,255,0.02);cursor:pointer;transition:border-color 0.2s, background 0.2s;">
+                  <input type="file" id="vUpFileInput" accept="image/*" style="display:none;">
+                  <div id="vUpDropzoneText" style="display:flex;flex-direction:column;align-items:center;gap:6px;color:#cbd5e1;font-size:0.88rem;">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="opacity:0.7;"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                    <span><strong>Click to choose picture from PC</strong>, or drag &amp; drop here</span>
+                    <span style="font-size:0.78rem;color:var(--dim);">You can also press <kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:4px;font-family:inherit;">Ctrl+V</kbd> anywhere on this form to paste a screenshot</span>
+                  </div>
+                  <div id="vUpPreviewWrap" style="display:none;margin-top:10px;position:relative;display:none;justify-content:center;">
+                    <img id="vUpImgPreview" src="" alt="Preview" style="max-height:160px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);box-shadow:0 4px 12px rgba(0,0,0,0.5);">
+                    <button type="button" id="vUpRemoveImg" style="position:absolute;top:-8px;right:-8px;background:#ef4444;color:#fff;border:none;border-radius:50%;width:22px;height:22px;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>
+                  </div>
                 </div>
               </div>
 

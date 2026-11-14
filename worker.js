@@ -82,6 +82,7 @@ export default {
       if (url.pathname === '/downloads') return await handleDownloads(request, url, env, cors);
       if (url.pathname === '/feedback') return await handleFeedback(request, url, env, cors);
       if (url.pathname === '/invite') return await handleInvite(request, url, env, cors);
+      if (url.pathname === '/vault/upload-image') return await handleVaultImageUpload(request, url, env, cors);
       if (url.pathname === '/vault/submissions') return await handleVaultSubmissions(request, url, env, cors);
       if (url.pathname === '/vault/submissions/review') return await handleVaultSubmissionReview(request, url, env, cors);
       if (url.pathname === '/vault/public') return await handleVaultPublic(request, url, env, cors);
@@ -871,6 +872,66 @@ async function discord(href, accessToken) {
 /* ----------------------- Vault Submissions (Contributor & Owner) ------------------------ */
 const VAULT_SUBMISSIONS_KEY = 'kyro.vault_submissions.v1';
 const VAULT_PUBLIC_ITEMS_KEY = 'kyro.vault_approved_items.v1';
+
+async function handleVaultImageUpload(request, url, env, cors) {
+  if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
+  const token = bearerToken(request, url);
+  const session = await requireMember(token, env);
+  const role = (session.role || '').toLowerCase();
+  const isContributor = session.isOwner || session.id === '1052909930073567232' || role === 'owner' || role === 'contributor' || role === 'mod+';
+  if (!isContributor) throw fail(403, 'forbidden', 'Only Contributors or the Server Owner can upload images.');
+
+  if (!env.DISCORD_BOT_TOKEN) throw fail(500, 'no_bot_token', 'Discord bot token is not configured.');
+
+  const contentType = request.headers.get('content-type') || '';
+  let imageBlob = null;
+  let filename = 'resource_image.png';
+
+  if (contentType.includes('application/json')) {
+    const body = await jsonBody(request);
+    if (!body.image) throw fail(400, 'no_image', 'No base64 image data provided.');
+    const match = body.image.match(/^data:(image\/[a-zA-Z+]+);base64,(.+)$/);
+    if (!match) throw fail(400, 'bad_base64', 'Invalid image data URI.');
+    const mime = match[1];
+    const b64 = match[2];
+    const binary = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    imageBlob = new Blob([binary], { type: mime });
+    filename = body.filename || `image_${Date.now()}.${mime.split('/')[1] || 'png'}`;
+  } else if (contentType.includes('multipart/form-data')) {
+    const formData = await request.formData();
+    const file = formData.get('file') || formData.get('image');
+    if (!file) throw fail(400, 'no_file', 'No file found in form data.');
+    imageBlob = file;
+    filename = file.name || 'uploaded_image.png';
+  } else {
+    throw fail(400, 'bad_content_type', 'Send JSON base64 or multipart form data.');
+  }
+
+  // Upload to transcript / audit log channel to generate permanent Discord CDN attachment URL
+  const channelId = env.DISCORD_PUBLIC_APPS_CHANNEL_ID || '1542135796369457182';
+  const discordForm = new FormData();
+  discordForm.append('payload_json', JSON.stringify({
+    content: `🖼️ **Vault Asset Media Stored** for ${session.username} (<@${session.id}>)`
+  }));
+  discordForm.append('files[0]', imageBlob, filename);
+
+  const uploadRes = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+    method: 'POST',
+    headers: { Authorization: 'Bot ' + env.DISCORD_BOT_TOKEN },
+    body: discordForm
+  });
+
+  if (!uploadRes.ok) {
+    const errText = await uploadRes.text();
+    throw fail(uploadRes.status, 'discord_upload_failed', `Discord upload rejected: ${errText}`);
+  }
+
+  const msgData = await uploadRes.json();
+  const attachmentUrl = msgData.attachments?.[0]?.url;
+  if (!attachmentUrl) throw fail(500, 'no_attachment_returned', 'Discord did not return attachment URL.');
+
+  return json({ ok: true, url: attachmentUrl }, 200, cors);
+}
 
 async function handleVaultPublic(request, url, env, cors) {
   if (request.method !== 'GET') return json({ error: 'Use GET.' }, 405, cors);
