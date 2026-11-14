@@ -343,6 +343,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             Settings
           </button>
+          <button type="button" class="acc-tab" data-acc-tab="uploads" id="accUploadsTab" style="display:none;color:#38bdf8;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Vault Uploads
+          </button>
         </nav>
       </aside>
 
@@ -493,6 +497,75 @@
             <p class="acc-group-desc">Request a copy of your data (GDPR data portability). Our team will process your request and notify you when your export is ready.</p>
             <button type="button" class="btn btn-ghost btn-sm" id="accExportData">Request Export Data</button>
           </div>
+        </div>
+
+        <!-- Tab 6: Contributor & Owner Uploads -->
+        <div class="acc-panel" id="accPanelUploads">
+          <h3 class="acc-heading">Vault Uploads &amp; Contributions</h3>
+          <p class="acc-subheading">Contributors and Server Owners can submit new tools, plugins, presets, and packs. Contributor uploads are reviewed and approved by the Owner before publishing to Discord and the Vault.</p>
+
+          <!-- Upload Form -->
+          <div class="acc-settings-group" style="margin-top:14px;">
+            <div class="acc-group-title"><span>Submit New Resource</span></div>
+            <form id="vaultUploadForm" style="display:flex;flex-direction:column;gap:12px;margin-top:10px;">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Resource Title *</label>
+                  <input type="text" id="vUpTitle" placeholder="e.g. Qwix Plugin or Edit Pack" required style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                </div>
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Website Slug *</label>
+                  <input type="text" id="vUpSlug" placeholder="e.g. qwix-plugin" required style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                </div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Platform</label>
+                  <select id="vUpOs" class="acc-select" style="width:100%;">
+                    <option value="windows">Windows</option>
+                    <option value="macos">macOS</option>
+                    <option value="both">Windows &amp; macOS</option>
+                  </select>
+                </div>
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Category</label>
+                  <input type="text" id="vUpCategory" placeholder="e.g. Adobe After Effects" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                </div>
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Approx Size</label>
+                  <input type="text" id="vUpSize" placeholder="e.g. 1.49 MB" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                </div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Download URL *</label>
+                  <input type="url" id="vUpDownloadUrl" placeholder="https://..." required style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                </div>
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Banner / Screenshot Image URL</label>
+                  <input type="url" id="vUpImageUrl" placeholder="https://..." style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                </div>
+              </div>
+
+              <div>
+                <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Description / Effects / Notes</label>
+                <textarea id="vUpDetails" rows="3" placeholder="Describe the resource features, installation, or what effects are included..." style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;resize:vertical;"></textarea>
+              </div>
+
+              <button type="submit" class="btn btn-primary" id="vUpSubmitBtn" style="align-self:flex-start;">Submit Upload to Vault</button>
+            </form>
+          </div>
+
+          <!-- Pending & Approved Submissions List -->
+          <div class="acc-settings-group" style="margin-top:14px;">
+            <div class="acc-group-title"><span id="vUpListTitle">Submissions &amp; Approvals</span></div>
+            <div id="vUpListContent" style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">
+              <div class="acc-row-sub">Loading submissions…</div>
+            </div>
+          </div>
+        </div>
         </div>
       </main>
     </div>

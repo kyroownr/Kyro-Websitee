@@ -81,6 +81,48 @@
   try { localStorage.removeItem(K_RES); } catch (err) { /* private mode */ }
   const saved = new Set(read(K_SAVED, []));
 
+  // Merge approved contributor/owner items from cloud
+  async function loadPublicVaultItems() {
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/vault/public');
+      if (res.ok) {
+        const data = await res.json();
+        const cloudItems = (data.items || []).map(item => ({
+          id: item.slug,
+          title: item.title,
+          desc: item.details || `${item.title} — verified resource on Kyro.`,
+          category: item.category || 'tool',
+          kind: 'tool',
+          os: item.os === 'both' ? ['windows', 'macos'] : [item.os],
+          version: item.version || '1.0',
+          creator: item.creator || item.by_username || 'Contributor',
+          downloads: 0,
+          added: item.created ? item.created.slice(0, 10) : '2026-11-14',
+          tags: [item.category || 'plugin', item.os],
+          gallery: item.image_url ? [item.image_url] : [],
+          files: item.download_url ? [{
+            ext: 'link',
+            name: item.title,
+            size: item.size || 'Vault Build',
+            label: item.title,
+            url: item.download_url
+          }] : []
+        }));
+
+        if (cloudItems.length) {
+          const existingIds = new Set(resources.map(r => r.id));
+          cloudItems.forEach(ci => {
+            if (!existingIds.has(ci.id)) resources.push(ci);
+          });
+          renderGrid();
+        }
+      }
+    } catch (e) {
+      // Offline fallback
+    }
+  }
+  loadPublicVaultItems();
+
   /* --------------------------- auth state model ------------------------
      out      → not signed in
      logged   → signed in with Discord, not a server member
@@ -1523,6 +1565,7 @@
     const avatarEl = $('#accUserAvatar');
     const nameEl = $('#accUserName');
     const metaEl = $('#accUserMeta');
+    const uploadsTab = $('#accUploadsTab');
     if (!avatarEl || !nameEl || !metaEl) return;
 
     if (auth.state !== OUT && auth.user) {
@@ -1531,10 +1574,14 @@
       nameEl.textContent = auth.user.username;
       const roleBadge = auth.user.role || (discordRole ? discordRole.toUpperCase() : (auth.state === VERIFIED ? 'Member' : 'Guest'));
       metaEl.textContent = '@' + auth.user.username + ' · ' + roleBadge + (auth.state === VERIFIED ? ' · Verified' : '');
+
+      const isContributorOrOwner = roleBadge.toLowerCase() === 'owner' || roleBadge.toLowerCase() === 'contributor' || roleBadge.toLowerCase() === 'mod+' || auth.user.id === '1052909930073567232';
+      if (uploadsTab) uploadsTab.style.display = isContributorOrOwner ? 'flex' : 'none';
     } else {
       avatarEl.innerHTML = 'K';
       nameEl.textContent = 'Guest';
       metaEl.textContent = '@guest · Not signed in with Discord';
+      if (uploadsTab) uploadsTab.style.display = 'none';
     }
   }
 
@@ -1547,7 +1594,8 @@
       requests: $('#accPanelRequests'),
       vault: $('#accPanelVault'),
       downloads: $('#accPanelDownloads'),
-      settings: $('#accPanelSettings')
+      settings: $('#accPanelSettings'),
+      uploads: $('#accPanelUploads')
     };
 
     Object.entries(panels).forEach(([k, el]) => {
@@ -1559,6 +1607,7 @@
     else if (tabKey === 'requests') renderAccountRequests();
     else if (tabKey === 'vault') renderAccountVault();
     else if (tabKey === 'downloads') renderAccountDownloads();
+    else if (tabKey === 'uploads') renderAccountUploads();
   }
 
   async function renderAccountApplications() {
@@ -1699,6 +1748,167 @@
     }));
   }
 
+  async function renderAccountUploads() {
+    const list = $('#vUpListContent');
+    const title = $('#vUpListTitle');
+    if (!list) return;
+    if (auth.state === OUT || !auth.token) {
+      list.innerHTML = '<div class="acc-row-sub">Please sign in with Discord.</div>';
+      return;
+    }
+
+    list.innerHTML = '<div class="acc-row-sub">Loading submissions…</div>';
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/vault/submissions', {
+        headers: { authorization: 'Bearer ' + auth.token },
+        credentials: 'omit'
+      });
+      const data = await res.json();
+      const subs = data.submissions || [];
+      const isOwner = Boolean(data.is_owner);
+
+      if (title) title.textContent = isOwner ? 'All Submissions (Owner Review Queue)' : 'Your Vault Contributions';
+
+      if (!subs.length) {
+        list.innerHTML = '<div class="acc-row-sub">No submissions found. Submit your first resource above!</div>';
+        return;
+      }
+
+      list.innerHTML = subs.map(s => {
+        const isPending = s.status === 'pending';
+        const isApproved = s.status === 'approved';
+        const statusColor = isApproved ? '#10b981' : isPending ? '#f59e0b' : '#ef4444';
+        const statusBadge = `<span style="background:rgba(255,255,255,0.08);color:${statusColor};padding:2px 8px;border-radius:6px;font-size:0.75rem;font-weight:600;text-transform:uppercase;">${esc(s.status)}</span>`;
+
+        return `
+          <div class="acc-row-item" style="flex-direction:column;align-items:stretch;gap:10px;padding:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <strong style="color:#fff;font-size:0.95rem;">${esc(s.title)}</strong>
+                <div style="color:var(--dim);font-size:0.8rem;margin-top:2px;">
+                  By <strong>${esc(s.by_username || 'Contributor')}</strong> · Platform: <code>${esc(s.os)}</code> · Slug: <code>${esc(s.slug)}</code> · ${s.created ? s.created.slice(0, 10) : ''}
+                </div>
+              </div>
+              <div>${statusBadge}</div>
+            </div>
+            ${s.details ? `<div style="font-size:0.82rem;color:#cbd5e1;background:rgba(0,0,0,0.25);padding:8px 10px;border-radius:6px;">${esc(s.details)}</div>` : ''}
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
+              <span style="font-size:0.8rem;color:var(--dim);">Download: <a href="${esc(s.download_url)}" target="_blank" rel="noopener noreferrer" style="color:#60a5fa;">${esc(s.download_url)}</a></span>
+              ${isOwner && isPending ? `
+                <div style="display:flex;gap:8px;">
+                  <button type="button" class="btn btn-primary btn-sm" data-sub-approve="${esc(s.id)}">✓ Approve &amp; Publish</button>
+                  <button type="button" class="btn btn-danger btn-sm" data-sub-reject="${esc(s.id)}">✕ Reject</button>
+                </div>
+              ` : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // Wire owner approval buttons
+      if (isOwner) {
+        list.querySelectorAll('[data-sub-approve]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            btn.textContent = 'Publishing…';
+            try {
+              const appRes = await fetch(AUTH_WORKER_URL + '/vault/submissions/review', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+                body: JSON.stringify({ id: btn.dataset.subApprove, decision: 'approve' }),
+                credentials: 'omit'
+              });
+              if (appRes.ok) {
+                toast({ title: 'Resource Approved!', sub: 'Published to Vault & Discord channels.', icon: ICON.check });
+                renderAccountUploads();
+              } else {
+                toast({ title: 'Approval failed', sub: 'Server error', icon: ICON.x });
+              }
+            } catch (err) {
+              toast({ title: 'Error', sub: err.message, icon: ICON.x });
+            }
+          });
+        });
+
+        list.querySelectorAll('[data-sub-reject]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            try {
+              const rejRes = await fetch(AUTH_WORKER_URL + '/vault/submissions/review', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+                body: JSON.stringify({ id: btn.dataset.subReject, decision: 'reject' }),
+                credentials: 'omit'
+              });
+              if (rejRes.ok) {
+                toast({ title: 'Resource Rejected', sub: 'Status updated.', icon: ICON.check });
+                renderAccountUploads();
+              }
+            } catch (err) {
+              toast({ title: 'Error', sub: err.message, icon: ICON.x });
+            }
+          });
+        });
+      }
+    } catch (e) {
+      list.innerHTML = '<div class="acc-row-sub">Failed to load submissions.</div>';
+    }
+  }
+
+  function wireVaultUploadForm() {
+    const form = $('#vaultUploadForm');
+    const btn = $('#vUpSubmitBtn');
+    if (!form || !btn) return;
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!auth.token) {
+        toast({ title: 'Not signed in', sub: 'Sign in with Discord first.', icon: ICON.lock });
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = 'Submitting…';
+
+      const payload = {
+        title: $('#vUpTitle')?.value.trim(),
+        slug: $('#vUpSlug')?.value.trim(),
+        os: $('#vUpOs')?.value || 'windows',
+        category: $('#vUpCategory')?.value.trim() || 'Adobe After Effects',
+        size: $('#vUpSize')?.value.trim() || 'Vault Build',
+        download_url: $('#vUpDownloadUrl')?.value.trim(),
+        image_url: $('#vUpImageUrl')?.value.trim(),
+        details: $('#vUpDetails')?.value.trim()
+      };
+
+      try {
+        const res = await fetch(AUTH_WORKER_URL + '/vault/submissions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+          body: JSON.stringify(payload),
+          credentials: 'omit'
+        });
+        const data = await res.json();
+        if (res.ok) {
+          const isApproved = data.submission?.status === 'approved';
+          toast({
+            title: isApproved ? 'Resource Published!' : 'Submitted for Approval!',
+            sub: isApproved ? 'Live on Vault and posted to Discord!' : 'Owner will review your submission before public release.',
+            icon: ICON.check
+          });
+          form.reset();
+          renderAccountUploads();
+        } else {
+          toast({ title: 'Submission failed', sub: data.error || 'Check fields and try again', icon: ICON.x });
+        }
+      } catch (err) {
+        toast({ title: 'Network error', sub: err.message, icon: ICON.x });
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Submit Upload to Vault';
+      }
+    });
+  }
+
   function wireAccountModal() {
     if (!accountModalOverlay) return;
     accountModalClose?.addEventListener('click', closeAccountModal);
@@ -1729,6 +1939,8 @@
     $('#accExportData')?.addEventListener('click', () => {
       toast({ title: 'Export request submitted', sub: 'Your data package request has been queued.', icon: ICON.check });
     });
+
+    wireVaultUploadForm();
   }
 
   /* ------------------------------ detail modal -------------------------- */
