@@ -971,6 +971,7 @@ async function handleVaultSubmissions(request, url, env, cors) {
     const creator = cleanText(input.creator || session.username, 60);
     const details = cleanText(input.details || input.desc, 2000);
     const version = cleanText(input.version || '1.0', 40);
+    const password = cleanText(input.password || input.pass, 60);
 
     const submission = {
       id: crypto.randomUUID(),
@@ -984,6 +985,7 @@ async function handleVaultSubmissions(request, url, env, cors) {
       creator,
       details,
       version,
+      pass: password || undefined,
       by: session.id,
       by_username: session.username,
       created: new Date().toISOString(),
@@ -1015,7 +1017,7 @@ async function handleVaultSubmissions(request, url, env, cors) {
               content: `📥 **New Contributor Resource Pending Review** — <@1052909930073567232>`,
               embeds: [{
                 title: `Pending Approval: ${submission.title}`,
-                description: `Submitted by <@${session.id}> (${session.username})\n\n**Category:** ${category}\n**Platform:** ${os.toUpperCase()}\n**Download URL:** ${downloadUrl || 'Provided in details'}\n\n${details}`,
+                description: `Submitted by <@${session.id}> (${session.username})\n\n**Category:** ${category}\n**Platform:** ${os.toUpperCase()}\n**Download URL:** ${downloadUrl || 'Provided in details'}\n${password ? `**Password:** \`${password}\`\n` : ''}\n${details}`,
                 color: 0xf59e0b,
                 footer: { text: `Submission ID: ${submission.id} · Log into dashboard to approve.` },
                 timestamp: submission.created
@@ -1097,6 +1099,7 @@ async function dispatchKyroDiscordPublish(item, env) {
   const vaultDoc = (await readDoc(env, VAULT_ITEMS_KEY, { items: {} })).value;
   const existing = vaultDoc.items && vaultDoc.items[slug];
   const isUpdate = Boolean(existing);
+  const password = item.pass || item.password;
 
   const creator = item.creator || 'Kyro Vault';
   const size = item.size || 'Vault Build';
@@ -1108,7 +1111,9 @@ async function dispatchKyroDiscordPublish(item, env) {
     author: { name: 'Kyro Vault', icon_url: KYRO_ICON },
     title: (isUpdate ? '🔄 UPDATE: ' : '') + item.title.toUpperCase(),
     url: pageUrl,
-    description: (item.details || `${item.title} is now live in the Kyro Vault.`) + `\n\n**Website Link:** ${pageUrl}`,
+    description: (item.details || `${item.title} is now live in the Kyro Vault.`) +
+      (password ? `\n\n🔑 **Archive Password:** \`${password}\`` : '') +
+      `\n\n**Website Link:** ${pageUrl}`,
     color: 0x1f232b,
     fields: [
       {

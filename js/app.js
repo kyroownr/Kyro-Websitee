@@ -105,7 +105,8 @@
             name: item.title,
             size: item.size || 'Vault Build',
             label: item.title,
-            url: item.download_url
+            url: item.download_url,
+            pass: item.pass || item.password || undefined
           }] : []
         }));
 
@@ -1787,6 +1788,7 @@
                 <strong style="color:#fff;font-size:0.95rem;">${esc(s.title)}</strong>
                 <div style="color:var(--dim);font-size:0.8rem;margin-top:2px;">
                   By <strong>${esc(s.by_username || 'Contributor')}</strong> · Platform: <code>${esc(s.os)}</code> · Slug: <code>${esc(s.slug)}</code> · ${s.created ? s.created.slice(0, 10) : ''}
+                  ${s.pass ? ` · Password: <code style="color:#38bdf8;">${esc(s.pass)}</code>` : ''}
                 </div>
               </div>
               <div>${statusBadge}</div>
@@ -2024,6 +2026,7 @@
         category: $('#vUpCategory')?.value.trim() || 'Adobe After Effects',
         size: $('#vUpSize')?.value.trim() || 'Vault Build',
         download_url: $('#vUpDownloadUrl')?.value.trim(),
+        password: $('#vUpPassword')?.value.trim() || '',
         image_url: $('#vUpImageUrl')?.value.trim(),
         details: $('#vUpDetails')?.value.trim()
       };
