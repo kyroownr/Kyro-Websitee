@@ -85,6 +85,8 @@ export default {
       if (url.pathname === '/vault/upload-image') return await handleVaultImageUpload(request, url, env, cors);
       if (url.pathname === '/vault/submissions') return await handleVaultSubmissions(request, url, env, cors);
       if (url.pathname === '/vault/submissions/review') return await handleVaultSubmissionReview(request, url, env, cors);
+      if (url.pathname === '/vault/submissions/manage') return await handleVaultSubmissionManage(request, url, env, cors);
+      if (url.pathname === '/vault/notifications') return await handleVaultNotifications(request, url, env, cors);
       if (url.pathname === '/vault/public') return await handleVaultPublic(request, url, env, cors);
       if (url.pathname === '/api/vault/publish') return await handleVaultPublish(request, url, env, cors);
       if (url.pathname === '/dashboard/settings') return await handleDashboardSettings(request, url, env, cors);
@@ -907,12 +909,9 @@ async function handleVaultImageUpload(request, url, env, cors) {
     throw fail(400, 'bad_content_type', 'Send JSON base64 or multipart form data.');
   }
 
-  // Upload to transcript / audit log channel to generate permanent Discord CDN attachment URL
-  const channelId = env.DISCORD_PUBLIC_APPS_CHANNEL_ID || '1542135796369457182';
+  // Upload silently to hidden backend storage channel (1571185513401159720) to generate permanent Discord CDN attachment URL
+  const channelId = env.DISCORD_MEDIA_CHANNEL_ID || '1571185513401159720';
   const discordForm = new FormData();
-  discordForm.append('payload_json', JSON.stringify({
-    content: `🖼️ **Vault Asset Media Stored** for ${session.username} (<@${session.id}>)`
-  }));
   discordForm.append('files[0]', imageBlob, filename);
 
   const uploadRes = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
@@ -1015,27 +1014,43 @@ async function handleVaultSubmissions(request, url, env, cors) {
       });
       // Post to Discord
       await dispatchKyroDiscordPublish(submission, env);
+      await createNotification(env, session.id, 'Resource Published Directly', `Your resource "${submission.title}" is live on the Vault and posted to Discord!`, 'approved');
     } else {
-      // Notify Owner in Discord private/staff channel about pending submission
+      // User notification: Upload submitted waiting for confirmation
+      await createNotification(env, session.id, 'Upload Submitted', `Your resource "${submission.title}" has been submitted and is waiting for owner approval.`, 'pending');
+
+      // Owner notification: New request accept or deny
+      const ownerId = '1052909930073567232';
+      await createNotification(env, ownerId, 'New Resource Request', `New submission: "${submission.title}" by ${session.username}. Review it in Vault Uploads.`, 'request');
+
+      // Notify Owner in Discord via Direct Message or staff channel
       if (env.DISCORD_BOT_TOKEN) {
         try {
-          const channelId = env.DISCORD_PUBLIC_APPS_CHANNEL_ID || '1542135796369457182';
-          await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+          // Send DM to Owner
+          const dmRes = await fetch('https://discord.com/api/v10/users/@me/channels', {
             method: 'POST',
             headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
-            body: JSON.stringify({
-              content: `📥 **New Contributor Resource Pending Review** — <@1052909930073567232>`,
-              embeds: [{
-                title: `Pending Approval: ${submission.title}`,
-                description: `Submitted by <@${session.id}> (${session.username})\n\n**Category:** ${category}\n**Platform:** ${os.toUpperCase()}\n**Download URL:** ${downloadUrl || 'Provided in details'}\n${password ? `**Password:** \`${password}\`\n` : ''}\n${details}`,
-                color: 0xf59e0b,
-                footer: { text: `Submission ID: ${submission.id} · Log into dashboard to approve.` },
-                timestamp: submission.created
-              }]
-            })
+            body: JSON.stringify({ recipient_id: ownerId })
           });
+          if (dmRes.ok) {
+            const dmChannel = await dmRes.json();
+            await fetch(`https://discord.com/api/v10/channels/${dmChannel.id}/messages`, {
+              method: 'POST',
+              headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
+              body: JSON.stringify({
+                content: `📥 **New Contributor Resource Pending Review!**`,
+                embeds: [{
+                  title: `Review Required: ${submission.title}`,
+                  description: `**Uploader:** <@${session.id}> (${session.username})\n**Category:** ${category}\n**Platform:** ${os.toUpperCase()}\n**Download URL:** ${downloadUrl || 'In details'}\n${password ? `**Password:** \`${password}\`\n` : ''}\n${details}`,
+                  color: 0xf59e0b,
+                  footer: { text: `Submission ID: ${submission.id} · Log into website or dashboard to Accept/Deny.` },
+                  timestamp: submission.created
+                }]
+              })
+            });
+          }
         } catch (e) {
-          console.warn('[submissions] Discord alert failed:', e);
+          console.warn('[submissions] Discord owner alert failed:', e);
         }
       }
     }
@@ -1088,6 +1103,28 @@ async function handleVaultSubmissionReview(request, url, env, cors) {
     });
     // Publish automatically to Discord channels
     await dispatchKyroDiscordPublish(reviewedSub, env);
+
+    // Notify uploader: approval accepted thanks for sharing
+    if (reviewedSub.by) {
+      await createNotification(
+        env,
+        reviewedSub.by,
+        'Resource Approved! 🎉',
+        `Approval accepted! Your resource "${reviewedSub.title}" is now published on the Vault and Discord. Thanks for sharing!`,
+        'approved'
+      );
+    }
+  } else {
+    // Notify uploader: rejected
+    if (reviewedSub.by) {
+      await createNotification(
+        env,
+        reviewedSub.by,
+        'Submission Update',
+        `Your submission "${reviewedSub.title}" was not approved by the owner at this time.`,
+        'rejected'
+      );
+    }
   }
 
   await logBotAudit(
@@ -1098,6 +1135,245 @@ async function handleVaultSubmissionReview(request, url, env, cors) {
   );
 
   return json({ ok: true, submission: reviewedSub }, 200, cors);
+}
+
+async function createNotification(env, userId, title, message, type = 'info') {
+  if (!userId) return;
+  const notif = {
+    id: crypto.randomUUID(),
+    user_id: String(userId),
+    title: String(title),
+    message: String(message),
+    type: String(type),
+    read: false,
+    created: new Date().toISOString()
+  };
+  try {
+    await mutateDoc(env, NOTIFICATIONS_KEY, { notifications: [] }, curr => {
+      const list = Array.isArray(curr?.notifications) ? curr.notifications : [];
+      return { notifications: [notif, ...list].slice(0, 300) };
+    });
+  } catch (err) {
+    console.warn('[notifications] Failed to persist notification:', err);
+  }
+}
+
+async function handleVaultNotifications(request, url, env, cors) {
+  const token = bearerToken(request, url);
+  const session = await requireMember(token, env);
+
+  if (request.method === 'GET') {
+    const doc = (await readDoc(env, NOTIFICATIONS_KEY, { notifications: [] })).value;
+    const all = Array.isArray(doc.notifications) ? doc.notifications : [];
+    const userNotifs = all.filter(n => String(n.user_id) === String(session.id));
+    return json({ notifications: userNotifs }, 200, cors);
+  }
+
+  if (request.method === 'POST') {
+    // Mark as read
+    const input = await jsonBody(request).catch(() => ({}));
+    const targetId = input.id;
+    await mutateDoc(env, NOTIFICATIONS_KEY, { notifications: [] }, curr => {
+      const list = Array.isArray(curr?.notifications) ? curr.notifications : [];
+      list.forEach(n => {
+        if (String(n.user_id) === String(session.id) && (!targetId || n.id === targetId)) {
+          n.read = true;
+        }
+      });
+      return { notifications: list };
+    });
+    return json({ ok: true }, 200, cors);
+  }
+
+  return json({ error: 'Use GET or POST.' }, 405, cors);
+}
+
+async function handleVaultSubmissionManage(request, url, env, cors) {
+  const token = bearerToken(request, url);
+  const session = await requireMember(token, env);
+  const isOwner = session.isOwner || session.id === '1052909930073567232' || (session.role || '').toLowerCase() === 'owner';
+  if (!isOwner) throw fail(403, 'forbidden', 'Only the Kyro Server Owner can edit or delete vault uploads.');
+
+  if (request.method === 'DELETE') {
+    const input = await jsonBody(request);
+    const subId = input.id;
+    if (!subId) throw fail(400, 'bad_input', 'Missing submission ID.');
+
+    let deletedSub = null;
+    await mutateDoc(env, VAULT_SUBMISSIONS_KEY, { submissions: [] }, curr => {
+      const list = Array.isArray(curr?.submissions) ? curr.submissions : [];
+      deletedSub = list.find(s => s.id === subId);
+      return { submissions: list.filter(s => s.id !== subId) };
+    });
+
+    if (deletedSub) {
+      // Also remove from public items
+      await mutateDoc(env, VAULT_PUBLIC_ITEMS_KEY, { items: [] }, curr => {
+        const items = Array.isArray(curr?.items) ? curr.items : [];
+        return { items: items.filter(i => i.id !== subId && i.slug !== deletedSub.slug) };
+      });
+
+      // If Discord messages were recorded, remove or edit them
+      const vaultItemsDoc = (await readDoc(env, VAULT_ITEMS_KEY, { items: {} })).value;
+      const meta = vaultItemsDoc.items && vaultItemsDoc.items[deletedSub.slug];
+      if (meta && env.DISCORD_BOT_TOKEN) {
+        if (meta.announcement_msg_id) {
+          fetch(`https://discord.com/api/v10/channels/1539961971422658571/messages/${meta.announcement_msg_id}`, {
+            method: 'DELETE',
+            headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
+          }).catch(() => {});
+        }
+        if (meta.downloads_msg_id) {
+          fetch(`https://discord.com/api/v10/channels/1539961998601756722/messages/${meta.downloads_msg_id}`, {
+            method: 'DELETE',
+            headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
+          }).catch(() => {});
+        }
+      }
+    }
+
+    await logBotAudit(env, 'Vault Resource Deleted', session, `Owner deleted submission "${deletedSub?.title || subId}".`);
+    return json({ ok: true, deleted: Boolean(deletedSub) }, 200, cors);
+  }
+
+  if (request.method === 'PUT' || request.method === 'PATCH') {
+    const input = await jsonBody(request);
+    const subId = input.id;
+    if (!subId) throw fail(400, 'bad_input', 'Missing submission ID.');
+
+    let updatedSub = null;
+    await mutateDoc(env, VAULT_SUBMISSIONS_KEY, { submissions: [] }, curr => {
+      const list = Array.isArray(curr?.submissions) ? curr.submissions : [];
+      const found = list.find(s => s.id === subId);
+      if (found) {
+        if (input.title) found.title = cleanText(input.title, 120);
+        if (input.details !== undefined) found.details = cleanText(input.details, 1500);
+        if (input.download_url) found.download_url = String(input.download_url).trim();
+        if (input.password !== undefined) found.pass = cleanText(input.password, 100);
+        if (input.size) found.size = cleanText(input.size, 30);
+        if (input.category) found.category = cleanText(input.category, 60);
+        if (input.image_url) found.image_url = String(input.image_url).trim();
+        found.updated_at = new Date().toISOString();
+        updatedSub = found;
+      }
+      return { submissions: list };
+    });
+
+    if (!updatedSub) throw fail(404, 'not_found', 'Submission not found.');
+
+    // Update in public items if approved
+    if (updatedSub.status === 'approved') {
+      await mutateDoc(env, VAULT_PUBLIC_ITEMS_KEY, { items: [] }, curr => {
+        const items = Array.isArray(curr?.items) ? curr.items : [];
+        return { items: [updatedSub, ...items.filter(i => i.id !== subId && i.slug !== updatedSub.slug)] };
+      });
+      // Synchronize modified details with Discord embeds
+      await syncModifiedDiscordEmbed(updatedSub, env);
+    }
+
+    await logBotAudit(env, 'Vault Resource Modified', session, `Owner edited submission "${updatedSub.title}".`);
+    return json({ ok: true, submission: updatedSub }, 200, cors);
+  }
+
+  return json({ error: 'Use PUT, PATCH, or DELETE.' }, 405, cors);
+}
+
+async function syncModifiedDiscordEmbed(item, env) {
+  if (!env.DISCORD_BOT_TOKEN) return;
+  const slug = item.slug;
+  const vaultItemsDoc = (await readDoc(env, VAULT_ITEMS_KEY, { items: {} })).value;
+  const meta = vaultItemsDoc.items && vaultItemsDoc.items[slug];
+  if (!meta) return;
+
+  const os = (item.os || 'windows').toLowerCase();
+  const pageUrl = (os === 'macos') ? `https://kyro.new.tg/macos#${slug}` : `https://kyro.new.tg/windows#${slug}`;
+  const creator = item.by_username || item.creator || 'Kyro Vault';
+  const size = item.size || 'Vault Build';
+  const category = item.category || 'Adobe After Effects';
+  const osLabel = os === 'both' ? 'Windows & macOS' : os === 'macos' ? 'macOS' : 'Windows';
+  const vaultId = item.id_code || ('#' + Math.floor(100000 + Math.random() * 900000));
+  const tier = item.tier || 'Free';
+  const password = item.pass || item.password;
+
+  const embed = {
+    author: {
+      name: item.author_tag || 'Kyro Vault',
+      icon_url: item.author_icon || KYRO_ICON
+    },
+    title: '🔄 UPDATE: ' + item.title.toUpperCase(),
+    url: pageUrl,
+    description: (item.details || `${item.title} is now available in the Kyro Vault. Free resources and tools for verified editors.`) +
+      (password ? `\n\n🔑 **Archive Password:** \`${password}\`` : '') +
+      `\n\n**Website Link:** ${pageUrl}`,
+    color: 0x1f232b,
+    fields: [
+      {
+        name: 'Information',
+        value: `• **Creator:** \`${creator}\`\n• **ID:** \`${vaultId}\`\n• **Size:** \`${size}\`\n• **Category:** \`${category}\`\n• **Platform:** \`${osLabel}\``,
+        inline: true
+      },
+      {
+        name: 'Membership',
+        value: `• **Tier:** \`${tier}\`\n• **Status:** \`Updated\``,
+        inline: true
+      }
+    ],
+    footer: {
+      text: 'Kyro™ Website | Resource Monitor',
+      icon_url: KYRO_ICON
+    },
+    timestamp: new Date().toISOString()
+  };
+
+  if (item.image_url && /^https?:\/\//.test(item.image_url)) {
+    embed.image = { url: item.image_url };
+  }
+
+  const components = [
+    {
+      type: 1,
+      components: [
+        {
+          type: 2,
+          style: 5,
+          label: 'View Resource ↗',
+          url: pageUrl
+        },
+        {
+          type: 2,
+          style: 5,
+          label: 'Browse Vault ↗',
+          url: 'https://kyro.new.tg'
+        }
+      ]
+    }
+  ];
+
+  // 1. Announcements
+  if (meta.announcement_msg_id) {
+    try {
+      await fetch(`https://discord.com/api/v10/channels/1539961971422658571/messages/${meta.announcement_msg_id}`, {
+        method: 'PATCH',
+        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          content: '📢 **Vault Resource Updated** — <@&1542127783440818226>',
+          embeds: [embed],
+          components
+        })
+      });
+    } catch (e) {}
+  }
+
+  // 2. Downloads-links
+  if (meta.downloads_msg_id) {
+    try {
+      await fetch(`https://discord.com/api/v10/channels/1539961998601756722/messages/${meta.downloads_msg_id}`, {
+        method: 'PATCH',
+        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({ embeds: [embed], components })
+      });
+    } catch (e) {}
+  }
 }
 
 async function dispatchKyroDiscordPublish(item, env) {
@@ -1119,7 +1395,7 @@ async function dispatchKyroDiscordPublish(item, env) {
   const isUpdate = Boolean(existing);
   const password = item.pass || item.password;
 
-  const creator = item.creator || 'Kyro Vault';
+  const creator = item.by_username || item.creator || 'Kyro Vault';
   const size = item.size || 'Vault Build';
   const category = item.category || 'Adobe After Effects';
   const osLabel = os === 'both' ? 'Windows & macOS' : os === 'macos' ? 'macOS' : 'Windows';
@@ -1161,9 +1437,11 @@ async function dispatchKyroDiscordPublish(item, env) {
     }
   ];
 
+  let announcementMsgId = null;
+  let downloadsMsgId = null;
   try {
     // 1. Announcements
-    await fetch('https://discord.com/api/v10/channels/1539961971422658571/messages', {
+    const annRes = await fetch('https://discord.com/api/v10/channels/1539961971422658571/messages', {
       method: 'POST',
       headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -1172,17 +1450,26 @@ async function dispatchKyroDiscordPublish(item, env) {
         components
       })
     });
+    if (annRes.ok) {
+      const annData = await annRes.json();
+      announcementMsgId = annData.id;
+    }
   } catch (e) {}
 
   try {
     // 2. Downloads-links
-    await fetch('https://discord.com/api/v10/channels/1539961998601756722/messages', {
+    const dlRes = await fetch('https://discord.com/api/v10/channels/1539961998601756722/messages', {
       method: 'POST',
       headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
       body: JSON.stringify({ embeds: [embed], components })
     });
+    if (dlRes.ok) {
+      const dlData = await dlRes.json();
+      downloadsMsgId = dlData.id;
+    }
   } catch (e) {}
 
+  let showcaseThreadId = existing?.thread_id || null;
   try {
     // 3. Showcase forum
     if (isUpdate && existing?.thread_id) {
@@ -1207,16 +1494,30 @@ async function dispatchKyroDiscordPublish(item, env) {
       });
       if (scRes.ok) {
         const scData = await scRes.json();
-        await mutateDoc(env, VAULT_ITEMS_KEY, { items: {} }, curr => {
-          const items = curr?.items || {};
-          items[slug] = { name: item.title, slug, thread_id: scData.id, version: item.version || '1.0' };
-          return { items };
-        });
+        showcaseThreadId = scData.id;
       }
     }
   } catch (e) {}
+
+  try {
+    await mutateDoc(env, VAULT_ITEMS_KEY, { items: {} }, curr => {
+      const items = curr?.items || {};
+      items[slug] = {
+        name: item.title,
+        slug,
+        thread_id: showcaseThreadId,
+        announcement_msg_id: announcementMsgId,
+        downloads_msg_id: downloadsMsgId,
+        version: item.version || '1.0'
+      };
+      return { items };
+    });
+  } catch (e) {}
 }
 const VAULT_ITEMS_KEY = 'kyro.vault_items.v1';
+const DASHBOARD_CONFIG_KEY = 'kyro.dashboard_config.v1';
+const DASHBOARD_AUDIT_KEY = 'kyro.dashboard_audit.v1';
+const NOTIFICATIONS_KEY = 'kyro.notifications.v1';
 const KYRO_ICON = 'https://raw.githubusercontent.com/kyroownr/Kyro-Websitee/main/assets/kyro-icon.png';
 
 async function handleVaultPublish(request, url, env, cors) {
@@ -1248,7 +1549,7 @@ async function handleVaultPublish(request, url, env, cors) {
   const existing = vaultDoc.items && vaultDoc.items[slug];
   const isUpdate = Boolean(existing);
 
-  const creator = item.creator || 'Kyro Vault';
+  const creator = item.by_username || item.creator || 'Kyro Vault';
   const size = item.size || 'Vault Build';
   const category = item.category || 'Adobe After Effects';
   const osLabel = os === 'both' ? 'Windows & macOS' : os === 'macos' ? 'macOS' : 'Windows';

@@ -524,12 +524,102 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         </div>
       </div>
     </div>
+
+    <!-- Moderation Controls Card -->
+    <div class="card">
+      <div class="card-title">🛡️ Discord Moderation &amp; Enforcement</div>
+      <p class="card-desc">Execute instant moderation actions in the Kyro server directly through the bot API.</p>
+
+      <form id="modForm">
+        <div class="grid-3">
+          <div class="form-group">
+            <label>Action</label>
+            <select id="modAction">
+              <option value="timeout">Timeout / Temp Mute</option>
+              <option value="ban">Ban User</option>
+              <option value="kick">Kick User</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>User ID</label>
+            <input type="text" id="modUserId" placeholder="e.g. 1052909930073567232" required>
+          </div>
+          <div class="form-group" id="modDurationGroup">
+            <label>Duration</label>
+            <select id="modDuration">
+              <option value="300">5 Minutes</option>
+              <option value="3600" selected>1 Hour</option>
+              <option value="86400">1 Day</option>
+              <option value="604800">1 Week</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Reason</label>
+          <input type="text" id="modReason" placeholder="e.g. Violating community guidelines or advertising">
+        </div>
+
+        <button type="submit" class="btn" id="btnMod" style="background:#ef4444;">⚡ Execute Moderation Action</button>
+        <div id="modStatus" class="status-msg"></div>
+      </form>
+    </div>
   </div>
 
   <script>
     const form = document.getElementById('uploadForm');
     const statusMsg = document.getElementById('publishStatus');
     const btnPublish = document.getElementById('btnPublish');
+
+    // Moderation wiring
+    const modForm = document.getElementById('modForm');
+    const modAction = document.getElementById('modAction');
+    const modDurationGroup = document.getElementById('modDurationGroup');
+    const modStatus = document.getElementById('modStatus');
+    const btnMod = document.getElementById('btnMod');
+
+    modAction.addEventListener('change', () => {
+      modDurationGroup.style.display = modAction.value === 'timeout' ? 'block' : 'none';
+      btnMod.style.background = modAction.value === 'ban' ? '#dc2626' : modAction.value === 'kick' ? '#d97706' : '#ef4444';
+      btnMod.textContent = modAction.value === 'ban' ? '🔨 Ban User from Kyro' : modAction.value === 'kick' ? '👢 Kick User from Kyro' : '⚡ Timeout User';
+    });
+
+    modForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      btnMod.disabled = true;
+      modStatus.style.display = 'none';
+
+      const payload = {
+        action: modAction.value,
+        userId: document.getElementById('modUserId').value.trim(),
+        duration: parseInt(document.getElementById('modDuration').value, 10),
+        reason: document.getElementById('modReason').value.trim()
+      };
+
+      try {
+        const res = await fetch('/api/moderate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok) {
+          modStatus.className = 'status-msg success';
+          modStatus.textContent = '✅ ' + (data.message || 'Action executed successfully!');
+          modStatus.style.display = 'block';
+        } else {
+          modStatus.className = 'status-msg error';
+          modStatus.textContent = '❌ Action failed: ' + (data.error || 'Server error');
+          modStatus.style.display = 'block';
+        }
+      } catch (err) {
+        modStatus.className = 'status-msg error';
+        modStatus.textContent = '❌ Network error: ' + err.message;
+        modStatus.style.display = 'block';
+      } finally {
+        btnMod.disabled = false;
+      }
+    });
 
     // Update live preview
     const updatePreview = () => {
@@ -624,6 +714,64 @@ const server = http.createServer(async (req, res) => {
         const outcome = await publishUpload(item);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(outcome));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/moderate') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const { action, userId, duration, reason } = JSON.parse(body);
+        if (!userId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'User ID is required.' }));
+          return;
+        }
+
+        const reasonHeader = reason ? { 'X-Audit-Log-Reason': reason } : {};
+
+        if (action === 'timeout') {
+          const seconds = duration || 3600;
+          const until = new Date(Date.now() + seconds * 1000).toISOString();
+          await discordFetch(`/guilds/${GUILD_ID}/members/${userId}`, {
+            method: 'PATCH',
+            headers: reasonHeader,
+            body: JSON.stringify({ communication_disabled_until: until })
+          });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, message: `User <@${userId}> timed out for ${Math.round(seconds / 60)} minutes.` }));
+          return;
+        }
+
+        if (action === 'ban') {
+          await discordFetch(`/guilds/${GUILD_ID}/bans/${userId}`, {
+            method: 'PUT',
+            headers: reasonHeader,
+            body: JSON.stringify({ delete_message_seconds: 0 })
+          });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, message: `User <@${userId}> banned successfully.` }));
+          return;
+        }
+
+        if (action === 'kick') {
+          await discordFetch(`/guilds/${GUILD_ID}/members/${userId}`, {
+            method: 'DELETE',
+            headers: reasonHeader
+          });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, message: `User <@${userId}> kicked successfully.` }));
+          return;
+        }
+
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid moderation action.' }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));

@@ -1599,6 +1599,7 @@
 
       const isContributorOrOwner = roleBadge.toLowerCase() === 'owner' || roleBadge.toLowerCase() === 'contributor' || roleBadge.toLowerCase() === 'mod+' || auth.user.id === '1052909930073567232';
       if (uploadsTab) uploadsTab.style.display = isContributorOrOwner ? 'flex' : 'none';
+      checkUnreadNotifications();
     } else {
       avatarEl.innerHTML = 'K';
       nameEl.textContent = 'Guest';
@@ -1617,7 +1618,8 @@
       vault: $('#accPanelVault'),
       downloads: $('#accPanelDownloads'),
       settings: $('#accPanelSettings'),
-      uploads: $('#accPanelUploads')
+      uploads: $('#accPanelUploads'),
+      notifications: $('#accPanelNotifications')
     };
 
     Object.entries(panels).forEach(([k, el]) => {
@@ -1630,6 +1632,82 @@
     else if (tabKey === 'vault') renderAccountVault();
     else if (tabKey === 'downloads') renderAccountDownloads();
     else if (tabKey === 'uploads') renderAccountUploads();
+    else if (tabKey === 'notifications') renderAccountNotifications();
+  }
+
+  async function checkUnreadNotifications() {
+    if (auth.state === OUT || !auth.token) return;
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/vault/notifications', {
+        headers: { authorization: 'Bearer ' + auth.token },
+        credentials: 'omit'
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const notifs = data.notifications || [];
+      const unread = notifs.filter(n => !n.read).length;
+      const badge = $('#accNotifsCount');
+      if (badge) {
+        if (unread > 0) {
+          badge.textContent = String(unread);
+          badge.style.display = 'inline-block';
+        } else {
+          badge.style.display = 'none';
+        }
+      }
+    } catch {}
+  }
+
+  async function renderAccountNotifications() {
+    const list = $('#accNotifsContent');
+    if (!list) return;
+    if (auth.state === OUT || !auth.token) {
+      list.innerHTML = '<div class="acc-row-sub">Please sign in with Discord to view notifications.</div>';
+      return;
+    }
+    list.innerHTML = '<div class="acc-row-sub">Loading notifications…</div>';
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/vault/notifications', {
+        headers: { authorization: 'Bearer ' + auth.token },
+        credentials: 'omit'
+      });
+      const data = await res.json();
+      const notifs = data.notifications || [];
+      if (!notifs.length) {
+        list.innerHTML = '<div class="acc-empty-box"><p class="acc-empty-text">No notifications yet. When you submit or review uploads, updates will appear here.</p></div>';
+        return;
+      }
+
+      list.innerHTML = notifs.map(n => {
+        const isApproved = n.type === 'approved';
+        const isPending = n.type === 'pending';
+        const isRequest = n.type === 'request';
+        const color = isApproved ? '#10b981' : isPending ? '#f59e0b' : isRequest ? '#38bdf8' : '#94a3b8';
+        const timeAgo = n.created ? n.created.replace('T', ' ').slice(0, 16) : '';
+        return `
+          <div class="acc-row-item" style="flex-direction:column;align-items:stretch;gap:6px;padding:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-left:3px solid ${color};border-radius:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <strong style="color:#fff;font-size:0.92rem;">${esc(n.title)}</strong>
+              <span style="font-size:0.75rem;color:var(--dim);">${esc(timeAgo)}</span>
+            </div>
+            <div style="font-size:0.85rem;color:#cbd5e1;line-height:1.4;">${esc(n.message)}</div>
+          </div>
+        `;
+      }).join('');
+
+      // Mark as read in background
+      fetch(AUTH_WORKER_URL + '/vault/notifications', {
+        method: 'POST',
+        headers: { authorization: 'Bearer ' + auth.token, 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+        credentials: 'omit'
+      }).then(() => {
+        const badge = $('#accNotifsCount');
+        if (badge) badge.style.display = 'none';
+      }).catch(() => {});
+    } catch {
+      list.innerHTML = '<div class="acc-row-sub">Failed to load notifications.</div>';
+    }
   }
 
   async function renderAccountApplications() {
@@ -1803,7 +1881,7 @@
         const statusBadge = `<span style="background:rgba(255,255,255,0.08);color:${statusColor};padding:2px 8px;border-radius:6px;font-size:0.75rem;font-weight:600;text-transform:uppercase;">${esc(s.status)}</span>`;
 
         return `
-          <div class="acc-row-item" style="flex-direction:column;align-items:stretch;gap:10px;padding:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:10px;">
+          <div class="acc-row-item" id="vSubItem-${esc(s.id)}" style="flex-direction:column;align-items:stretch;gap:10px;padding:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:10px;">
             <div style="display:flex;justify-content:space-between;align-items:center;">
               <div>
                 <strong style="color:#fff;font-size:0.95rem;">${esc(s.title)}</strong>
@@ -1812,7 +1890,13 @@
                   ${s.pass ? ` · Password: <code style="color:#38bdf8;">${esc(s.pass)}</code>` : ''}
                 </div>
               </div>
-              <div>${statusBadge}</div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                ${statusBadge}
+                ${isOwner ? `
+                  <button type="button" class="btn btn-ghost btn-sm" data-sub-edit="${esc(s.id)}" title="Edit submission" style="padding:3px 8px;font-size:0.75rem;">Edit</button>
+                  <button type="button" class="btn btn-danger btn-sm" data-sub-delete="${esc(s.id)}" title="Delete submission" style="padding:3px 8px;font-size:0.75rem;">Delete</button>
+                ` : ''}
+              </div>
             </div>
             ${s.details ? `<div style="font-size:0.82rem;color:#cbd5e1;background:rgba(0,0,0,0.25);padding:8px 10px;border-radius:6px;">${esc(s.details)}</div>` : ''}
             <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
@@ -1823,6 +1907,38 @@
                   <button type="button" class="btn btn-danger btn-sm" data-sub-reject="${esc(s.id)}">✕ Reject</button>
                 </div>
               ` : ''}
+            </div>
+            <!-- Owner inline edit form (hidden by default) -->
+            <div id="vSubEditForm-${esc(s.id)}" style="display:none;background:rgba(0,0,0,0.35);padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);margin-top:6px;">
+              <div style="font-size:0.85rem;font-weight:700;color:#38bdf8;margin-bottom:8px;">Edit Resource Details</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                <div>
+                  <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:2px;">Title</label>
+                  <input type="text" class="input input-sm" id="editTitle-${esc(s.id)}" value="${esc(s.title)}" style="width:100%;">
+                </div>
+                <div>
+                  <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:2px;">Archive Password (Optional)</label>
+                  <input type="text" class="input input-sm" id="editPass-${esc(s.id)}" value="${esc(s.pass || '')}" style="width:100%;">
+                </div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                <div>
+                  <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:2px;">Download URL</label>
+                  <input type="url" class="input input-sm" id="editUrl-${esc(s.id)}" value="${esc(s.download_url || '')}" style="width:100%;">
+                </div>
+                <div>
+                  <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:2px;">Banner / Image URL</label>
+                  <input type="url" class="input input-sm" id="editImg-${esc(s.id)}" value="${esc(s.image_url || '')}" style="width:100%;">
+                </div>
+              </div>
+              <div style="margin-bottom:8px;">
+                <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:2px;">Description / Effects</label>
+                <textarea class="input input-sm" id="editDetails-${esc(s.id)}" rows="2" style="width:100%;resize:vertical;">${esc(s.details || '')}</textarea>
+              </div>
+              <div style="display:flex;gap:8px;justify-content:flex-end;">
+                <button type="button" class="btn btn-ghost btn-sm" data-edit-cancel="${esc(s.id)}">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" data-edit-save="${esc(s.id)}">Save &amp; Sync to Discord</button>
+              </div>
             </div>
           </div>
         `;
@@ -1866,6 +1982,92 @@
               if (rejRes.ok) {
                 toast({ title: 'Resource Rejected', sub: 'Status updated.', icon: ICON.check });
                 renderAccountUploads();
+              }
+            } catch (err) {
+              toast({ title: 'Error', sub: err.message, icon: ICON.x });
+            }
+          });
+        });
+
+        // Wire owner Edit & Delete buttons
+        list.querySelectorAll('[data-sub-edit]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = btn.dataset.subEdit;
+            const formEl = document.getElementById(`vSubEditForm-${id}`);
+            if (formEl) formEl.style.display = formEl.style.display === 'none' ? 'block' : 'none';
+          });
+        });
+
+        list.querySelectorAll('[data-edit-cancel]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = btn.dataset.editCancel;
+            const formEl = document.getElementById(`vSubEditForm-${id}`);
+            if (formEl) formEl.style.display = 'none';
+          });
+        });
+
+        list.querySelectorAll('[data-edit-save]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const id = btn.dataset.editSave;
+            const titleVal = document.getElementById(`editTitle-${id}`)?.value.trim();
+            const passVal = document.getElementById(`editPass-${id}`)?.value.trim();
+            const urlVal = document.getElementById(`editUrl-${id}`)?.value.trim();
+            const imgVal = document.getElementById(`editImg-${id}`)?.value.trim();
+            const detailsVal = document.getElementById(`editDetails-${id}`)?.value.trim();
+
+            if (!titleVal) {
+              toast({ title: 'Validation error', sub: 'Title cannot be empty', icon: ICON.x });
+              return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Saving…';
+            try {
+              const editRes = await fetch(AUTH_WORKER_URL + '/vault/submissions/manage', {
+                method: 'PUT',
+                headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+                body: JSON.stringify({
+                  id,
+                  title: titleVal,
+                  password: passVal,
+                  download_url: urlVal,
+                  image_url: imgVal,
+                  details: detailsVal
+                }),
+                credentials: 'omit'
+              });
+              if (editRes.ok) {
+                toast({ title: 'Resource Updated', sub: 'Changes synced to Vault & Discord.', icon: ICON.check });
+                renderAccountUploads();
+              } else {
+                const errData = await editRes.json().catch(() => ({}));
+                toast({ title: 'Update failed', sub: errData.error || 'Server error', icon: ICON.x });
+              }
+            } catch (err) {
+              toast({ title: 'Error', sub: err.message, icon: ICON.x });
+            } finally {
+              btn.disabled = false;
+              btn.textContent = 'Save & Sync to Discord';
+            }
+          });
+        });
+
+        list.querySelectorAll('[data-sub-delete]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            if (!confirm('Are you sure you want to permanently delete this resource from the Vault?')) return;
+            btn.disabled = true;
+            try {
+              const delRes = await fetch(AUTH_WORKER_URL + '/vault/submissions/manage', {
+                method: 'DELETE',
+                headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+                body: JSON.stringify({ id: btn.dataset.subDelete }),
+                credentials: 'omit'
+              });
+              if (delRes.ok) {
+                toast({ title: 'Resource Deleted', sub: 'Removed from Vault & Discord.', icon: ICON.check });
+                renderAccountUploads();
+              } else {
+                toast({ title: 'Delete failed', sub: 'Server error', icon: ICON.x });
               }
             } catch (err) {
               toast({ title: 'Error', sub: err.message, icon: ICON.x });
