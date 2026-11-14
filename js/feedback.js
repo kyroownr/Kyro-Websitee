@@ -11,15 +11,12 @@
     try {
       const raw = localStorage.getItem(K_AUTH);
       if (!raw) return null;
-      const v = JSON.parse(raw);
-      if (!v || typeof v !== 'object') return null;
-      // Normalise if needed
-      return v;
+      return JSON.parse(raw);
     } catch { return null; }
   }
 
   let auth = readAuth();
-  let isVerified = Boolean(auth && (auth.state === VERIFIED || auth.verified === true || auth.in_server === true) && (auth.token || auth.user));
+  let isVerified = Boolean(auth && (auth.state === VERIFIED || auth.state === 2 || auth.verified === true));
 
   const gate = document.querySelector('#feedbackGate');
   const container = document.querySelector('#feedbackContainer');
@@ -133,6 +130,8 @@
 
   // Load reviews from Cloudflare Worker
   async function loadFeedback() {
+    auth = readAuth();
+    isVerified = Boolean(auth && (auth.state === VERIFIED || auth.state === 2 || auth.verified === true));
     renderNavAuth();
     if (!isVerified) {
       gate.hidden = false;

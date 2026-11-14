@@ -136,7 +136,10 @@
       clearSession(K_RETURN);
       if (returnPath) {
         const destination = new URL(returnPath, location.origin);
-        if (destination.origin === location.origin && (destination.pathname === '/apply' || destination.pathname === '/feedback')) location.replace(destination.href);
+        if (destination.origin === location.origin && (destination.pathname.startsWith('/apply') || destination.pathname.startsWith('/feedback'))) {
+          location.replace(destination.href);
+          return;
+        }
       }
 
       queueMicrotask(() => toast(auth.state === VERIFIED
