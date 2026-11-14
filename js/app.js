@@ -1523,7 +1523,6 @@
     const avatarEl = $('#accUserAvatar');
     const nameEl = $('#accUserName');
     const metaEl = $('#accUserMeta');
-    const botDashTab = $('#accBotDashboardTab');
     if (!avatarEl || !nameEl || !metaEl) return;
 
     if (auth.state !== OUT && auth.user) {
@@ -1532,14 +1531,10 @@
       nameEl.textContent = auth.user.username;
       const roleBadge = auth.user.role || (discordRole ? discordRole.toUpperCase() : (auth.state === VERIFIED ? 'Member' : 'Guest'));
       metaEl.textContent = '@' + auth.user.username + ' · ' + roleBadge + (auth.state === VERIFIED ? ' · Verified' : '');
-
-      const isStaffOrOwner = roleBadge.toLowerCase() === 'owner' || roleBadge.toLowerCase() === 'mod+' || auth.user.id === '1052909930073567232';
-      if (botDashTab) botDashTab.style.display = isStaffOrOwner ? 'flex' : 'none';
     } else {
       avatarEl.innerHTML = 'K';
       nameEl.textContent = 'Guest';
       metaEl.textContent = '@guest · Not signed in with Discord';
-      if (botDashTab) botDashTab.style.display = 'none';
     }
   }
 
@@ -1552,8 +1547,7 @@
       requests: $('#accPanelRequests'),
       vault: $('#accPanelVault'),
       downloads: $('#accPanelDownloads'),
-      settings: $('#accPanelSettings'),
-      botdashboard: $('#accPanelBotDashboard')
+      settings: $('#accPanelSettings')
     };
 
     Object.entries(panels).forEach(([k, el]) => {
@@ -1565,7 +1559,6 @@
     else if (tabKey === 'requests') renderAccountRequests();
     else if (tabKey === 'vault') renderAccountVault();
     else if (tabKey === 'downloads') renderAccountDownloads();
-    else if (tabKey === 'botdashboard') loadBotDashboard();
   }
 
   async function renderAccountApplications() {
@@ -1706,146 +1699,6 @@
     }));
   }
 
-  async function loadBotDashboard() {
-    if (!auth.token) return;
-    try {
-      const res = await fetch(AUTH_WORKER_URL + '/dashboard/settings', {
-        headers: { authorization: 'Bearer ' + auth.token },
-        credentials: 'omit'
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const cfg = data.config || {};
-        const mods = cfg.modules || {};
-        const anti = cfg.anti_raid || {};
-
-        const elLockdown = $('#botEmergencyLockdown');
-        const elMassJoin = $('#botMassJoinProt');
-        const elModApps = $('#modApps');
-        const elModReq = $('#modRequests');
-        const elModAudit = $('#modAudit');
-
-        if (elLockdown) elLockdown.checked = Boolean(anti.emergency_lockdown);
-        if (elMassJoin) elMassJoin.checked = Boolean(anti.mass_join_protection);
-        if (elModApps) elModApps.checked = Boolean(mods.applications);
-        if (elModReq) elModReq.checked = Boolean(mods.requests_board);
-        if (elModAudit) elModAudit.checked = Boolean(mods.audit_logging);
-      }
-    } catch (e) {
-      console.warn('Failed to load dashboard settings:', e);
-    }
-
-    try {
-      const auditRes = await fetch(AUTH_WORKER_URL + '/dashboard/audit', {
-        headers: { authorization: 'Bearer ' + auth.token },
-        credentials: 'omit'
-      });
-      if (auditRes.ok) {
-        const data = await auditRes.json();
-        const logs = data.logs || [];
-        const container = $('#botAuditLogList');
-        if (container) {
-          if (!logs.length) {
-            container.innerHTML = '<div class="acc-row-sub">No audit entries logged yet.</div>';
-          } else {
-            container.innerHTML = logs.map(l =>
-              '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:6px 10px;font-size:0.8rem;">' +
-                '<div style="display:flex;justify-content:space-between;color:#e2e8f0;font-weight:600;">' +
-                  '<span>' + esc(l.action) + '</span>' +
-                  '<span style="color:var(--dim);font-size:0.75rem;">' + (l.timestamp ? l.timestamp.slice(11, 19) : '') + '</span>' +
-                '</div>' +
-                '<div style="color:var(--dim);margin-top:2px;">' + esc(l.details || '') + ' · <span style="color:#60a5fa;">' + esc(l.by) + '</span></div>' +
-              '</div>'
-            ).join('');
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to load audit logs:', e);
-    }
-  }
-
-  function wireBotDashboardEvents() {
-    $('#botEmergencyLockdown')?.addEventListener('change', async (e) => {
-      const active = e.target.checked;
-      try {
-        const res = await fetch(AUTH_WORKER_URL + '/dashboard/lockdown', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
-          body: JSON.stringify({ lockdown: active }),
-          credentials: 'omit'
-        });
-        if (res.ok) {
-          toast({
-            title: active ? 'Emergency Lockdown Active' : 'Lockdown Lifted',
-            sub: active ? 'Server chat frozen for @everyone.' : 'Chat permissions restored.',
-            icon: ICON.shield
-          });
-          loadBotDashboard();
-        }
-      } catch (err) {
-        toast({ title: 'Lockdown toggle failed', sub: err.message, icon: ICON.x });
-      }
-    });
-
-    const updateModuleToggles = async () => {
-      try {
-        await fetch(AUTH_WORKER_URL + '/dashboard/settings', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
-          body: JSON.stringify({
-            modules: {
-              applications: $('#modApps')?.checked ?? true,
-              requests_board: $('#modRequests')?.checked ?? true,
-              audit_logging: $('#modAudit')?.checked ?? true
-            },
-            anti_raid: {
-              mass_join_protection: $('#botMassJoinProt')?.checked ?? true
-            }
-          }),
-          credentials: 'omit'
-        });
-        toast({ title: 'Modules Updated', sub: 'Kyro bot toggles saved to cloud.', icon: ICON.check });
-      } catch (err) {
-        toast({ title: 'Update failed', sub: err.message, icon: ICON.x });
-      }
-    };
-
-    $('#modApps')?.addEventListener('change', updateModuleToggles);
-    $('#modRequests')?.addEventListener('change', updateModuleToggles);
-    $('#modAudit')?.addEventListener('change', updateModuleToggles);
-    $('#botMassJoinProt')?.addEventListener('change', updateModuleToggles);
-
-    $('#btnBroadcastEmbed')?.addEventListener('click', async () => {
-      const title = $('#embedTitle')?.value.trim();
-      const desc = $('#embedDesc')?.value.trim();
-      const color = parseInt($('#embedColor')?.value.trim() || '5865f2', 16);
-      if (!title || !desc) {
-        toast({ title: 'Embed incomplete', sub: 'Provide a title and description.', icon: ICON.x });
-        return;
-      }
-      try {
-        const res = await fetch(AUTH_WORKER_URL + '/dashboard/embed', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
-          body: JSON.stringify({ title, description: desc, color }),
-          credentials: 'omit'
-        });
-        if (res.ok) {
-          toast({ title: 'Embed Broadcasted', sub: 'Sent to Discord server.', icon: ICON.check });
-          $('#embedTitle').value = '';
-          $('#embedDesc').value = '';
-          loadBotDashboard();
-        } else {
-          const err = await res.json().catch(() => ({}));
-          toast({ title: 'Failed to broadcast', sub: err.error || 'Server error', icon: ICON.x });
-        }
-      } catch (e) {
-        toast({ title: 'Network error', sub: e.message, icon: ICON.x });
-      }
-    });
-  }
-
   function wireAccountModal() {
     if (!accountModalOverlay) return;
     accountModalClose?.addEventListener('click', closeAccountModal);
@@ -1876,8 +1729,6 @@
     $('#accExportData')?.addEventListener('click', () => {
       toast({ title: 'Export request submitted', sub: 'Your data package request has been queued.', icon: ICON.check });
     });
-
-    wireBotDashboardEvents();
   }
 
   /* ------------------------------ detail modal -------------------------- */
