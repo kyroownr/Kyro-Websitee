@@ -1,27 +1,27 @@
 /* ==========================================================================
    Kyro — stylesheet
    Matte obsidian ground, graphite 1px rules, sharp flush containers.
-   Monochrome by default; the only colour is a razor-thin electric cyan line
-   that appears above hovered actions. No glows, blurs, shadows or depth.
+   Black, white and neutral grays throughout.
+   No glows, blurs, shadows or depth.
    ========================================================================== */
 
 /* ------------------------------- tokens -------------------------------- */
 :root {
-  --bg: #08090D;          /* matte obsidian */
-  --panel: #0C0E13;       /* elevated cell */
-  --hover: #12151B;       /* hover fill */
+  --bg: #090909;          /* matte black */
+  --panel: #0E0E0E;       /* elevated cell */
+  --hover: #151515;       /* hover fill */
   --line: rgba(255, 255, 255, 0.12);   /* graphite rule */
   --line-hover: rgba(255, 255, 255, 0.26);
   --line-dim: rgba(255, 255, 255, 0.07);
 
   --white: #FFFFFF;
-  --silver: #B4B4BE;
-  --metal: linear-gradient(180deg, #FFFFFF 0%, #B4B4BE 100%);
-  --muted: #8E8E98;
-  --dim: #5A5A63;
-  --accent: #00F0FF;      /* the single accent: hover line only */
-  --green: #10B981;       /* live presence dot only */
-  --ink: #08090D;         /* text on solid white */
+  --silver: #B4B4B4;
+  --metal: linear-gradient(180deg, #FFFFFF 0%, #B4B4B4 100%);
+  --muted: #8E8E8E;
+  --dim: #5A5A5A;
+  --accent: transparent; /* no line above hovered actions */
+  --green: #FFFFFF;      /* monochrome live presence dot */
+  --ink: #090909;         /* text on solid white */
 
   --sans: "Plus Jakarta Sans", Inter, system-ui, -apple-system, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
@@ -476,7 +476,7 @@ code, .mono { font-family: var(--mono); }
 }
 .presence-dot::after {
   content: ''; position: absolute; inset: -3px;
-  border: 1px solid rgba(16, 185, 129, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.45);
   animation: ping 2.6s var(--ease) infinite;
 }
 /* Rate-limited or offline poll: grey and still, never missing. */
@@ -515,7 +515,7 @@ code, .mono { font-family: var(--mono); }
 .overlay {
   position: fixed; inset: 0; z-index: 90;
   display: grid; place-items: center; padding: 22px;
-  background: rgba(8, 9, 13, 0.82);
+  background: rgba(9, 9, 9, 0.82);
   animation: fade 0.18s ease both;
 }
 .overlay-top { z-index: 100; }
@@ -769,7 +769,7 @@ code, .mono { font-family: var(--mono); }
 /* -------------------------------- drawer -------------------------------- */
 .scrim {
   position: fixed; inset: 0; z-index: 95;
-  background: rgba(8, 9, 13, 0.74);
+  background: rgba(9, 9, 9, 0.74);
   animation: fade 0.18s ease both;
 }
 .drawer {
@@ -973,7 +973,7 @@ textarea.field-input { min-height: 68px; resize: vertical; line-height: 1.6; }
 .application-agreement { display: flex; align-items: flex-start; gap: 10px; color: var(--silver); font-size: 0.82rem; }
 .application-agreement input { flex-shrink: 0; margin-top: 5px; accent-color: var(--silver); }
 .application-note { font-size: 0.8rem; color: var(--muted); line-height: 1.75; }
-.application-error { color: #fca5a5; font-size: 0.82rem; overflow-wrap: anywhere; }
+.application-error { color: var(--white); font-size: 0.82rem; overflow-wrap: anywhere; }
 .application-badge { display: inline-block; padding: 4px 9px; border: 1px solid var(--line); color: var(--silver); font-size: 0.65rem; text-transform: uppercase; }
 .application-reference { margin-top: 20px; color: var(--muted); font-size: 0.7rem; overflow-wrap: anywhere; }
 .application-pill:disabled { opacity: 0.5; cursor: not-allowed; }
