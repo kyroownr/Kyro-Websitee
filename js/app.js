@@ -893,7 +893,7 @@
      is open — otherwise closing one would blank the other mid-slide. */
   function closeScrim() {
     setTimeout(() => {
-      const anyOpen = [drawer, requestsDrawer].some(el => el.classList.contains('is-open'));
+      const anyOpen = [drawer, requestsDrawer, $('#feedbackDrawer')].some(el => el && el.classList.contains('is-open'));
       if (!anyOpen) drawerScrim.hidden = true;
     }, 320);
   }
@@ -1223,6 +1223,203 @@
   function closeRequests() {
     if (!requestsDrawer) return;
     hide(requestsDrawer);
+    closeScrim();
+  }
+
+  /* ------------------------------ feedback drawer ------------------------ */
+  const feedbackDrawer = $('#feedbackDrawer');
+  const feedbackCompose = $('#feedbackCompose');
+  const feedbackGate = $('#feedbackGate');
+  const feedbackList = $('#feedbackList');
+  const feedbackCount = $('#feedbackCount');
+  const feedbackNewBtn = $('#feedbackNewBtn');
+  const feedbackForm = $('#feedbackForm');
+  const feedbackText = $('#feedbackText');
+  const feedbackImprovements = $('#feedbackImprovements');
+  const feedbackAnonymous = $('#feedbackAnonymous');
+
+  let feedbackRating = 5;
+  let feedbackItems = [];
+  let feedbackLoading = false;
+  let feedbackComposeOpen = false;
+
+  function setFeedbackRating(val) {
+    feedbackRating = Math.max(1, Math.min(5, Number(val) || 5));
+    if (!feedbackDrawer) return;
+    feedbackDrawer.querySelectorAll('#feedbackRatingGroup [data-rating]').forEach(btn => {
+      btn.setAttribute('aria-pressed', String(Number(btn.dataset.rating) === feedbackRating));
+    });
+  }
+
+  function renderFeedback() {
+    if (!feedbackDrawer) return;
+    feedbackCount.textContent = feedbackLoading ? 'loading…' : (feedbackItems.length + (feedbackItems.length === 1 ? ' review' : ' reviews'));
+    if (feedbackNewBtn) {
+      feedbackNewBtn.setAttribute('aria-expanded', String(feedbackComposeOpen));
+      feedbackNewBtn.textContent = feedbackComposeOpen ? 'Cancel' : '+ Give Feedback';
+    }
+    if (feedbackCompose) {
+      feedbackCompose.inert = !feedbackComposeOpen;
+      feedbackCompose.classList.toggle('is-open', feedbackComposeOpen);
+    }
+
+    if (!member) {
+      feedbackGate.hidden = false;
+      feedbackGate.innerHTML =
+        '<div class="req-gate-card">' +
+          '<div class="req-gate-title">Discord verification required</div>' +
+          '<div class="req-gate-sub">Feedback and community reviews are exclusively visible to verified server members. Sign in with Discord to view and share reviews.</div>' +
+          '<button type="button" class="btn btn-discord btn-sm mono" id="feedbackGateLogin">' +
+            ICON.discord + ' Sign in with Discord' +
+          '</button>' +
+        '</div>';
+      const gateBtn = $('#feedbackGateLogin');
+      if (gateBtn) gateBtn.addEventListener('click', startLogin);
+      feedbackList.innerHTML = '';
+      return;
+    }
+
+    feedbackGate.hidden = true;
+    feedbackGate.innerHTML = '';
+
+    if (feedbackLoading) {
+      feedbackList.innerHTML = '<div class="req-empty mono">Loading feedback…</div>';
+      return;
+    }
+
+    if (!feedbackItems.length) {
+      feedbackList.innerHTML = '<div class="req-empty mono">No feedback yet. Be the first to review Kyro!</div>';
+      return;
+    }
+
+    const starStr = (r) => '★'.repeat(r) + '☆'.repeat(5 - r);
+    feedbackList.innerHTML = feedbackItems.map(item => {
+      const avatarHtml = item.anonymous || !item.author_avatar
+        ? '<div class="req-author-avatar-anon" style="width:28px;height:28px;border-radius:50%;background:#222;display:flex;align-items:center;justify-content:center;font-size:12px;border:1px solid #333;">?</div>'
+        : '<img class="req-author-avatar" src="' + escapeHtml(item.author_avatar) + '" alt="" width="28" height="28" style="border-radius:50%;" />';
+      const name = item.anonymous ? 'Anonymous Editor' : escapeHtml(item.author_name);
+      const stars = starStr(item.rating);
+      const date = item.created ? new Date(item.created).toLocaleDateString() : '';
+      const improv = item.improvements
+        ? '<div style="margin-top:8px;padding-top:8px;border-top:1px dashed rgba(255,255,255,0.08);font-size:13px;color:rgba(255,255,255,0.7);">' +
+            '<span class="mono" style="font-size:11px;color:#888;display:block;margin-bottom:2px;">REQUESTED IMPROVEMENTS:</span>' +
+            escapeHtml(item.improvements) +
+          '</div>'
+        : '';
+
+      return '<article class="req-card" style="display:flex;flex-direction:column;gap:6px;">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;">' +
+          '<div style="display:flex;align-items:center;gap:8px;">' +
+            avatarHtml +
+            '<span class="mono" style="font-weight:600;font-size:13px;">' + name + '</span>' +
+          '</div>' +
+          '<span class="mono" style="color:#f59e0b;letter-spacing:1px;font-size:13px;">' + stars + '</span>' +
+        '</div>' +
+        '<p style="margin:4px 0 0;font-size:14px;line-height:1.45;color:#eee;">' + escapeHtml(item.feedback) + '</p>' +
+        improv +
+        '<div style="margin-top:4px;font-size:11px;color:#666;" class="mono">' + date + '</div>' +
+      '</article>';
+    }).join('');
+  }
+
+  async function loadFeedback() {
+    if (!member) {
+      feedbackLoading = false;
+      renderFeedback();
+      return;
+    }
+    feedbackLoading = true;
+    renderFeedback();
+    try {
+      const res = await apiRequest('/feedback');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load feedback');
+      feedbackItems = Array.isArray(data.feedback) ? data.feedback : [];
+    } catch (err) {
+      toast({ title: 'Could not load feedback', sub: err.message, icon: ICON.x });
+      feedbackItems = [];
+    } finally {
+      feedbackLoading = false;
+      renderFeedback();
+    }
+  }
+
+  async function submitFeedback(e) {
+    e.preventDefault();
+    if (!member) {
+      toast({ title: 'Sign in required', sub: 'Log in with Discord first.', icon: ICON.lock });
+      return;
+    }
+    const text = feedbackText.value.trim();
+    if (text.length < 5) {
+      toast({ title: 'Feedback too short', sub: 'Write at least 5 characters.', icon: ICON.x });
+      return;
+    }
+    const improv = feedbackImprovements.value.trim();
+    const anon = feedbackAnonymous.checked;
+    const submitBtn = $('#feedbackSubmit');
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Posting…'; }
+
+    try {
+      const res = await apiRequest('/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rating: feedbackRating,
+          feedback: text,
+          improvements: improv,
+          anonymous: anon
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to submit feedback');
+      feedbackItems = Array.isArray(data.feedback) ? data.feedback : feedbackItems;
+      feedbackForm.reset();
+      setFeedbackRating(5);
+      feedbackComposeOpen = false;
+      renderFeedback();
+      toast({ title: 'Thank you!', sub: 'Your feedback has been posted.', icon: ICON.check });
+    } catch (err) {
+      toast({ title: 'Could not post feedback', sub: err.message, icon: ICON.x });
+    } finally {
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Post Feedback'; }
+    }
+  }
+
+  function initFeedbackDrawer() {
+    if (!feedbackDrawer) return;
+    if (feedbackNewBtn) {
+      feedbackNewBtn.addEventListener('click', () => {
+        if (!member) {
+          startLogin();
+          return;
+        }
+        feedbackComposeOpen = !feedbackComposeOpen;
+        renderFeedback();
+        if (feedbackComposeOpen && feedbackText) feedbackText.focus();
+      });
+    }
+    if (feedbackForm) feedbackForm.addEventListener('submit', submitFeedback);
+    feedbackDrawer.querySelectorAll('#feedbackRatingGroup [data-rating]').forEach(btn => {
+      btn.addEventListener('click', () => setFeedbackRating(btn.dataset.rating));
+    });
+  }
+
+  function openFeedback() {
+    if (!feedbackDrawer) return;
+    if (drawer.classList.contains('is-open')) hide(drawer);
+    if (requestsDrawer && requestsDrawer.classList.contains('is-open')) hide(requestsDrawer);
+    feedbackComposeOpen = false;
+    renderFeedback();
+    openScrim();
+    feedbackDrawer.classList.add('is-open');
+    feedbackDrawer.setAttribute('aria-hidden', 'false');
+    loadFeedback();
+  }
+
+  function closeFeedback() {
+    if (!feedbackDrawer) return;
+    hide(feedbackDrawer);
     closeScrim();
   }
 
@@ -1860,7 +2057,7 @@
   }
   function hideOverlay(el) {
     el.hidden = true;
-    const drawerOpen = [drawer, requestsDrawer].some(d => d && d.classList.contains('is-open'));
+    const drawerOpen = [drawer, requestsDrawer, feedbackDrawer].some(d => d && d.classList.contains('is-open'));
     if (!$('.overlay:not([hidden])') && !drawerOpen) {
       document.body.style.overflow = '';
     }
@@ -1901,8 +2098,18 @@
   }
   const requestsCloseBtn = $('#requestsClose');
   if (requestsCloseBtn) requestsCloseBtn.addEventListener('click', closeRequests);
+
+  const feedbackBtn = $('#feedbackOpen');
+  if (feedbackBtn) {
+    feedbackBtn.addEventListener('click', () =>
+      feedbackDrawer.classList.contains('is-open') ? closeFeedback() : openFeedback());
+  }
+  const feedbackCloseBtn = $('#feedbackClose');
+  if (feedbackCloseBtn) feedbackCloseBtn.addEventListener('click', closeFeedback);
+
   drawerScrim.addEventListener('click', () => {
     if (requestsDrawer && requestsDrawer.classList.contains('is-open')) closeRequests();
+    else if (feedbackDrawer && feedbackDrawer.classList.contains('is-open')) closeFeedback();
     else closeDrawer();
   });
 
@@ -1991,6 +2198,7 @@
       if (paletteOpen) closePalette();
       else if (!modalOverlay.hidden) closeModal();
       else if (requestsDrawer && requestsDrawer.classList.contains('is-open')) closeRequests();
+      else if (feedbackDrawer && feedbackDrawer.classList.contains('is-open')) closeFeedback();
       else if (drawer.classList.contains('is-open')) closeDrawer();
     }
   });
@@ -2044,6 +2252,7 @@
   renderBrowse();
   renderReqCategories();
   wireRequestControls();
+  initFeedbackDrawer();
   updateSavedUI();
   startServerStats();
   refreshDiscordRole();
