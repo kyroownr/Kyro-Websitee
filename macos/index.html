@@ -242,6 +242,15 @@
     </div>
   </aside>
 
+  <dialog class="application-status" id="applicationsStatus" aria-labelledby="applicationsStatusTitle">
+    <h2 id="applicationsStatusTitle">Applications</h2>
+    <p id="applicationsStatusText" aria-live="polite">Checking application status…</p>
+    <div class="application-actions">
+      <a class="btn btn-primary application-pill" href="/apply">Go to Applications</a>
+      <form method="dialog"><button type="submit" class="btn btn-ghost application-pill">Close</button></form>
+    </div>
+  </dialog>
+
   <!-- Toast stack (downloads, access notices) -->
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
@@ -249,5 +258,6 @@
   <script src="/js/data.js"></script>
   <script src="/js/preview.js"></script>
   <script src="/js/app.js"></script>
+  <script src="/js/applications.js"></script>
 </body>
 </html>

@@ -31,6 +31,7 @@
   const K_AUTH = 'kyro.auth.v1';
   const K_OS = 'kyro.os.v1';
   const K_STATE = 'kyro.oauth.state.v1';
+  const K_RETURN = 'kyro.oauth.return.v1';
 
   const read = (k, fallback) => {
     try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? fallback : v; }
@@ -112,7 +113,7 @@
         return;
       }
 
-      if (expected && returned !== expected) {
+      if (!expected || returned !== expected || !q.get('token')) {
         window.history.replaceState({}, '', location.pathname);
         return;
       }
@@ -131,6 +132,12 @@
       };
       saveAuth();
       window.history.replaceState({}, '', location.pathname);
+      const returnPath = readSession(K_RETURN);
+      clearSession(K_RETURN);
+      if (returnPath) {
+        const destination = new URL(returnPath, location.origin);
+        if (destination.origin === location.origin && destination.pathname === '/apply') location.replace(destination.href);
+      }
 
       queueMicrotask(() => toast(auth.state === VERIFIED
         ? { title: 'Signed in as ' + username, sub: 'Verified Kyro member — downloads unlocked.', icon: ICON.check }
@@ -292,6 +299,7 @@
   }
 
   function renderAuth() {
+    window.dispatchEvent(new CustomEvent('kyro:auth'));
     if (auth.state === OUT) {
       authSlot.innerHTML =
         '<button type="button" class="login-btn" id="loginBtn">' + ICON.discord +
@@ -362,6 +370,7 @@
   }
 
   function startLogin() {
+    if (document.body.dataset.page === 'apply') writeSession(K_RETURN, location.pathname + location.search);
     const state = (window.crypto && crypto.randomUUID)
       ? crypto.randomUUID()
       : Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
@@ -483,7 +492,7 @@
       '<button type="button" class="btn btn-ghost btn-sm" id="stripRecheck">Refresh Verification</button>';
     else actions = '<span class="a-state mono">verified · ' + esc(auth.user.username) + '</span>';
 
-    accessStrip.innerHTML =
+    if (accessStrip) accessStrip.innerHTML =
       '<div class="access-row ' + a.cls + '"><span class="a-icon">' + a.icon + '</span>' +
       '<span class="a-text">' + a.text + '</span>' + actions + '</div>';
 
@@ -743,6 +752,7 @@
      matches what this visitor has already done. Verified members stop being
      asked to verify and get the community + requests card instead. */
   function renderBanner() {
+    if (!discordCard) return;
     const s = window.KYRO_SITE;
     const inviteLink = '<a class="banner-link" href="' + esc(INVITE_URL) +
       '" target="_blank" rel="noopener noreferrer">Join the Kyro Discord ↗</a>';
@@ -2017,6 +2027,17 @@
   captureSessionFromUrl();
   syncOsButtons(os);
   renderAuth();
+  window.KyroAuth = {
+    profile: () => auth.state === OUT ? null : { ...auth.user, verified: auth.state === VERIFIED },
+    login: startLogin,
+    refresh: recheckMembership,
+    invite: INVITE_URL,
+    request: (route, options = {}) => {
+      const headers = new Headers(options.headers);
+      if (auth.token) headers.set('authorization', 'Bearer ' + auth.token);
+      return fetch(AUTH_WORKER_URL + route, { ...options, headers, credentials: 'omit' });
+    }
+  };
   renderAccess();
   renderSoftware();
   renderCategoryHead();

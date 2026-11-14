@@ -53,16 +53,26 @@
 
 /* Both localhost spellings are allowed so tools/serve.js works whichever host
    the browser typed; override the whole list with KYRO_ALLOWED_ORIGINS. */
+import { applicationConfiguration, handleApplications, handleApplicationInteractions, KyroApplications } from './applications-worker.js';
+export { KyroApplications };
+
 const DEFAULT_ORIGINS = 'https://kyro.new.tg,http://localhost:4173,http://127.0.0.1:4173';
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const cors = corsHeaders(request, env);
 
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
 
     try {
+      if (url.pathname === '/applications/interactions') return await handleApplicationInteractions(request, env, ctx);
+      if (url.pathname === '/applications/config' && request.method === 'GET') return json(applicationConfiguration(env), 200, { ...cors, 'cache-control': 'no-store' });
+      if (url.pathname === '/applications' || url.pathname === '/applications/status') {
+        const token = (request.headers.get('authorization') || '').match(/^Bearer\s+(\S+)$/i)?.[1] || '';
+        const session = await requireMember(token, env);
+        return await handleApplications(request, env, cors, session);
+      }
       if (url.pathname === '/callback') return await handleCallback(request, url, env);
       if (url.pathname === '/verify') return await handleVerify(request, url, env, cors);
       if (url.pathname === '/requests') return await handleRequests(request, url, env, cors);
@@ -590,6 +600,7 @@ async function readSession(accessToken, env) {
   const guild = guildId ? guilds.find(g => String(g.id) === guildId) : undefined;
   return {
     username: user.username,
+    tag: user.discriminator && user.discriminator !== '0' ? user.username + '#' + user.discriminator : user.username,
     id: String(user.id),
     avatar: user.avatar || '',
     inServer: Boolean(guild),

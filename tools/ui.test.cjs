@@ -2,11 +2,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const { pathToFileURL } = require('node:url');
 const root = path.join(__dirname, '..');
 const artifacts = path.join(root, '.wrangler', 'ui-check');
 fs.mkdirSync(artifacts, { recursive: true });
 
 async function main() {
+  const { applicationConfiguration } = await import(pathToFileURL(path.join(root, 'applications-worker.js')));
+  const applicationConfig = applicationConfiguration({ KYRO_GUILD_ID: '1539961184323772498', DISCORD_BOT_TOKEN: 'dummy', DISCORD_APPLICATIONS_CATEGORY_ID: '1539961184323772499', DISCORD_MOD_ROLE_ID: '1539961184323772500', DISCORD_PUBLIC_KEY: '0'.repeat(64), KYRO_APPLICATIONS: {} });
   const chrome = spawn(process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', [
     '--headless=new', '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check',
     '--user-data-dir=' + path.join(artifacts, 'chrome-' + process.pid), 'about:blank'
@@ -29,8 +32,10 @@ async function main() {
     let sessionId;
     const pending = new Map();
     const events = new Map();
+    const browserErrors = [];
     ws.addEventListener('message', event => {
       const message = JSON.parse(event.data);
+      if (message.method === 'Runtime.exceptionThrown') browserErrors.push(message.params.exceptionDetails);
       if (message.id) {
         const waiter = pending.get(message.id);
         if (waiter) { pending.delete(message.id); message.error ? waiter.reject(new Error(JSON.stringify(message.error))) : waiter.resolve(message.result); }
@@ -64,6 +69,27 @@ async function main() {
         const raw = typeof input === 'string' ? input : input.url;
         if (raw.startsWith('https://kyro-auth.kyro-ownr.workers.dev')) {
           const url = new URL(raw);
+          if (url.pathname.startsWith('/applications')) {
+            const config = ${JSON.stringify(applicationConfig)};
+            const fixtureCase = parameters.get('applicationCase');
+            const records = JSON.parse(sessionStorage.getItem('ui.applications') || '[]');
+            if (url.pathname === '/applications/config') return Promise.resolve(Response.json({ ...config, open: fixtureCase !== 'closed' }));
+            if (role === 'logged') return Promise.resolve(Response.json({ error: 'Join the server.' }, { status: 403 }));
+            if (fixtureCase === 'expired') return Promise.resolve(Response.json({ error: 'Session expired.' }, { status: 401 }));
+            if (url.pathname === '/applications/status') return Promise.resolve(Response.json({ application: records.find(row => row.id === url.searchParams.get('id')) }));
+            if (init?.method === 'POST') {
+              window.__applicationPosts = (window.__applicationPosts || 0) + 1;
+              const payload = JSON.parse(init.body);
+              window.__applicationPayload = payload;
+              if (fixtureCase === 'failed') return Promise.resolve(Response.json({ error: 'Please retry.' }, { status: 503 }));
+              const application = { id: crypto.randomUUID(), role: payload.role, status: 'pending', created: new Date().toISOString() };
+              records.push(application); sessionStorage.setItem('ui.applications', JSON.stringify(records));
+              return new Promise(resolve => setTimeout(() => resolve(Response.json({ application }, { status: 201 })), 100));
+            }
+            const result = Response.json({ profile: { id: '1142933516332437504', username: 'verified-editor', tag: 'verified-editor', account_created: fixtureCase === 'new' ? new Date().toISOString() : '2023-08-21T00:00:00.000Z' }, applications: records });
+            if (fixtureCase === 'slow') return new Promise(resolve => { window.__releaseApplication = () => resolve(result); });
+            return Promise.resolve(result);
+          }
           return nativeFetch('http://127.0.0.1:8787' + url.pathname + url.search, init);
         }
         if (raw.startsWith('https://discord.com/api/v9/invites/')) return Promise.resolve(Response.json({}));
@@ -104,6 +130,80 @@ async function main() {
       await send('Input.dispatchMouseEvent', {type:'mouseReleased',button:'left',clickCount:1,...point});
     };
     const openBoard = async () => evaluate(`(async()=>{ document.querySelector('#requestsOpen').click(); await (${waitExpression})(()=>document.querySelectorAll('.req-item').length>0); return document.querySelectorAll('.req-item').length; })()`);
+    const applyErrors = browserErrors.length;
+    const waitApply = async predicate => {
+      try { await evaluate(`(${waitExpression})(()=>${predicate})`); }
+      catch (error) { console.error(JSON.stringify({ predicate, state: await evaluate("({location:location.href,view:document.querySelector('#applyView')?.textContent,posts:window.__applicationPosts,valid:document.querySelector('#applicationForm')?.checkValidity()})"), browserErrors })); throw error; }
+    };
+    const fillApplication = async () => evaluate(`(()=>{const form=document.querySelector('#applicationForm');for(const input of form.elements){if(input.type==='checkbox')input.checked=true;else if(input.name==='age')input.value='20';else if(input.tagName==='TEXTAREA')input.value='I support editors calmly, verify original resources, and contribute consistently.';else if(input.name==='portfolio')input.value='https://example.com/portfolio';}return form.checkValidity()})()`);
+    for (const width of [1366, 390, 320]) {
+      await send('Emulation.setDeviceMetricsOverride', { width, height: width < 400 ? 844 : 900, deviceScaleFactor: 1, mobile: width < 400 });
+      await navigate('/?uiAuth=out');
+      await evaluate("document.querySelector('#applyOpen').scrollIntoView({block:'center',behavior:'instant'});document.querySelector('#applyOpen').click()");
+      await waitApply("document.querySelector('#applicationsStatusText').textContent.startsWith('Applications are open!')");
+      assert.equal(await evaluate("document.querySelector('#applicationsStatus').open && getComputedStyle(document.querySelector('#applicationsStatus')).backgroundColor === 'rgb(8, 9, 13)' && document.querySelector('#applicationsStatus').scrollWidth <= document.querySelector('#applicationsStatus').clientWidth"), true);
+      assert.equal(await evaluate("document.querySelector('#applicationsStatus a').getAttribute('href')"), '/apply');
+      await screenshot('applications-modal-' + width + '.png');
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      assert.equal(await evaluate("document.querySelector('#applicationsStatus').open"), false);
+      await navigate('/apply?uiAuth=out');
+      await waitApply("document.querySelectorAll('#applyRoles button').length === 3");
+      assert.equal(await evaluate("document.querySelector('h1').textContent === 'Apply' && document.documentElement.scrollWidth <= innerWidth"), true);
+      await screenshot('applications-requirements-' + width + '.png');
+      await evaluate("document.querySelector('[data-role=moderator]').click()");
+      assert.equal(await evaluate("document.querySelector('#applicationRoleTitle').textContent === 'Moderator' && document.querySelector('[data-role=moderator]').getAttribute('aria-pressed') === 'true'"), true);
+      await evaluate("document.querySelector('[data-role=support]').click();document.querySelector('#applyNow').click()");
+      assert.equal(await evaluate("document.querySelector('#applicationLogin') !== null && document.querySelector('#applicationForm') === null"), true);
+      for (const role of ['support', 'moderator', 'contributor']) {
+        await evaluate("sessionStorage.removeItem('ui.applications')");
+        await navigate('/apply?uiAuth=member&role=' + role + '&form=1');
+        await waitApply("document.querySelector('#applicationForm') !== null");
+        assert.equal(await evaluate("document.querySelector('.application-identity').textContent.includes('verified-editor') && document.querySelector('#application-handle').value === 'verified-editor' && document.documentElement.scrollWidth <= innerWidth"), true);
+        await evaluate("document.querySelector('#application-age').value='15'");
+        assert.equal(await evaluate("document.querySelector('#applicationForm').checkValidity()"), false);
+        assert.equal(await fillApplication(), true);
+        await screenshot('application-form-' + role + '-' + width + '.png');
+        await evaluate("document.querySelector('#application-experience').scrollIntoView({block:'center',behavior:'instant'})");
+        await screenshot('application-fields-' + role + '-' + width + '.png');
+        await evaluate("document.querySelector('#applicationSubmit').click();document.querySelector('#applicationSubmit').click()");
+        await waitApply("document.querySelector('.application-receipt') !== null");
+        assert.equal(await evaluate("window.__applicationPosts === 1 && Object.keys(window.__applicationPayload).join(',') === 'role,answers' && document.querySelector('.application-receipt').textContent.includes('Application submitted') && document.documentElement.scrollWidth <= innerWidth"), true);
+        assert.equal(await evaluate("Object.keys(localStorage).some(key=>localStorage.getItem(key).includes('I support editors calmly'))"), false);
+        await screenshot('application-receipt-' + role + '-' + width + '.png');
+        await navigate('/apply?uiAuth=member&role=' + role + '&form=1');
+        await waitApply("document.querySelector('.application-receipt') !== null");
+        assert.equal(await evaluate("document.querySelector('#applicationForm') === null"), true);
+      }
+    }
+    await evaluate("sessionStorage.removeItem('ui.applications')");
+    for (const [fixtureCase, text] of [['new', 'Your Discord account is too new'], ['expired', 'Your Discord session expired'], ['closed', 'Applications are currently closed']]) {
+      await navigate('/apply?uiAuth=member&form=1&applicationCase=' + fixtureCase);
+      await waitApply("document.querySelector('#applyView').textContent.includes(" + JSON.stringify(text) + ")");
+      assert.equal(await evaluate("document.querySelector('#applicationForm') === null"), true);
+    }
+    await navigate('/apply?uiAuth=logged&form=1');
+    await waitApply("document.querySelector('#applicationRefresh') !== null");
+    await navigate('/apply?uiAuth=member&form=1&applicationCase=failed');
+    await waitApply("document.querySelector('#applicationForm') !== null");
+    await fillApplication();
+    await evaluate("document.querySelector('#applicationSubmit').click()");
+    await waitApply("!document.querySelector('#applicationError').hidden");
+    assert.equal(await evaluate("!document.querySelector('#applicationSubmit').disabled && document.querySelector('#application-scenario').value.includes('I support editors calmly')"), true);
+    await navigate('/apply?uiAuth=member&form=1&applicationCase=slow');
+    await waitApply("typeof window.__releaseApplication === 'function'");
+    await evaluate("document.querySelector('#profileBtn').click();document.querySelector('[data-logout]').click();window.__releaseApplication()");
+    await waitApply("document.querySelector('#applicationLogin') !== null");
+    assert.equal(await evaluate("document.querySelector('#applicationForm') === null && document.querySelector('.application-identity') === null"), true);
+    await evaluate("sessionStorage.removeItem('kyro.oauth.state.v1');sessionStorage.removeItem('kyro.oauth.return.v1')");
+    await navigate('/?uiAuth=out&token=synthetic-token&username=forged&id=1142933516332437504&state=unrequested&in_server=true');
+    assert.equal(await evaluate("window.KyroAuth.profile() === null && !location.search.includes('token')"), true);
+    await evaluate("sessionStorage.setItem('kyro.oauth.state.v1','expected');sessionStorage.setItem('kyro.oauth.return.v1','/apply?role=contributor&form=1')");
+    await navigate('/?uiAuth=out&token=synthetic-token&username=verified-editor&id=1142933516332437504&state=expected&in_server=true');
+    await waitApply("location.pathname === '/apply' && document.querySelector('#applicationForm') !== null");
+    assert.equal(await evaluate("new URLSearchParams(location.search).get('role') === 'contributor' && !sessionStorage.getItem('kyro.oauth.return.v1')"), true);
+    assert.deepEqual(browserErrors.slice(applyErrors), []);
+
     for (const width of [1366, 390, 320]) {
       await send('Emulation.setDeviceMetricsOverride', { width, height: width < 400 ? 844 : 900, deviceScaleFactor: 1, mobile: width < 400 });
       await navigate('/?uiAuth=out');
@@ -370,7 +470,7 @@ async function main() {
       await evaluate("document.querySelector('#profileBtn').click()");
       assert.equal(await evaluate("document.querySelector('.pm-state').textContent.includes('Not in the Kyro server') && document.querySelector('.pm-role') === null"), true);
     }
-    console.log(JSON.stringify({ realChrome: 'passed', launchPolish: '1200x630 preview, unique Open Graph on five pages, custom 404 status and return button, search/Ctrl+K/drawers at 1366/390/320px', ownerControls: 'role refresh, public owner submission badge, status, confirm/cancel deletion, member/admin gates, spoofed storage, desktop/mobile', mobileWidth: 390, softwareAccordion: 'mouse, Enter, Space, both OS pages, empty state', toolsAccordion: 'mouse, Enter, Space, both OS pages, desktop/mobile, independent shelves, empty state', toolDownloads: 'AutoCaption modal, Kyro copy, install guide', toonboom: 'download URL, Kyro password, install note, auth gates', boardFirst: true, composer: true, publicChecksumCopy: true, malformedAndMissingHashes: 'hidden', guide: '6 sections', authGates: 'passed', searchAndCatalog: 'passed', artifacts }));
+    console.log(JSON.stringify({ realChrome: 'passed', applications: 'CTA/dialog, three roles, verified forms, single submit, private receipts, duplicates, validation, retry, membership/age/closed gates, logout race, OAuth state and return path at 1366/390/320px', launchPolish: '1200x630 preview, unique Open Graph on five pages, custom 404 status and return button, search/Ctrl+K/drawers at 1366/390/320px', ownerControls: 'role refresh, public owner submission badge, status, confirm/cancel deletion, member/admin gates, spoofed storage, desktop/mobile', mobileWidth: 390, softwareAccordion: 'mouse, Enter, Space, both OS pages, empty state', toolsAccordion: 'mouse, Enter, Space, both OS pages, desktop/mobile, independent shelves, empty state', toolDownloads: 'AutoCaption modal, Kyro copy, install guide', toonboom: 'download URL, Kyro password, install note, auth gates', boardFirst: true, composer: true, publicChecksumCopy: true, malformedAndMissingHashes: 'hidden', guide: '6 sections', authGates: 'passed', searchAndCatalog: 'passed', artifacts }));
   } finally {
     if (ws && ws.readyState === WebSocket.OPEN) ws.close();
     chrome.kill();

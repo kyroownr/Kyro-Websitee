@@ -162,3 +162,20 @@ PAGES.forEach((p) => {
   fs.writeFileSync(path.join(dir, 'index.html'), head(p) + overlays, 'utf8');
   console.log(p.id + '/index.html written');
 });
+
+const applyBase = head({ id: 'apply', title: 'Apply', desc: 'Join the Kyro community team.', meta: 'Apply for Community Support, Moderator, or Contributor roles in the Kyro editing community.' });
+const mainStart = applyBase.indexOf('  <main class="shell">');
+const mainEnd = applyBase.indexOf('  </main>', mainStart) + '  </main>'.length;
+const applyMain = `  <main class="shell">
+    <header class="page-head">
+      <p class="section-label">Join the team</p>
+      <h1 class="page-title">Apply</h1>
+      <p class="page-lede">Help editors, support the community, or contribute to the vault.</p>
+      <div class="application-roles" id="applyRoles" role="group" aria-label="Application role"></div>
+    </header>
+    <div id="applyView" class="application-view" aria-busy="false"></div>
+  </main>`;
+const applyPage = applyBase.slice(0, mainStart).replace('data-page="category" data-category="apply"', 'data-page="apply"').replace('href="#discordCard"', 'href="/#discordCard"') + applyMain + applyBase.slice(mainEnd) + overlays;
+fs.mkdirSync(path.join(root, 'apply'), { recursive: true });
+fs.writeFileSync(path.join(root, 'apply', 'index.html'), applyPage, 'utf8');
+console.log('apply/index.html written');

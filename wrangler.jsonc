@@ -26,10 +26,12 @@
   ],
   "durable_objects": {
     "bindings": [
-      { "name": "KYRO_REQUESTS", "class_name": "KyroRequests" }
+      { "name": "KYRO_REQUESTS", "class_name": "KyroRequests" },
+      { "name": "KYRO_APPLICATIONS", "class_name": "KyroApplications" }
     ]
   },
   "migrations": [
-    { "tag": "requests-v1", "new_sqlite_classes": ["KyroRequests"] }
+    { "tag": "requests-v1", "new_sqlite_classes": ["KyroRequests"] },
+    { "tag": "applications-v1", "new_sqlite_classes": ["KyroApplications"] }
   ]
 }
