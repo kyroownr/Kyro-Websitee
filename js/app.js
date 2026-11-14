@@ -16,14 +16,44 @@
   const DISCORD_CLIENT_ID = '1570702041993711706';
   const KYRO_GUILD_ID = '1539961184323772498';
   const AUTH_WORKER_URL = 'https://kyro-auth.kyro-ownr.workers.dev';
-  const DISCORD_INVITE_URL = 'https://discord.gg/5ch7XeNg98';
+  const DEFAULT_INVITE_URL = 'https://discord.gg/5ch7XeNg98';
+  let INVITE_URL = DEFAULT_INVITE_URL;
+  let INVITE_CODE = INVITE_URL.replace(/^https?:\/\//, '');
+  let INVITE_SLUG = '5ch7XeNg98';
+
+  async function fetchPersonalInvite() {
+    if (!auth.token) {
+      updateInviteLinks(DEFAULT_INVITE_URL);
+      return;
+    }
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/invite', {
+        headers: { 'authorization': 'Bearer ' + auth.token },
+        credentials: 'omit'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.invite_url) {
+          updateInviteLinks(data.invite_url);
+        }
+      }
+    } catch {
+      updateInviteLinks(DEFAULT_INVITE_URL);
+    }
+  }
+
+  function updateInviteLinks(url) {
+    INVITE_URL = url;
+    INVITE_CODE = url.replace(/^https?:\/\//, '');
+    INVITE_SLUG = (url.match(/discord\.gg\/([\w-]+)/) || [])[1] || '5ch7XeNg98';
+    const footerInv = $('#footerInvite');
+    if (footerInv) footerInv.href = INVITE_URL;
+    document.querySelectorAll('a[href^="https://discord.gg/"]').forEach(a => {
+      a.href = INVITE_URL;
+    });
+  }
 
   const REDIRECT_URI = AUTH_WORKER_URL + '/callback';
-  const INVITE_URL = DISCORD_INVITE_URL;
-  const INVITE_CODE = INVITE_URL.replace(/^https?:\/\//, '');
-  /* Bare slug for Discord's public presence endpoint, which needs
-     /api/v9/invites/<code> rather than the discord.gg host. */
-  const INVITE_SLUG = (INVITE_URL.match(/discord\.gg\/([\w-]+)/) || [])[1] || '';
 
   /* ------------------------------ storage ------------------------------ */
   const K_RES = 'kyro.resources.v4';
@@ -2523,6 +2553,7 @@
   initFeedbackDrawer();
   wireAccountModal();
   updateSavedUI();
+  fetchPersonalInvite();
   startServerStats();
   refreshDiscordRole();
 

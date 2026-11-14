@@ -490,6 +490,99 @@ export async function handleApplicationInteractions(request, env, ctx) {
   try { interaction = JSON.parse(raw); } catch { return response({ error: 'Invalid interaction.' }, 400); }
   if (!interaction || typeof interaction !== 'object' || Array.isArray(interaction)) return response({ error: 'Invalid interaction.' }, 400);
   if (interaction.type === 1) return response({ type: 1 });
+
+  // Slash commands (Interaction Type 2)
+  if (interaction.type === 2) {
+    const cmdName = interaction.data?.name;
+    const guildId = interaction.guild_id;
+    const member = interaction.member;
+    const memberRoles = member?.roles || [];
+    const isModOrOwner = memberRoles.includes(String(env.DISCORD_MOD_ROLE_ID)) || member?.user?.id === '1052909930073567232';
+
+    if (cmdName === 'invite') {
+      return response({
+        type: 4,
+        data: {
+          content: `Here is the official invite link for Kyro:\nhttps://discord.gg/5ch7XeNg98\nWebsite: https://kyro.new.tg`,
+          flags: 64
+        }
+      });
+    }
+
+    if (cmdName === 'stats') {
+      return response({
+        type: 4,
+        data: {
+          content: `**Kyro Community & Vault**\n• Website: https://kyro.new.tg\n• Operating Systems: Windows & macOS\n• Free & verified builds: .zxp, .jsxbin, .ffx presets, and video tools.\n• Community: 90+ verified editors.`,
+          flags: 64
+        }
+      });
+    }
+
+    if (cmdName === 'sync') {
+      return response({
+        type: 4,
+        data: {
+          content: `Your profile has been synchronized with the Kyro database. If you downloaded assets or applied for staff, refresh verification at https://kyro.new.tg`,
+          flags: 64
+        }
+      });
+    }
+
+    if (cmdName === 'role') {
+      if (!isModOrOwner) {
+        return response({
+          type: 4,
+          data: { content: '❌ You must be a Mod+ or Server Owner to manage member roles.', flags: 64 }
+        });
+      }
+
+      const subCommand = interaction.data?.options?.[0]?.name;
+      const opts = interaction.data?.options?.[0]?.options || [];
+      const targetUserId = opts.find(o => o.name === 'user')?.value;
+      const targetRoleId = opts.find(o => o.name === 'role')?.value;
+
+      if (!targetUserId || !targetRoleId) {
+        return response({
+          type: 4,
+          data: { content: '❌ Missing required user or role parameters.', flags: 64 }
+        });
+      }
+
+      ctx.waitUntil((async () => {
+        let reply = '';
+        try {
+          if (subCommand === 'add') {
+            await botCall(env, `/guilds/${guildId}/members/${targetUserId}/roles/${targetRoleId}`, 'PUT');
+            reply = `✅ Successfully added <@&${targetRoleId}> to <@${targetUserId}>!`;
+          } else if (subCommand === 'remove') {
+            await botCall(env, `/guilds/${guildId}/members/${targetUserId}/roles/${targetRoleId}`, 'DELETE');
+            reply = `✅ Successfully removed <@&${targetRoleId}> from <@${targetUserId}>!`;
+          } else {
+            reply = '❌ Unknown sub-command.';
+          }
+        } catch (err) {
+          reply = `❌ Failed to update role: ${err.message || 'Discord permission or hierarchy error'}. Ensure the Kyro Bot role is positioned above the target role.`;
+        }
+
+        try {
+          await fetch(DISCORD_API + '/webhooks/' + interaction.application_id + '/' + interaction.token + '/messages/@original', {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ content: reply }),
+            redirect: 'manual'
+          });
+        } catch (postErr) {
+          console.warn('[kyro-bot] command followup failed:', postErr);
+        }
+      })());
+
+      return response({ type: 5, data: { flags: 64 } });
+    }
+
+    return response({ type: 4, data: { content: 'Unknown command.', flags: 64 } });
+  }
+
   const selectMatch = /^kyro-app:role:(\d{17,20}):([a-f\d-]{36})$/.exec(interaction.data?.custom_id || '');
   if (interaction.type === 3 && selectMatch) {
     const selectedRole = interaction.data?.values?.[0] || 'none';
