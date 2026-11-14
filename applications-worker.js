@@ -533,6 +533,41 @@ export async function handleApplicationInteractions(request, env, ctx) {
       });
     }
 
+    if (cmdName === 'start-kyro') {
+      const isOwner = member?.user?.id === '1052909930073567232' || memberRoles.includes('1539968441094512710');
+      if (!isOwner) {
+        return response({
+          type: 4,
+          data: { content: '❌ Only the Kyro Server Owner can launch the Staff Bot Control Center.', flags: 64 }
+        });
+      }
+
+      ctx.waitUntil((async () => {
+        try {
+          // Send signal to localhost dashboard if running
+          await fetch('http://127.0.0.1:4000/api/launch', { method: 'POST', signal: AbortSignal.timeout(2000) }).catch(() => {});
+        } catch (e) {}
+
+        // Wait 3 seconds, then delete the original ephemeral confirmation so no traces remain
+        await new Promise(r => setTimeout(r, 3000));
+        try {
+          await fetch(DISCORD_API + '/webhooks/' + interaction.application_id + '/' + interaction.token + '/messages/@original', {
+            method: 'DELETE'
+          });
+        } catch (delErr) {
+          console.warn('[kyro-bot] Failed to delete /start-kyro message:', delErr);
+        }
+      })());
+
+      return response({
+        type: 4,
+        data: {
+          content: '⚡ **Kyro Staff Bot Dashboard opening on Localhost:**\n👉 http://localhost:4000\n*(This confirmation message will self-delete in 3 seconds)*',
+          flags: 64
+        }
+      });
+    }
+
     if (cmdName === 'role') {
       if (!isModOrOwner) {
         return response({
