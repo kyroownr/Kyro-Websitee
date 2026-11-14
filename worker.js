@@ -82,7 +82,11 @@ export default {
       if (url.pathname === '/downloads') return await handleDownloads(request, url, env, cors);
       if (url.pathname === '/feedback') return await handleFeedback(request, url, env, cors);
       if (url.pathname === '/invite') return await handleInvite(request, url, env, cors);
-      return json({ error: 'Unknown route. Use /callback, /verify, /requests, /feedback, /invite or /downloads.' }, 404, cors);
+      if (url.pathname === '/dashboard/settings') return await handleDashboardSettings(request, url, env, cors);
+      if (url.pathname === '/dashboard/embed') return await handleDashboardEmbed(request, url, env, cors);
+      if (url.pathname === '/dashboard/lockdown') return await handleDashboardLockdown(request, url, env, cors);
+      if (url.pathname === '/dashboard/audit') return await handleDashboardAudit(request, url, env, cors);
+      return json({ error: 'Unknown route. Use /callback, /verify, /requests, /feedback, /invite, /downloads or /dashboard/*.' }, 404, cors);
     } catch (err) {
       const message = (err && err.message) || String(err);
       // A callback failure belongs in the URL, not in a JSON body the browser cannot render.
@@ -134,6 +138,7 @@ async function handleCallback(request, url, env) {
     id: session.id,
     avatar: session.avatar,
     in_server: session.inServer,
+    role: session.role || 'Member',
     state
   }), 302);
 }
@@ -153,6 +158,7 @@ async function handleVerify(request, url, env, cors) {
     username: session.username,
     id: session.id,
     avatar: session.avatar,
+    role: session.role || (session.isOwner ? 'Owner' : 'Member'),
     guild_id: String(env.KYRO_GUILD_ID || '')
   }, 200, cors);
 }
@@ -807,13 +813,42 @@ async function readSession(accessToken, env) {
   const guilds = await discord('https://discord.com/api/users/@me/guilds', accessToken);
   const guildId = String(env.KYRO_GUILD_ID || '');
   const guild = guildId ? guilds.find(g => String(g.id) === guildId) : undefined;
+  
+  let roleName = 'Member';
+  let isOwner = Boolean(guild && guild.owner === true);
+  if (user.id === '1052909930073567232') {
+    isOwner = true;
+    roleName = 'Owner';
+  } else if (guild && env.DISCORD_BOT_TOKEN) {
+    try {
+      const memberRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${user.id}`, {
+        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
+      });
+      if (memberRes.ok) {
+        const member = await memberRes.json();
+        const mRoles = member.roles || [];
+        if (mRoles.includes('1539968441094512710')) roleName = 'Owner';
+        else if (mRoles.includes('1542090972765360208')) roleName = 'Mod+';
+        else if (mRoles.includes('1571073124328276078')) roleName = 'Contributor';
+        else if (mRoles.includes('1571073534103527504')) roleName = 'Support';
+        else if (mRoles.includes('1542127783440818226')) roleName = 'Member';
+        else if (mRoles.includes('1542128056439799839')) roleName = 'Editor';
+        else if (mRoles.includes('1542128525509927003')) roleName = 'Explorer';
+        else if (mRoles.includes('1548284444270395416')) roleName = 'Gumroad';
+      }
+    } catch (e) {
+      console.warn('[kyro-auth] Guild member lookup failed:', e);
+    }
+  }
+
   return {
     username: user.username,
     tag: user.discriminator && user.discriminator !== '0' ? user.username + '#' + user.discriminator : user.username,
     id: String(user.id),
     avatar: user.avatar || '',
     inServer: Boolean(guild),
-    isOwner: Boolean(guild && guild.owner === true)
+    isOwner,
+    role: roleName
   };
 }
 
@@ -827,6 +862,199 @@ async function discord(href, accessToken) {
     new Error('Discord API error ' + res.status), { status: 502, code: 'discord_api_error' }
   );
   return res.json();
+}
+
+/* ----------------------- Kyro Bot Web Dashboard ------------------------ */
+const DASHBOARD_CONFIG_KEY = 'kyro.bot_config.v1';
+const DASHBOARD_AUDIT_KEY = 'kyro.bot_audit.v1';
+
+async function logBotAudit(env, action, byUser, details) {
+  const entry = {
+    id: crypto.randomUUID(),
+    action,
+    by: byUser.username,
+    by_id: byUser.id,
+    details: details || '',
+    timestamp: new Date().toISOString()
+  };
+  await mutateDoc(env, DASHBOARD_AUDIT_KEY, { logs: [] }, curr => {
+    const logs = Array.isArray(curr?.logs) ? curr.logs : [];
+    return { logs: [entry, ...logs].slice(0, 100) };
+  });
+
+  // Post to public/audit channel if configured
+  if (env.DISCORD_BOT_TOKEN) {
+    try {
+      const channelId = env.DISCORD_PUBLIC_APPS_CHANNEL_ID || '1542135796369457182';
+      await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+        method: 'POST',
+        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          embeds: [{
+            title: `🛡️ Kyro Bot Audit: ${action}`,
+            description: details || 'Administrative event logged from Web Dashboard.',
+            color: action.includes('Lockdown') ? 0xef4444 : 0x5865f2,
+            fields: [{ name: 'Staff Member', value: `<@${byUser.id}> (${byUser.username})`, inline: true }],
+            timestamp: entry.timestamp
+          }]
+        })
+      });
+    } catch (e) {
+      console.warn('[kyro-audit] Discord notification error:', e);
+    }
+  }
+}
+
+function checkAdminOrOwner(session) {
+  if (!session || !session.inServer) throw fail(401, 'unauthorized', 'Sign in with Discord to access Kyro dashboard.');
+  const role = (session.role || '').toLowerCase();
+  const allowed = session.isOwner || session.id === '1052909930073567232' || role === 'owner' || role === 'mod+';
+  if (!allowed) throw fail(403, 'forbidden', 'Only Mod+ or the Server Owner have access to the Kyro Bot Dashboard.');
+}
+
+async function handleDashboardSettings(request, url, env, cors) {
+  const token = bearerToken(request, url);
+  const session = await requireMember(token, env);
+  checkAdminOrOwner(session);
+
+  const defaultConfig = {
+    modules: {
+      applications: true,
+      requests_board: true,
+      anti_raid: true,
+      welcome_cards: true,
+      audit_logging: true,
+      custom_embeds: true
+    },
+    anti_raid: {
+      emergency_lockdown: false,
+      mass_join_protection: true,
+      spam_filter: true
+    },
+    welcome: {
+      channel_id: '1542135796369457182',
+      message: 'Welcome to Kyro! Check out free builds and presets on https://kyro.new.tg'
+    }
+  };
+
+  if (request.method === 'GET') {
+    const doc = (await readDoc(env, DASHBOARD_CONFIG_KEY, defaultConfig)).value;
+    return json({ config: doc, user: { username: session.username, role: session.role } }, 200, cors);
+  }
+
+  if (request.method === 'POST') {
+    const input = await jsonBody(request);
+    const updated = await mutateDoc(env, DASHBOARD_CONFIG_KEY, defaultConfig, curr => {
+      return {
+        ...curr,
+        modules: { ...curr.modules, ...(input.modules || {}) },
+        anti_raid: { ...curr.anti_raid, ...(input.anti_raid || {}) },
+        welcome: { ...curr.welcome, ...(input.welcome || {}) }
+      };
+    });
+
+    await logBotAudit(env, 'Module Settings Updated', session, 'Updated module toggles and anti-raid configurations.');
+    return json({ ok: true, config: updated }, 200, cors);
+  }
+
+  return json({ error: 'Use GET or POST.' }, 405, cors);
+}
+
+async function handleDashboardLockdown(request, url, env, cors) {
+  if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
+  const token = bearerToken(request, url);
+  const session = await requireMember(token, env);
+  checkAdminOrOwner(session);
+
+  const input = await jsonBody(request);
+  const lockdownState = Boolean(input.lockdown);
+
+  await mutateDoc(env, DASHBOARD_CONFIG_KEY, {}, curr => ({
+    ...curr,
+    anti_raid: { ...(curr.anti_raid || {}), emergency_lockdown: lockdownState }
+  }));
+
+  // Adjust @everyone SEND_MESSAGES permission if lockdown is toggled
+  if (env.DISCORD_BOT_TOKEN) {
+    try {
+      const guildId = String(env.DISCORD_GUILD_ID || env.KYRO_GUILD_ID);
+      // @everyone role id equals guildId
+      const SEND_MESSAGES = 1n << 11n;
+      const everyoneRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/roles/${guildId}`, {
+        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
+      });
+      if (everyoneRes.ok) {
+        const roleData = await everyoneRes.json();
+        let bits = BigInt(roleData.permissions);
+        if (lockdownState) bits = bits & ~SEND_MESSAGES; // revoke chat
+        else bits = bits | SEND_MESSAGES; // grant chat back
+        await fetch(`https://discord.com/api/v10/guilds/${guildId}/roles/${guildId}`, {
+          method: 'PATCH',
+          headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
+          body: JSON.stringify({ permissions: bits.toString() })
+        });
+      }
+    } catch (err) {
+      console.warn('[kyro-lockdown] Permission adjust error:', err);
+    }
+  }
+
+  await logBotAudit(
+    env,
+    lockdownState ? '🚨 Emergency Lockdown Activated' : '✅ Emergency Lockdown Lifted',
+    session,
+    lockdownState ? 'Chat permissions disabled for @everyone role.' : 'Chat permissions restored for @everyone role.'
+  );
+
+  return json({ ok: true, lockdown: lockdownState }, 200, cors);
+}
+
+async function handleDashboardEmbed(request, url, env, cors) {
+  if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
+  const token = bearerToken(request, url);
+  const session = await requireMember(token, env);
+  checkAdminOrOwner(session);
+
+  const input = await jsonBody(request);
+  const channelId = input.channel_id || env.DISCORD_PUBLIC_APPS_CHANNEL_ID || '1542135796369457182';
+  const embed = {
+    title: cleanText(input.title, 250) || 'Kyro Announcement',
+    description: cleanText(input.description, 4000) || '',
+    color: Number(input.color) || 0x5865f2,
+    footer: { text: 'Sent via Kyro Bot Web Dashboard · kyro.new.tg' },
+    timestamp: new Date().toISOString()
+  };
+
+  if (input.image_url && /^https?:\/\//.test(input.image_url)) {
+    embed.image = { url: input.image_url };
+  }
+
+  if (env.DISCORD_BOT_TOKEN) {
+    const postRes = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+      method: 'POST',
+      headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: input.content ? cleanText(input.content, 2000) : undefined,
+        embeds: [embed]
+      })
+    });
+    if (!postRes.ok) {
+      const errText = await postRes.text();
+      throw fail(postRes.status, 'discord_post_failed', `Failed to send embed: ${errText}`);
+    }
+  }
+
+  await logBotAudit(env, 'Visual Embed Broadcasted', session, `Posted embed "${embed.title}" to channel <#${channelId}>.`);
+  return json({ ok: true, message: 'Embed sent successfully!' }, 200, cors);
+}
+
+async function handleDashboardAudit(request, url, env, cors) {
+  const token = bearerToken(request, url);
+  const session = await requireMember(token, env);
+  checkAdminOrOwner(session);
+
+  const doc = (await readDoc(env, DASHBOARD_AUDIT_KEY, { logs: [] })).value;
+  return json({ logs: doc.logs || [] }, 200, cors);
 }
 
 /* -------------------------------- plumbing ------------------------------- */

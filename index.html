@@ -343,6 +343,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             Settings
           </button>
+          <button type="button" class="acc-tab" data-acc-tab="botdashboard" id="accBotDashboardTab" style="display:none;color:#60a5fa;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 8v8"/><path d="m8 12 4 4 4-4"/></svg>
+            Bot Dashboard
+          </button>
         </nav>
       </aside>
 
@@ -492,6 +496,93 @@
             <div class="acc-group-title"><span>Data &amp; Privacy</span></div>
             <p class="acc-group-desc">Request a copy of your data (GDPR data portability). Our team will process your request and notify you when your export is ready.</p>
             <button type="button" class="btn btn-ghost btn-sm" id="accExportData">Request Export Data</button>
+          </div>
+        </div>
+
+        <!-- Tab 6: Bot Dashboard (Owner & Mod+) -->
+        <div class="acc-panel" id="accPanelBotDashboard">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <div>
+              <h3 class="acc-heading" style="margin-bottom:4px;">Kyro Bot Control Center</h3>
+              <p class="acc-subheading" style="margin-bottom:0;">Automated All-in-One server management, modules, anti-raid &amp; Discord sync.</p>
+            </div>
+            <span class="badge badge-free mono" id="botStatusBadge">24/7 CLOUD ACTIVE</span>
+          </div>
+
+          <!-- Anti-Raid / Lockdown -->
+          <div class="acc-settings-group" style="border-color:rgba(239,68,68,0.3);background:rgba(239,68,68,0.04);">
+            <div class="acc-group-title"><span style="color:#ef4444;">🚨 Automated Safety &amp; Anti-Raid</span></div>
+            <p class="acc-group-desc">Protect against mass joins, token-bot raids, spam waves, and unauthorized server modifications.</p>
+            
+            <div class="acc-row-item">
+              <div class="acc-row-info">
+                <div class="acc-row-title" style="color:#f87171;">Emergency Lockdown</div>
+                <div class="acc-row-sub">Instantly freeze chat for @everyone across the Discord server.</div>
+              </div>
+              <label class="apple-switch"><input type="checkbox" id="botEmergencyLockdown"><span class="apple-slider"></span></label>
+            </div>
+
+            <div class="acc-row-item">
+              <div class="acc-row-info">
+                <div class="acc-row-title">Mass Join &amp; Raid Protection</div>
+                <div class="acc-row-sub">Auto-isolate new accounts joining within 10 seconds of each other.</div>
+              </div>
+              <label class="apple-switch"><input type="checkbox" id="botMassJoinProt" checked><span class="apple-slider"></span></label>
+            </div>
+          </div>
+
+          <!-- Granular Module Toggles -->
+          <div class="acc-settings-group">
+            <div class="acc-group-title"><span>Granular Module Toggles</span></div>
+            <p class="acc-group-desc">Turn systems on or off with a single switch to keep the bot lightweight and focused.</p>
+
+            <div class="acc-row-item">
+              <div class="acc-row-info">
+                <div class="acc-row-title">Staff Applications &amp; Ticket Engine</div>
+                <div class="acc-row-sub">Interactive Discord channels, reviewer claims, and modal rejection reasons.</div>
+              </div>
+              <label class="apple-switch"><input type="checkbox" id="modApps" checked><span class="apple-slider"></span></label>
+            </div>
+
+            <div class="acc-row-item">
+              <div class="acc-row-info">
+                <div class="acc-row-title">Community Requests Wishlist</div>
+                <div class="acc-row-sub">Transactional requests board and Discord webhook announcement dispatch.</div>
+              </div>
+              <label class="apple-switch"><input type="checkbox" id="modRequests" checked><span class="apple-slider"></span></label>
+            </div>
+
+            <div class="acc-row-item">
+              <div class="acc-row-info">
+                <div class="acc-row-title">Comprehensive Audit Logging</div>
+                <div class="acc-row-sub">Tracks every admin action, permission patch, and config change in real time.</div>
+              </div>
+              <label class="apple-switch"><input type="checkbox" id="modAudit" checked><span class="apple-slider"></span></label>
+            </div>
+          </div>
+
+          <!-- Visual Embed Builder -->
+          <div class="acc-settings-group">
+            <div class="acc-group-title"><span>Visual Embed &amp; Announcement Builder</span></div>
+            <p class="acc-group-desc">Craft rich text embeds with live preview and post them directly to server channels.</p>
+            
+            <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px;">
+              <input type="text" class="acc-input" id="embedTitle" placeholder="Embed Title (e.g. Kyro Vault V2 Update)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+              <textarea class="acc-input" id="embedDesc" rows="3" placeholder="Embed Description / Announcement details..." style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;resize:vertical;"></textarea>
+              <div style="display:flex;gap:10px;">
+                <input type="text" class="acc-input" id="embedColor" placeholder="Color hex (e.g. 5865f2)" value="5865f2" style="flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                <button type="button" class="btn btn-primary btn-sm" id="btnBroadcastEmbed">Broadcast Embed</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Audit Log Feed -->
+          <div class="acc-settings-group">
+            <div class="acc-group-title"><span>Bot Audit Log</span></div>
+            <p class="acc-group-desc">Persistent record of administrative events and moderation actions.</p>
+            <div id="botAuditLogList" style="display:flex;flex-direction:column;gap:8px;margin-top:10px;max-height:200px;overflow-y:auto;">
+              <div class="acc-row-sub">Loading audit logs…</div>
+            </div>
           </div>
         </div>
       </main>

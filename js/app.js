@@ -341,12 +341,13 @@
       return;
     }
     const verified = auth.state === VERIFIED;
+    const userRole = (auth.user && auth.user.role) || (discordRole ? discordRole.toUpperCase() : 'MEMBER');
     authSlot.innerHTML =
       '<button type="button" class="profile-pill" id="profileBtn" aria-haspopup="menu" aria-expanded="false">' +
         '<span class="avatar">' + avatarHTML(auth.user) +
           '<i class="status-dot' + (verified ? ' is-verified' : '') + '" aria-hidden="true"></i></span>' +
         '<span class="profile-name">' + esc(auth.user.username) + '</span>' +
-        (discordRole === 'owner' ? '<span class="badge badge-free mono profile-role">OWNER</span>' : '') +
+        (userRole ? '<span class="badge badge-free mono profile-role">' + esc(userRole) + '</span>' : '') +
         '<span class="profile-caret" aria-hidden="true">▾</span>' +
       '</button>';
     const pill = $('#profileBtn');
@@ -358,6 +359,7 @@
     const existing = authSlot.querySelector('.profile-menu');
     if (existing || force === false) { existing.remove(); pill.classList.remove('is-open'); pill.setAttribute('aria-expanded', 'false'); return; }
     const verified = auth.state === VERIFIED;
+    const userRole = (auth.user && auth.user.role) || (discordRole ? discordRole.toUpperCase() : 'MEMBER');
     const menu = document.createElement('div');
     menu.className = 'profile-menu';
     menu.setAttribute('role', 'menu');
@@ -367,7 +369,7 @@
         '<div class="pm-sub">Discord' + (auth.user.id ? ' · id ' + esc(auth.user.id) : '') + '</div></div></div>' +
       '<div class="pm-state ' + (verified ? 'is-ok' : 'is-out') + '">' +
         (verified ? ICON.check + 'Verified server member' : ICON.lock + 'Not in the Kyro server') + '</div>' +
-      (verified ? '<div class="pm-role mono">Discord role <span class="badge' + (discordRole === 'owner' ? ' badge-free' : '') + '">' + (discordRole ? discordRole.toUpperCase() : 'UNVERIFIED') + '</span></div>' : '') +
+      (verified ? '<div class="pm-role mono">Discord role <span class="badge badge-free">' + esc(userRole) + '</span></div>' : '') +
       '<button type="button" class="pm-item" role="menuitem" data-account-settings>Account Settings</button>' +
       (verified ? '<button type="button" class="pm-item" role="menuitem" data-recheck>Refresh Discord Role</button>' : '') +
       (verified ? '' :
@@ -429,9 +431,14 @@
     toast({ title: 'Logged out', sub: 'Discord session cleared from this browser.', icon: ICON.x });
   }
 
-  function setDiscordRole(isOwner) {
-    const role = auth.state === VERIFIED ? (isOwner === true ? 'owner' : 'member') : '';
+  function setDiscordRole(isOwner, customRole) {
+    let role = '';
+    if (auth.state === VERIFIED) {
+      if (customRole) role = customRole.toLowerCase();
+      else role = isOwner === true ? 'owner' : 'member';
+    }
     if (role !== 'owner') reqOwner = false;
+    if (auth.user) auth.user.role = customRole || (isOwner ? 'Owner' : 'Member');
     if (role === discordRole) return;
     discordRole = role;
     const menuOpen = Boolean(authSlot.querySelector('.profile-menu'));
@@ -454,8 +461,9 @@
       const state = data.in_server ? VERIFIED : LOGGED;
       const stateChanged = auth.state !== state;
       auth.state = state;
+      if (auth.user) auth.user.role = data.role || (data.is_owner ? 'Owner' : 'Member');
       saveAuth();
-      setDiscordRole(data.is_owner);
+      setDiscordRole(data.is_owner, data.role);
       if (stateChanged) renderAuth();
       renderAccess();
     } catch {
@@ -498,8 +506,9 @@
       if (!res.ok) throw new Error(data.error || ('Worker responded ' + res.status));
 
       const member = Boolean(data.in_server);
+      if (auth.user) auth.user.role = data.role || (data.is_owner ? 'Owner' : 'Member');
       auth = { state: member ? VERIFIED : LOGGED, user: auth.user, token: data.token || auth.token };
-      setDiscordRole(data.is_owner);
+      setDiscordRole(data.is_owner, data.role);
       saveAuth();
       renderAuth();
       renderAccess();
@@ -1514,17 +1523,23 @@
     const avatarEl = $('#accUserAvatar');
     const nameEl = $('#accUserName');
     const metaEl = $('#accUserMeta');
+    const botDashTab = $('#accBotDashboardTab');
     if (!avatarEl || !nameEl || !metaEl) return;
 
     if (auth.state !== OUT && auth.user) {
       avatarEl.innerHTML = avatarHTML(auth.user);
       wireAvatars(avatarEl);
       nameEl.textContent = auth.user.username;
-      metaEl.textContent = '@' + auth.user.username + ' · ' + (auth.state === VERIFIED ? 'Verified Kyro Member' : 'Guest Account');
+      const roleBadge = auth.user.role || (discordRole ? discordRole.toUpperCase() : (auth.state === VERIFIED ? 'Member' : 'Guest'));
+      metaEl.textContent = '@' + auth.user.username + ' · ' + roleBadge + (auth.state === VERIFIED ? ' · Verified' : '');
+
+      const isStaffOrOwner = roleBadge.toLowerCase() === 'owner' || roleBadge.toLowerCase() === 'mod+' || auth.user.id === '1052909930073567232';
+      if (botDashTab) botDashTab.style.display = isStaffOrOwner ? 'flex' : 'none';
     } else {
       avatarEl.innerHTML = 'K';
       nameEl.textContent = 'Guest';
       metaEl.textContent = '@guest · Not signed in with Discord';
+      if (botDashTab) botDashTab.style.display = 'none';
     }
   }
 
@@ -1537,7 +1552,8 @@
       requests: $('#accPanelRequests'),
       vault: $('#accPanelVault'),
       downloads: $('#accPanelDownloads'),
-      settings: $('#accPanelSettings')
+      settings: $('#accPanelSettings'),
+      botdashboard: $('#accPanelBotDashboard')
     };
 
     Object.entries(panels).forEach(([k, el]) => {
@@ -1549,6 +1565,7 @@
     else if (tabKey === 'requests') renderAccountRequests();
     else if (tabKey === 'vault') renderAccountVault();
     else if (tabKey === 'downloads') renderAccountDownloads();
+    else if (tabKey === 'botdashboard') loadBotDashboard();
   }
 
   async function renderAccountApplications() {
@@ -1580,15 +1597,19 @@
           '</div>';
         return;
       }
-      target.innerHTML = apps.map(app =>
-        '<div class="acc-row-item">' +
-          '<div class="acc-row-info">' +
-            '<div class="acc-row-title">' + esc(app.role ? app.role.toUpperCase() : 'APPLICATION') + '</div>' +
-            '<div class="acc-row-sub">Status: ' + esc(app.status.replace(/_/g, ' ')) + ' · Submitted ' + (app.created ? app.created.slice(0, 10) : '') + '</div>' +
+      target.innerHTML = apps.map(app => {
+        const isDeclined = app.status === 'declined';
+        return '<div class="acc-row-item" style="flex-direction:column;align-items:stretch;gap:8px;">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;width:100%;">' +
+            '<div class="acc-row-info">' +
+              '<div class="acc-row-title">' + esc(app.role ? app.role.toUpperCase() : 'APPLICATION') + '</div>' +
+              '<div class="acc-row-sub">Status: <span style="color:' + (isDeclined ? '#ef4444' : app.status === 'approved' ? '#10b981' : '#60a5fa') + ';font-weight:600;">' + esc(app.status.replace(/_/g, ' ')) + '</span> · Submitted ' + (app.created ? app.created.slice(0, 10) : '') + '</div>' +
+            '</div>' +
+            '<a class="btn btn-ghost btn-sm" href="/apply?application=' + encodeURIComponent(app.id) + '">View Receipt</a>' +
           '</div>' +
-          '<a class="btn btn-ghost btn-sm" href="/apply?application=' + encodeURIComponent(app.id) + '">View Receipt</a>' +
-        '</div>'
-      ).join('');
+          (isDeclined && app.decline_reason ? '<div style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);border-radius:8px;padding:8px 12px;font-size:0.85rem;color:#fca5a5;"><strong style="display:block;margin-bottom:2px;color:#f87171;">Reason for rejection:</strong>' + esc(app.decline_reason) + '</div>' : '') +
+        '</div>';
+      }).join('');
     } catch {
       target.innerHTML =
         '<div class="acc-empty-box">' +
@@ -1685,6 +1706,146 @@
     }));
   }
 
+  async function loadBotDashboard() {
+    if (!auth.token) return;
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/dashboard/settings', {
+        headers: { authorization: 'Bearer ' + auth.token },
+        credentials: 'omit'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const cfg = data.config || {};
+        const mods = cfg.modules || {};
+        const anti = cfg.anti_raid || {};
+
+        const elLockdown = $('#botEmergencyLockdown');
+        const elMassJoin = $('#botMassJoinProt');
+        const elModApps = $('#modApps');
+        const elModReq = $('#modRequests');
+        const elModAudit = $('#modAudit');
+
+        if (elLockdown) elLockdown.checked = Boolean(anti.emergency_lockdown);
+        if (elMassJoin) elMassJoin.checked = Boolean(anti.mass_join_protection);
+        if (elModApps) elModApps.checked = Boolean(mods.applications);
+        if (elModReq) elModReq.checked = Boolean(mods.requests_board);
+        if (elModAudit) elModAudit.checked = Boolean(mods.audit_logging);
+      }
+    } catch (e) {
+      console.warn('Failed to load dashboard settings:', e);
+    }
+
+    try {
+      const auditRes = await fetch(AUTH_WORKER_URL + '/dashboard/audit', {
+        headers: { authorization: 'Bearer ' + auth.token },
+        credentials: 'omit'
+      });
+      if (auditRes.ok) {
+        const data = await auditRes.json();
+        const logs = data.logs || [];
+        const container = $('#botAuditLogList');
+        if (container) {
+          if (!logs.length) {
+            container.innerHTML = '<div class="acc-row-sub">No audit entries logged yet.</div>';
+          } else {
+            container.innerHTML = logs.map(l =>
+              '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:6px 10px;font-size:0.8rem;">' +
+                '<div style="display:flex;justify-content:space-between;color:#e2e8f0;font-weight:600;">' +
+                  '<span>' + esc(l.action) + '</span>' +
+                  '<span style="color:var(--dim);font-size:0.75rem;">' + (l.timestamp ? l.timestamp.slice(11, 19) : '') + '</span>' +
+                '</div>' +
+                '<div style="color:var(--dim);margin-top:2px;">' + esc(l.details || '') + ' · <span style="color:#60a5fa;">' + esc(l.by) + '</span></div>' +
+              '</div>'
+            ).join('');
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load audit logs:', e);
+    }
+  }
+
+  function wireBotDashboardEvents() {
+    $('#botEmergencyLockdown')?.addEventListener('change', async (e) => {
+      const active = e.target.checked;
+      try {
+        const res = await fetch(AUTH_WORKER_URL + '/dashboard/lockdown', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+          body: JSON.stringify({ lockdown: active }),
+          credentials: 'omit'
+        });
+        if (res.ok) {
+          toast({
+            title: active ? 'Emergency Lockdown Active' : 'Lockdown Lifted',
+            sub: active ? 'Server chat frozen for @everyone.' : 'Chat permissions restored.',
+            icon: ICON.shield
+          });
+          loadBotDashboard();
+        }
+      } catch (err) {
+        toast({ title: 'Lockdown toggle failed', sub: err.message, icon: ICON.x });
+      }
+    });
+
+    const updateModuleToggles = async () => {
+      try {
+        await fetch(AUTH_WORKER_URL + '/dashboard/settings', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+          body: JSON.stringify({
+            modules: {
+              applications: $('#modApps')?.checked ?? true,
+              requests_board: $('#modRequests')?.checked ?? true,
+              audit_logging: $('#modAudit')?.checked ?? true
+            },
+            anti_raid: {
+              mass_join_protection: $('#botMassJoinProt')?.checked ?? true
+            }
+          }),
+          credentials: 'omit'
+        });
+        toast({ title: 'Modules Updated', sub: 'Kyro bot toggles saved to cloud.', icon: ICON.check });
+      } catch (err) {
+        toast({ title: 'Update failed', sub: err.message, icon: ICON.x });
+      }
+    };
+
+    $('#modApps')?.addEventListener('change', updateModuleToggles);
+    $('#modRequests')?.addEventListener('change', updateModuleToggles);
+    $('#modAudit')?.addEventListener('change', updateModuleToggles);
+    $('#botMassJoinProt')?.addEventListener('change', updateModuleToggles);
+
+    $('#btnBroadcastEmbed')?.addEventListener('click', async () => {
+      const title = $('#embedTitle')?.value.trim();
+      const desc = $('#embedDesc')?.value.trim();
+      const color = parseInt($('#embedColor')?.value.trim() || '5865f2', 16);
+      if (!title || !desc) {
+        toast({ title: 'Embed incomplete', sub: 'Provide a title and description.', icon: ICON.x });
+        return;
+      }
+      try {
+        const res = await fetch(AUTH_WORKER_URL + '/dashboard/embed', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+          body: JSON.stringify({ title, description: desc, color }),
+          credentials: 'omit'
+        });
+        if (res.ok) {
+          toast({ title: 'Embed Broadcasted', sub: 'Sent to Discord server.', icon: ICON.check });
+          $('#embedTitle').value = '';
+          $('#embedDesc').value = '';
+          loadBotDashboard();
+        } else {
+          const err = await res.json().catch(() => ({}));
+          toast({ title: 'Failed to broadcast', sub: err.error || 'Server error', icon: ICON.x });
+        }
+      } catch (e) {
+        toast({ title: 'Network error', sub: e.message, icon: ICON.x });
+      }
+    });
+  }
+
   function wireAccountModal() {
     if (!accountModalOverlay) return;
     accountModalClose?.addEventListener('click', closeAccountModal);
@@ -1715,6 +1876,8 @@
     $('#accExportData')?.addEventListener('click', () => {
       toast({ title: 'Export request submitted', sub: 'Your data package request has been queued.', icon: ICON.check });
     });
+
+    wireBotDashboardEvents();
   }
 
   /* ------------------------------ detail modal -------------------------- */

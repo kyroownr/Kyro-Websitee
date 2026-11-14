@@ -64,6 +64,8 @@ function publicApplication(row, env) {
   return {
     id: row.id, role: row.role, status: row.status, created: row.created,
     reviewed_at: row.reviewed_at || null,
+    decline_reason: row.decline_reason || null,
+    reviewed_by: row.reviewed_by || null,
     ...(env.KYRO_APPLICATION_INTERVIEW_ENABLED === 'true' && row.channel_id ? { interview_url: 'https://discord.com/channels/' + String(env.KYRO_GUILD_ID) + '/' + row.channel_id } : {})
   };
 }
@@ -177,8 +179,9 @@ function applicationMessage(row) {
     for (let offset = 0; offset < value.length; offset += 1000) fields.push({ name: field.label + (offset ? ' (continued)' : ''), value: value.slice(offset, offset + 1000), inline: false });
   }
     const claiming = row.claimed_by ? ' (Claimed by <@' + row.claimed_by + '>)' : '';
-    fields.push({ name: 'Reviewed By', value: (row.reviewed_by ? row.reviewed_by : 'Not reviewed') + claiming, inline: true });
+    fields.push({ name: 'Reviewed By', value: (row.reviewed_by ? '<@' + row.reviewed_by + '>' : 'Not reviewed') + claiming, inline: true });
     if (row.claimed_by && !row.reviewed_by) fields.push({ name: 'Claimed By', value: '<@' + row.claimed_by + '>', inline: true });
+    if (row.decline_reason) fields.push({ name: 'Rejection Reason', value: safeText(row.decline_reason), inline: false });
   const embeds = [];
   let current, length = 0;
   for (const field of fields) {
@@ -307,9 +310,10 @@ export class KyroApplications {
         }
         return await storage.transaction(async tx => {
           const row = await tx.get(applicationKey(input.id));
-          if (!row || row.channel_id !== input.channelId || row.message_id !== input.messageId) throw error(404, 'application_not_found', 'Application not found in this channel.');
+          if (!row || row.channel_id !== input.channelId || (input.messageId && row.message_id !== input.messageId)) throw error(404, 'application_not_found', 'Application not found in this channel.');
           if (row.status !== 'pending') throw error(409, 'already_reviewed', 'This application is already reviewed or is not ready for review.');
           row.status = input.status; row.reviewed_by = input.reviewer; row.reviewed_at = new Date().toISOString();
+          if (input.reason) row.decline_reason = input.reason;
           await tx.put(applicationKey(row.id), row);
           await tx.delete('active:' + row.role);
           await tx.put('job:' + row.id, { id: row.id, stage: 'review', attempts: 0 });
@@ -583,6 +587,49 @@ export async function handleApplicationInteractions(request, env, ctx) {
     return response({ type: 4, data: { content: 'Unknown command.', flags: 64 } });
   }
 
+  // Modal submissions (Interaction Type 5)
+  if (interaction.type === 5) {
+    const modalCustomId = interaction.data?.custom_id || '';
+    const declineModalMatch = /^kyro-app:decline_modal:(\d{17,20}):([a-f\d-]{36})$/.exec(modalCustomId);
+    if (declineModalMatch) {
+      const applicantId = declineModalMatch[1];
+      const appId = declineModalMatch[2];
+      const reasonVal = interaction.data?.components?.[0]?.components?.[0]?.value || 'Application requirements not met';
+      ctx.waitUntil((async () => {
+        let content;
+        try {
+          const result = await storageCall(env, applicantId, {
+            action: 'review',
+            id: appId,
+            status: 'declined',
+            reviewer: interaction.member?.user?.id,
+            reason: reasonVal,
+            channelId: interaction.channel_id
+          });
+          const data = await result.json();
+          content = result.ok
+            ? `❌ Application declined by <@${interaction.member?.user?.id}>.\n**Reason:** ${reasonVal}\nTicket will automatically close in 5 minutes.`
+            : (data.error || 'Failed to decline application.');
+        } catch (err) {
+          content = 'Action could not be completed: ' + err.message;
+        }
+
+        try {
+          await fetch(DISCORD_API + '/webhooks/' + interaction.application_id + '/' + interaction.token + '/messages/@original', {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ content }),
+            redirect: 'manual'
+          });
+        } catch (postErr) {
+          console.warn('[kyro-applications] Decline modal followup failed:', postErr);
+        }
+      })());
+
+      return response({ type: 5, data: { flags: 64 } });
+    }
+  }
+
   const selectMatch = /^kyro-app:role:(\d{17,20}):([a-f\d-]{36})$/.exec(interaction.data?.custom_id || '');
   if (interaction.type === 3 && selectMatch) {
     const selectedRole = interaction.data?.values?.[0] || 'none';
@@ -596,20 +643,52 @@ export async function handleApplicationInteractions(request, env, ctx) {
 
   const actionMatch = /^kyro-app:(approved|declined|claim|close):(\d{17,20}):([a-f\d-]{36})$/.exec(interaction.data?.custom_id || '');
   if (interaction.type !== 3 || !actionMatch || interaction.guild_id !== String(env.KYRO_GUILD_ID) || !snowflake(interaction.member?.user?.id) || !snowflake(interaction.application_id) || !/^[\w.-]+$/.test(interaction.token || '')) return response({ type: 4, data: { content: 'This application review control is not valid here.', flags: 64 } });
+  
+  const action = actionMatch[1];
+  const applicantId = actionMatch[2];
+  const appId = actionMatch[3];
+
+  // If reviewer clicks Decline, pop up a Modal (Type 9) to ask for the reason
+  if (action === 'declined') {
+    return response({
+      type: 9,
+      data: {
+        title: 'Decline Application',
+        custom_id: `kyro-app:decline_modal:${applicantId}:${appId}`,
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 4,
+                custom_id: 'decline_reason',
+                label: 'Reason for Rejection',
+                style: 2,
+                min_length: 5,
+                max_length: 500,
+                placeholder: 'Explain why this application was declined so the applicant knows what to improve...',
+                required: true
+              }
+            ]
+          }
+        ]
+      }
+    });
+  }
+
   ctx.waitUntil((async () => {
     let content;
-    const action = actionMatch[1];
     try {
       if (action === 'claim') {
-        const result = await storageCall(env, actionMatch[2], { action: 'claim', id: actionMatch[3], reviewer: interaction.member.user.id });
+        const result = await storageCall(env, applicantId, { action: 'claim', id: appId, reviewer: interaction.member.user.id });
         const data = await result.json();
         content = result.ok ? 'Ticket claimed by <@' + interaction.member.user.id + '>.' : data.error;
       } else if (action === 'close') {
-        const result = await storageCall(env, actionMatch[2], { action: 'close', id: actionMatch[3], reviewer: interaction.member.user.id });
+        const result = await storageCall(env, applicantId, { action: 'close', id: appId, reviewer: interaction.member.user.id });
         const data = await result.json();
         content = result.ok ? 'Ticket closed.' : data.error;
       } else {
-        const result = await storageCall(env, actionMatch[2], { action: 'review', id: actionMatch[3], status: action, reviewer: interaction.member.user.id, channelId: interaction.channel_id, messageId: interaction.message?.id });
+        const result = await storageCall(env, applicantId, { action: 'review', id: appId, status: action, reviewer: interaction.member.user.id, channelId: interaction.channel_id, messageId: interaction.message?.id });
         const data = await result.json();
         content = result.ok ? 'Application ' + data.application.status + '. Ticket will automatically close in 5 minutes if not closed manually.' : data.error;
       }

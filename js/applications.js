@@ -125,9 +125,28 @@
   }
 
   function receiptMarkup(application) {
-    const labels = { queued: ['Application received', 'Your application is saved. Your private review channel is being prepared.'], pending: ['Application submitted', 'Your application is in private review. It is not published on the website.'], approved: ['Application approved', 'Staff have approved your application. Approval does not automatically assign a Discord role.'], declined: ['Application declined', 'Staff have reviewed your application and declined it.'], needs_attention: ['Application saved', 'Discord delivery needs staff attention. Do not submit another application for this role.'] };
+    const labels = {
+      queued: ['Application received', 'Your application is saved. Your private review channel is being prepared.'],
+      pending: ['Application submitted', 'Your application is in private review. It is not published on the website.'],
+      approved: ['Application approved', 'Staff have approved your application.'],
+      declined: ['Application declined', application.decline_reason ? 'Reason: ' + application.decline_reason : 'Staff have reviewed your application and declined it.'],
+      needs_attention: ['Application saved', 'Discord delivery needs staff attention. Do not submit another application for this role.']
+    };
     const copy = labels[application.status] || labels.queued;
-    return '<section class="application-card application-receipt" aria-live="polite"><p class="section-label">' + escape(selected.title) + '</p><span class="application-badge mono">' + escape(application.status.replace(/_/g, ' ')) + '</span><h2>' + copy[0] + '</h2><p class="application-lede">' + copy[1] + '</p><p class="application-reference mono">Reference: ' + escape(application.id) + '</p><div class="application-actions"><button type="button" class="btn btn-ghost application-pill" id="applicationCheck">Check Status</button>' + (application.interview_url ? '<a class="btn btn-primary application-pill" href="' + escape(application.interview_url) + '" target="_blank" rel="noopener noreferrer">Open Discord Interview</a>' : '') + '<a class="application-back" href="/">&lt;- Back to home</a></div><p class="application-error" id="applicationStatusError" role="alert" hidden></p></section>';
+    return '<section class="application-card application-receipt" aria-live="polite">' +
+      '<p class="section-label">' + escape(selected.title) + '</p>' +
+      '<span class="application-badge mono ' + (application.status === 'declined' ? 'badge-declined' : '') + '">' + escape(application.status.replace(/_/g, ' ')) + '</span>' +
+      '<h2>' + copy[0] + '</h2>' +
+      '<p class="application-lede">' + escape(copy[1]) + '</p>' +
+      (application.status === 'declined' && application.decline_reason ? '<div class="application-rejection-box"><strong style="color:#ef4444;">Feedback from reviewer:</strong><p style="margin:6px 0 0;color:#e2e8f0;font-size:0.95rem;">' + escape(application.decline_reason) + '</p></div>' : '') +
+      '<p class="application-reference mono">Reference: ' + escape(application.id) + '</p>' +
+      '<div class="application-actions">' +
+        '<button type="button" class="btn btn-ghost application-pill" id="applicationCheck">Check Status</button>' +
+        (application.interview_url ? '<a class="btn btn-primary application-pill" href="' + escape(application.interview_url) + '" target="_blank" rel="noopener noreferrer">Open Discord Interview</a>' : '') +
+        '<a class="application-back" href="/">&lt;- Back to home</a>' +
+      '</div>' +
+      '<p class="application-error" id="applicationStatusError" role="alert" hidden></p>' +
+    '</section>';
   }
 
   function receipt(application) {
