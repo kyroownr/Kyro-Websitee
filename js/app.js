@@ -532,6 +532,18 @@
     if (b.free) list = list.filter(r => r.price === 0);
     if (kind) list = list.filter(r => kindOf(r) === kind);
     if (b.sort === 'newest') list = list.sort(byNewest);
+
+    // Pin AppleFX and SaaSor Plus to the top of the tools list
+    const pinnedIds = ['applefx', 'saasor'];
+    list.sort((a, b) => {
+      const aPin = pinnedIds.indexOf(a.id);
+      const bPin = pinnedIds.indexOf(b.id);
+      if (aPin !== -1 && bPin !== -1) return aPin - bPin;
+      if (aPin !== -1) return -1;
+      if (bPin !== -1) return 1;
+      return 0;
+    });
+
     return list;
   }
 

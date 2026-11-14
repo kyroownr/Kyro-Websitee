@@ -411,11 +411,18 @@ window.KYRO_SEED = [
     files: [
       {
         ext: 'archive',
-        name: 'SaaSor Plus — full toolkit',
+        name: 'SaaSor Plus — primary link (Terabox)',
         size: '',
         label: 'Scenes, 3D assets, GLB models and the extension panel',
         url: 'https://1024terabox.com/s/1ELxpFUwyeCCeXc_mdkIpsw',
         pass: 'Kyro'
+      },
+      {
+        ext: 'archive',
+        name: 'SaaSor Plus — alternate direct link (Filez)',
+        size: '',
+        label: 'Direct mirror link for SaaSor Plus toolkit',
+        url: 'https://filez.stream/w6wtU5qd47#d0xs_-wVX4uyQsxzHkRdQQWtemLVaYJXJ2OUPDR_lJo'
       }
     ],
     features: [
@@ -485,6 +492,29 @@ window.KYRO_INSTALL = {
       { sub: 'Windows' },
       { code: 'C:\\Program Files\\Adobe\\Common\\Plug-ins\\7.0\\MediaCore\\', lang: 'text' },
       { p: 'Create a folder called <code>Cosmic</code> inside <code>MediaCore</code> and put the file there. Use <code>Cosmic.plugin</code> on macOS and <code>Cosmic.aex</code> on Windows. Start After Effects or Premiere Pro. Cosmic is available under <b>Effect &gt; Loophouse &gt; Cosmic</b> (in Premie- re Pro: <b>Video Effects &gt; Loophouse &gt; Cosmic</b>).' }
+    ]
+  },
+  krotos: {
+    title: 'Krotos Concept 2 Installation Guide',
+    blocks: [
+      { h: '1. Extract the archive' },
+      { p: 'Unzip <code>Krotos Concept 2.0.3.zip</code> into a normal folder. If the archive ships a setup file, run it first and skip straight to step 3.' },
+
+      { h: '2. Install the plug-in' },
+      { p: 'Copy the plug-in bundle into the folder your host scans — keep the bundle itself, not just the file inside it.' },
+      { sub: 'VST3 (Ableton Live, FL Studio, Bitwig, REAPER and friends)' },
+      { code: 'C:\\Program Files\\Common Files\\VST3\\', lang: 'text' },
+      { sub: 'AAX (Pro Tools)' },
+      { code: 'C:\\Program Files\\Avid\\AAX Plug-ins\\', lang: 'text' },
+      { p: 'Then restart your host so it rescans its plug-in folders.' },
+
+      { h: '3. Load it in your DAW' },
+      { ol: [
+        'Open your DAW and create a new instrument track.',
+        'Pick <b>Krotos Concept 2</b> from the plug-in list.',
+        'Start on a preset — the synth ships with 700+ of them — then route the modulation shapes onto a few knobs while you listen.'
+      ] },
+      { quote: 'If the plug-in does not appear, confirm the bundle was copied into the VST3 folder itself and not nested one level deeper, then restart the host fully.' }
     ]
   },
   saasor: {

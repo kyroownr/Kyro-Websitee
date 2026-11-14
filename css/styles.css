@@ -805,7 +805,7 @@ code, .mono { font-family: var(--mono); }
 .req-head-actions { display: flex; align-items: center; gap: 10px; }
 .req-head-actions .close-x { position: relative; inset: auto; flex-shrink: 0; }
 .req-head-actions .btn { white-space: nowrap; }
-#requestsDrawer .drawer-head { flex-shrink: 0; }
+#requestsDrawer .drawer-head, #feedbackDrawer .drawer-head { flex-shrink: 0; }
 .req-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 .req-controls { display: grid; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
 .req-compose { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.24s var(--ease); }
