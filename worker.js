@@ -959,10 +959,19 @@ async function handleVaultSubmissions(request, url, env, cors) {
   if (request.method === 'POST') {
     const input = await jsonBody(request);
     const title = cleanText(input.title || input.name, 120);
-    const slug = cleanText(input.slug || title.toLowerCase().replace(/[^a-z0-9]+/g, '-'), 80).replace(/^-|-$/g, '');
+    let rawSlug = cleanText(input.slug || title.toLowerCase().replace(/[^a-z0-9]+/g, '-'), 80).replace(/^-|-$/g, '');
+    if (/^https?:\/\//i.test(rawSlug)) {
+      try {
+        const u = new URL(rawSlug);
+        const parts = u.pathname.split('/').filter(Boolean);
+        rawSlug = parts[parts.length - 1] || u.hash.replace(/^#\/?/, '') || u.hostname.replace(/\./g, '-');
+      } catch {}
+    }
+    const slug = rawSlug.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     if (!title || title.length < 3) throw fail(400, 'bad_title', 'Provide a valid resource title.');
     if (!slug) throw fail(400, 'bad_slug', 'Provide a URL slug.');
 
+    const kind = input.kind === 'software' ? 'software' : 'tool';
     const os = ['windows', 'macos', 'both'].includes(input.os) ? input.os : 'windows';
     const category = cleanText(input.category || 'Adobe After Effects', 60);
     const downloadUrl = cleanText(input.download_url, 500);
@@ -977,6 +986,7 @@ async function handleVaultSubmissions(request, url, env, cors) {
       id: crypto.randomUUID(),
       title,
       slug,
+      kind,
       os,
       category,
       download_url: downloadUrl,
@@ -1092,9 +1102,17 @@ async function handleVaultSubmissionReview(request, url, env, cors) {
 
 async function dispatchKyroDiscordPublish(item, env) {
   if (!env.DISCORD_BOT_TOKEN) return;
-  const slug = item.slug;
+  let rawSlug = item.slug || '';
+  if (/^https?:\/\//i.test(rawSlug)) {
+    try {
+      const u = new URL(rawSlug);
+      const parts = u.pathname.split('/').filter(Boolean);
+      rawSlug = parts[parts.length - 1] || u.hash.replace(/^#\/?/, '') || u.hostname.replace(/\./g, '-');
+    } catch {}
+  }
+  const slug = rawSlug.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || item.id;
   const os = (item.os || 'windows').toLowerCase();
-  const pageUrl = `https://kyro.new.tg/${os}/${slug}/`;
+  const pageUrl = (os === 'macos') ? `https://kyro.new.tg/macos#${slug}` : `https://kyro.new.tg/windows#${slug}`;
 
   const vaultDoc = (await readDoc(env, VAULT_ITEMS_KEY, { items: {} })).value;
   const existing = vaultDoc.items && vaultDoc.items[slug];
@@ -1213,9 +1231,17 @@ async function handleVaultPublish(request, url, env, cors) {
   const item = await jsonBody(request);
   if (!item.name || !item.slug) throw fail(400, 'bad_input', 'Resource name and slug are required.');
 
-  const slug = item.slug.toLowerCase().trim().replace(/^\/+|\/+$/g, '');
+  let rawSlug = item.slug.toLowerCase().trim().replace(/^\/+|\/+$/g, '');
+  if (/^https?:\/\//i.test(rawSlug)) {
+    try {
+      const u = new URL(rawSlug);
+      const parts = u.pathname.split('/').filter(Boolean);
+      rawSlug = parts[parts.length - 1] || u.hash.replace(/^#\/?/, '') || u.hostname.replace(/\./g, '-');
+    } catch {}
+  }
+  const slug = rawSlug.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'resource';
   const os = (item.os || 'windows').toLowerCase();
-  const pageUrl = `https://kyro.new.tg/${os}/${slug}/`;
+  const pageUrl = (os === 'macos') ? `https://kyro.new.tg/macos#${slug}` : `https://kyro.new.tg/windows#${slug}`;
 
   // Read existing published items to detect update
   const vaultDoc = (await readDoc(env, VAULT_ITEMS_KEY, { items: {} })).value;

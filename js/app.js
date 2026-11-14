@@ -87,35 +87,56 @@
       const res = await fetch(AUTH_WORKER_URL + '/vault/public');
       if (res.ok) {
         const data = await res.json();
-        const cloudItems = (data.items || []).map(item => ({
-          id: item.slug,
-          title: item.title,
-          desc: item.details || `${item.title} — verified resource on Kyro.`,
-          category: item.category || 'tool',
-          kind: 'tool',
-          os: item.os === 'both' ? ['windows', 'macos'] : [item.os],
-          version: item.version || '1.0',
-          creator: item.creator || item.by_username || 'Contributor',
-          downloads: 0,
-          added: item.created ? item.created.slice(0, 10) : '2026-11-14',
-          tags: [item.category || 'plugin', item.os],
-          gallery: item.image_url ? [item.image_url] : [],
-          files: item.download_url ? [{
-            ext: 'link',
-            name: item.title,
-            size: item.size || 'Vault Build',
-            label: item.title,
-            url: item.download_url,
-            pass: item.pass || item.password || undefined
-          }] : []
-        }));
+        const cloudItems = (data.items || []).map(item => {
+          let itemSlug = (item.slug || '').toLowerCase();
+          if (/^https?:\/\//i.test(itemSlug)) {
+            try {
+              const u = new URL(itemSlug);
+              const parts = u.pathname.split('/').filter(Boolean);
+              itemSlug = parts[parts.length - 1] || u.hash.replace(/^#\/?/, '') || u.hostname.replace(/\./g, '-');
+            } catch {}
+          }
+          itemSlug = itemSlug.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || item.id;
+
+          const osList = item.os === 'both' ? ['windows', 'macos'] : [item.os || 'windows'];
+          const resourceKind = item.kind === 'software' ? 'software' : 'tool';
+
+          return {
+            id: itemSlug,
+            title: item.title,
+            desc: item.details || `${item.title} — verified resource on Kyro.`,
+            category: item.category || (resourceKind === 'software' ? 'software' : 'extension'),
+            kind: resourceKind,
+            os: osList,
+            version: item.version || '1.0',
+            creator: item.creator || item.by_username || 'Contributor',
+            downloads: 0,
+            added: item.created ? item.created.slice(0, 10) : '2026-11-14',
+            tags: [item.category || 'plugin', ...(osList)],
+            gallery: item.image_url ? [item.image_url] : [],
+            files: item.download_url ? [{
+              ext: 'link',
+              name: item.title,
+              size: item.size || 'Vault Build',
+              label: item.title,
+              url: item.download_url,
+              pass: item.pass || item.password || undefined
+            }] : []
+          };
+        });
 
         if (cloudItems.length) {
           const existingIds = new Set(resources.map(r => r.id));
           cloudItems.forEach(ci => {
-            if (!existingIds.has(ci.id)) resources.push(ci);
+            if (!existingIds.has(ci.id)) {
+              resources.push(ci);
+              existingIds.add(ci.id);
+            }
           });
-          renderGrid();
+          renderSoftware();
+          renderCategoryHead();
+          renderBrowse();
+          checkUrlDeepLink();
         }
       }
     } catch (e) {
@@ -2009,19 +2030,24 @@
       btn.disabled = true;
       btn.textContent = 'Submitting…';
 
-      let cleanSlug = $('#vUpSlug')?.value.trim() || '';
+      let rawSlug = $('#vUpSlug')?.value.trim() || '';
+      let cleanSlug = rawSlug;
       if (/^https?:\/\//i.test(cleanSlug)) {
         try {
           const u = new URL(cleanSlug);
           const parts = u.pathname.split('/').filter(Boolean);
-          cleanSlug = parts[parts.length - 1] || u.hostname.replace(/\./g, '-');
+          cleanSlug = parts[parts.length - 1] || u.hash.replace(/^#\/?/, '') || u.hostname.replace(/\./g, '-');
         } catch {}
       }
       cleanSlug = cleanSlug.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      if (!cleanSlug && $('#vUpTitle')?.value) {
+        cleanSlug = $('#vUpTitle').value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      }
 
       const payload = {
         title: $('#vUpTitle')?.value.trim(),
         slug: cleanSlug,
+        kind: $('#vUpKind')?.value || 'tool',
         os: $('#vUpOs')?.value || 'windows',
         category: $('#vUpCategory')?.value.trim() || 'Adobe After Effects',
         size: $('#vUpSize')?.value.trim() || 'Vault Build',
@@ -2473,6 +2499,11 @@
     showOverlay(modalOverlay);
     if (!r.gallery || !r.gallery.length) Preview.pin($('#modalCanvas'), r.preview || 'grid', r.seed || 7);
     modalBox.focus({ preventScroll: true });
+
+    // Update URL hash without jumping so link is always copyable and shareable
+    try {
+      history.replaceState(null, '', '#' + r.id);
+    } catch {}
   }
 
   function syncTabs() {
@@ -2486,6 +2517,11 @@
     hideOverlay(modalOverlay);
     modalId = null;
     modalTab = 'overview';
+    try {
+      if (location.hash && location.hash !== '#login') {
+        history.replaceState(null, '', location.pathname + location.search);
+      }
+    } catch {}
   }
 
   /* -------------------------- download counters ------------------------
@@ -2964,12 +3000,21 @@
   startServerStats();
   refreshDiscordRole();
 
-  // Deep links: #r-<asset> opens its modal, #login starts the Discord OAuth redirect.
-  const hash = location.hash;
-  if (hash.startsWith('#r-')) {
-    const id = decodeURIComponent(hash.slice(3));
-    if (resources.some(r => r.id === id)) openModal(id);
-  } else if (hash === '#login') {
-    if (auth.state === OUT) startLogin();
+  function checkUrlDeepLink() {
+    const hash = location.hash;
+    if (hash === '#login') {
+      if (auth.state === OUT) startLogin();
+      return;
+    }
+    if (hash) {
+      let rawId = decodeURIComponent(hash.replace(/^#(r-)?/, '')).trim().toLowerCase();
+      if (rawId) {
+        const match = resources.find(r => r.id.toLowerCase() === rawId || r.title.toLowerCase().replace(/[^a-z0-9]+/g, '-') === rawId);
+        if (match) openModal(match.id);
+      }
+    }
   }
+
+  window.addEventListener('hashchange', checkUrlDeepLink);
+  checkUrlDeepLink();
 })();

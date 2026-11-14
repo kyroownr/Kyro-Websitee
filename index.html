@@ -519,13 +519,20 @@
                 </div>
               </div>
 
-              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;">
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Resource Type</label>
+                  <select id="vUpKind" class="acc-select" style="width:100%;">
+                    <option value="tool" selected>Tool / Plugin / Pack</option>
+                    <option value="software">Software (Editor)</option>
+                  </select>
+                </div>
                 <div>
                   <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Platform</label>
                   <select id="vUpOs" class="acc-select" style="width:100%;">
                     <option value="windows">Windows</option>
                     <option value="macos">macOS</option>
-                    <option value="both">Windows &amp; macOS</option>
+                    <option value="both" selected>Windows &amp; macOS</option>
                   </select>
                 </div>
                 <div>
