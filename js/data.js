@@ -411,25 +411,25 @@ window.KYRO_SEED = [
     files: [
       {
         ext: 'archive',
-        name: 'SaaSor Plus — primary link (Terabox)',
+        name: 'SaaSor Plus — primary link (Terabox) [Recommended]',
         size: '',
-        label: 'Scenes, 3D assets, GLB models and the extension panel',
+        label: 'Scenes, 3D assets, GLB models and the extension panel (Recommended)',
         url: 'https://1024terabox.com/s/1ELxpFUwyeCCeXc_mdkIpsw',
         pass: 'Kyro'
       },
       {
-        ext: 'archive',
-        name: 'SaaSor Plus — alternate direct link (Filez)',
+        ext: 'cloud',
+        name: 'SaaSor Plus — alternate link (Google Drive) [Recommended / Good]',
         size: '',
-        label: 'Direct mirror link for SaaSor Plus toolkit',
-        url: 'https://filez.stream/w6wtU5qd47#d0xs_-wVX4uyQsxzHkRdQQWtemLVaYJXJ2OUPDR_lJo'
+        label: 'Google Drive mirror for SaaSor Plus toolkit',
+        url: 'https://forms.gle/eaVG8ys3pDCmKxwg8'
       },
       {
-        ext: 'form',
-        name: 'SaaSor Plus — alternate link (Google Form)',
+        ext: 'archive',
+        name: 'SaaSor Plus — direct link (Filez) [Sometimes Broken - Not Recommended]',
         size: '',
-        label: 'Access / Request mirror via Google Forms',
-        url: 'https://forms.gle/eaVG8ys3pDCmKxwg8'
+        label: 'Direct mirror link (Sometimes broken - Terabox or Drive recommended)',
+        url: 'https://filez.stream/w6wtU5qd47#d0xs_-wVX4uyQsxzHkRdQQWtemLVaYJXJ2OUPDR_lJo'
       }
     ],
     features: [
