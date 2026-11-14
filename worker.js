@@ -74,7 +74,6 @@ export default {
         return await handleApplications(request, env, cors, session);
       }
       if (url.pathname === '/callback') return await handleCallback(request, url, env);
-      if (url.pathname === '/callback/google') return await handleGoogleCallback(request, url, env);
       if (url.pathname === '/verify') return await handleVerify(request, url, env, cors);
       if (url.pathname === '/requests') return await handleRequests(request, url, env, cors);
       if (url.pathname === '/requests/vote') return await handleVote(request, env, cors);
@@ -99,69 +98,6 @@ export default {
 };
 
 /* --------------------------------- routes -------------------------------- */
-
-async function handleGoogleCallback(request, url, env) {
-  const base = redirectBase(request, env);
-  const state = url.searchParams.get('state') || '';
-  const failure = url.searchParams.get('error');
-
-  if (failure) {
-    return Response.redirect(target(base, {
-      error: failure,
-      error_description: url.searchParams.get('error_description') || 'Google sign-in cancelled.',
-      state
-    }), 302);
-  }
-
-  const code = url.searchParams.get('code');
-  if (!code) {
-    return Response.redirect(target(base, {
-      error: 'missing_code',
-      error_description: 'Google redirected back without an authorization code.',
-      state
-    }), 302);
-  }
-
-  try {
-    const redirect_uri = new URL(request.url).origin + '/callback/google';
-    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        code,
-        client_id: env.GOOGLE_CLIENT_ID,
-        client_secret: env.GOOGLE_CLIENT_SECRET,
-        redirect_uri,
-        grant_type: 'authorization_code'
-      })
-    });
-    const tokens = await tokenRes.json();
-    if (!tokenRes.ok || !tokens.access_token) {
-      throw new Error(tokens.error_description || tokens.error || 'Google token exchange failed');
-    }
-
-    const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-      headers: { authorization: 'Bearer ' + tokens.access_token }
-    });
-    const googleUser = await userRes.json();
-
-    // Store in KV or return payload specifying Google user + needing Discord link
-    return Response.redirect(target(base, {
-      google_id: googleUser.id,
-      google_name: googleUser.name || googleUser.email.split('@')[0],
-      google_email: googleUser.email,
-      google_picture: googleUser.picture || '',
-      requires_discord_link: 'true',
-      state
-    }), 302);
-  } catch (err) {
-    return Response.redirect(target(base, {
-      error: 'google_auth_failed',
-      error_description: err.message,
-      state
-    }), 302);
-  }
-}
 
 async function handleCallback(request, url, env) {
   const base = redirectBase(request, env);
