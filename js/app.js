@@ -95,9 +95,25 @@
       const error = q.get('error');
       if (!error && !q.has('token') && !q.has('username')) return;
 
-      const expected = readSession(K_STATE);
-      const returned = q.get('state');
-      clearSession(K_STATE);
+      if (q.get('requires_discord_link') === 'true') {
+        const googleUser = {
+          name: q.get('google_name') || 'Google User',
+          email: q.get('google_email') || '',
+          picture: q.get('google_picture') || ''
+        };
+        write('kyro.google.pending', googleUser);
+        window.history.replaceState({}, '', location.pathname);
+        queueMicrotask(() => {
+          toast({
+            title: 'Google account connected: ' + googleUser.name,
+            sub: 'Please link your Discord account now to unlock downloads and member access.',
+            icon: ICON.check,
+            ttl: 9000,
+            actions: [{ label: 'Link Discord', onClick: startLogin }]
+          });
+        });
+        return;
+      }
 
       if (error) {
         const copy = OAUTH_ERROR_COPY[error];
@@ -112,6 +128,10 @@
         }));
         return;
       }
+
+      const expected = readSession(K_STATE);
+      const returned = q.get('state');
+      clearSession(K_STATE);
 
       if (!expected || returned !== expected || !q.get('token')) {
         window.history.replaceState({}, '', location.pathname);
@@ -305,9 +325,15 @@
     window.dispatchEvent(new CustomEvent('kyro:auth'));
     if (auth.state === OUT) {
       authSlot.innerHTML =
-        '<button type="button" class="login-btn" id="loginBtn">' + ICON.discord +
-        '<span class="lb-text">Login with Discord</span></button>';
+        '<div style="display:flex;align-items:center;gap:6px;">' +
+          '<button type="button" class="login-btn" id="loginBtn">' + ICON.discord +
+          '<span class="lb-text">Discord</span></button>' +
+          '<button type="button" class="login-btn" id="googleLoginBtn" style="background:#13151b;border-color:var(--line);">' +
+          '<svg width="15" height="15" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.7 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 9 5 12 5z"/><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.8z"/><path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.3s.2-1.6.4-2.3L1.9 7.3C.7 9.7 0 12.3 0 15s.7 5.3 1.9 7.7l3.7-2.9z"/><path fill="#34A853" d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.4-6.4-5.2L1.9 16c1.8 3.7 5.6 7 10.1 7z"/></svg>' +
+          '<span class="lb-text">Google</span></button>' +
+        '</div>';
       $('#loginBtn').addEventListener('click', startLogin);
+      $('#googleLoginBtn').addEventListener('click', startGoogleLogin);
       return;
     }
     const verified = auth.state === VERIFIED;
@@ -370,6 +396,23 @@
       '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
       '&response_type=code&scope=' + encodeURIComponent('identify guilds') +
       '&state=' + encodeURIComponent(state);
+  }
+
+  const GOOGLE_CLIENT_ID = '379957701495-ant9jkd91esep4s2ddld02b4tgkf181a.apps.googleusercontent.com';
+
+  function startGoogleLogin() {
+    const state = (window.crypto && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    writeSession(K_STATE, state);
+    const redirectUri = encodeURIComponent(AUTH_WORKER_URL + '/callback/google');
+    const scope = encodeURIComponent('openid email profile');
+    location.assign('https://accounts.google.com/o/oauth2/v2/auth' +
+      '?client_id=' + encodeURIComponent(GOOGLE_CLIENT_ID) +
+      '&redirect_uri=' + redirectUri +
+      '&response_type=code&scope=' + scope +
+      '&state=' + encodeURIComponent(state) +
+      '&prompt=select_account');
   }
 
   function startLogin() {
