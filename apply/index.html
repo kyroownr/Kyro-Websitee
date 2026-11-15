@@ -540,6 +540,33 @@
                 <textarea id="vUpDetails" rows="3" placeholder="Describe the resource features, installation, or what effects are included..." style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;resize:vertical;"></textarea>
               </div>
 
+              <!-- Ready to Release (Community Approval) vs Normal Upload & Countdown -->
+              <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;">
+                  <div>
+                    <strong style="color:#38bdf8;font-size:0.88rem;display:flex;align-items:center;gap:6px;">
+                      <span>🗳️</span> Ready to Release (Community Vote Gate)
+                    </strong>
+                    <div style="font-size:0.75rem;color:var(--dim);">Posts to #incomming. Community votes +1 to reach your limit before it releases live!</div>
+                  </div>
+                  <label style="display:flex;align-items:center;cursor:pointer;gap:6px;font-size:0.82rem;color:#cbd5e1;">
+                    <input type="checkbox" id="vUpIsIncoming" style="cursor:pointer;width:16px;height:16px;">
+                    Enable Community Vote Gate
+                  </label>
+                </div>
+                <div id="vUpIncomingOptions" style="display:none;grid-template-columns:1fr 1fr;gap:10px;">
+                  <div>
+                    <label style="display:block;font-size:0.75rem;color:var(--dim);margin-bottom:2px;">Vote Limit to Unlock *</label>
+                    <input type="number" id="vUpVoteLimit" value="5" min="1" max="500" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:6px 10px;color:#fff;font-size:0.85rem;">
+                  </div>
+                </div>
+                <div>
+                  <label style="display:block;font-size:0.75rem;color:var(--dim);margin-bottom:2px;">Optional Release Countdown (Date &amp; Time)</label>
+                  <input type="datetime-local" id="vUpReleaseAt" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:6px 10px;color:#fff;font-size:0.85rem;">
+                  <div style="font-size:0.7rem;color:var(--dim);margin-top:2px;">Leave empty for immediate release when approved.</div>
+                </div>
+              </div>
+
               <button type="submit" class="btn btn-primary" id="vUpSubmitBtn" style="align-self:flex-start;">Submit Upload to Vault</button>
             </form>
           </div>
@@ -607,6 +634,20 @@
         <div>
           <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Description / Effects / Notes</label>
           <textarea class="input" id="oemDetails" rows="4" style="width:100%;box-sizing:border-box;resize:vertical;font-family:inherit;line-height:1.4;"></textarea>
+        </div>
+        <!-- Countdown Adjust Controls -->
+        <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px;">
+          <label style="font-size:0.75rem;color:#38bdf8;display:block;margin-bottom:4px;font-weight:600;">⏳ Release Countdown (Increase/Decrease Target Time)</label>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="datetime-local" class="input" id="oemReleaseAt" style="flex:1;box-sizing:border-box;">
+            <button type="button" class="btn btn-ghost btn-sm" id="oemClearCountdown" title="Remove countdown and release immediately">Clear</button>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-ghost btn-sm" data-oem-adjust="-3600" style="padding:2px 6px;font-size:0.75rem;">-1 Hour</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-oem-adjust="3600" style="padding:2px 6px;font-size:0.75rem;">+1 Hour</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-oem-adjust="-86400" style="padding:2px 6px;font-size:0.75rem;">-1 Day</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-oem-adjust="86400" style="padding:2px 6px;font-size:0.75rem;">+1 Day</button>
+          </div>
         </div>
         <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px;">
           <button type="button" class="btn btn-ghost" id="oemCancelBtn">Cancel</button>

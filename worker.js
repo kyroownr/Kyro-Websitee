@@ -56,7 +56,7 @@
 import { applicationConfiguration, handleApplications, handleApplicationInteractions, KyroApplications } from './applications-worker.js';
 export { KyroApplications };
 
-const DEFAULT_ORIGINS = 'https://kyro.new.tg,http://localhost:4173,http://127.0.0.1:4173';
+const DEFAULT_ORIGINS = 'https://kyro.new.tg,http://localhost:4173,http://127.0.0.1:4173,http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000,http://localhost:8080,http://127.0.0.1:8080,http://localhost:8000,http://127.0.0.1:8000,http://localhost:4000,http://127.0.0.1:4000';
 
 export default {
   async fetch(request, env, ctx) {
@@ -88,6 +88,8 @@ export default {
       if (url.pathname === '/vault/submissions/manage') return await handleVaultSubmissionManage(request, url, env, cors);
       if (url.pathname === '/vault/notifications') return await handleVaultNotifications(request, url, env, cors);
       if (url.pathname === '/vault/public') return await handleVaultPublic(request, url, env, cors);
+      if (url.pathname === '/vault/incoming') return await handleIncomingReleases(request, url, env, cors);
+      if (url.pathname === '/vault/incoming/vote') return await handleIncomingVote(request, url, env, cors);
       if (url.pathname === '/api/vault/publish') return await handleVaultPublish(request, url, env, cors);
       if (url.pathname === '/dashboard/settings') return await handleDashboardSettings(request, url, env, cors);
       if (url.pathname === '/dashboard/embed') return await handleDashboardEmbed(request, url, env, cors);
@@ -980,6 +982,7 @@ async function handleVaultSubmissions(request, url, env, cors) {
     const details = cleanText(input.details || input.desc, 2000);
     const version = cleanText(input.version || '1.0', 40);
     const password = cleanText(input.password || input.pass, 60);
+    const releaseAt = input.release_at || input.releaseAt || null;
 
     const submission = {
       id: crypto.randomUUID(),
@@ -995,6 +998,7 @@ async function handleVaultSubmissions(request, url, env, cors) {
       details,
       version,
       pass: password || undefined,
+      releaseAt: releaseAt || undefined,
       by: session.id,
       by_username: session.username,
       created: new Date().toISOString(),
@@ -1188,6 +1192,277 @@ async function handleVaultNotifications(request, url, env, cors) {
   return json({ error: 'Use GET or POST.' }, 405, cors);
 }
 
+/* -------------------------- Incoming Releases (Community Approval) -------------------------- */
+async function handleIncomingReleases(request, url, env, cors) {
+  if (request.method === 'GET') {
+    const doc = (await readDoc(env, INCOMING_RELEASES_KEY, { items: [] })).value;
+    const items = Array.isArray(doc.items) ? doc.items : [];
+    
+    // Check viewer id if token present
+    let viewerId = '';
+    try {
+      const token = bearerToken(request, url);
+      if (token) {
+        const session = await readSession(token, env);
+        if (session && session.inServer) viewerId = session.id;
+      }
+    } catch {}
+
+    const projected = items.map(item => {
+      const voters = item.voters || {};
+      const userVote = viewerId ? (voters[viewerId] || 0) : 0;
+      return {
+        ...item,
+        userVote,
+        voters: undefined // keep privacy
+      };
+    });
+
+    return json({ incoming: projected }, 200, cors);
+  }
+
+  if (request.method === 'POST') {
+    // Create new incoming release (Contributor or Owner)
+    const token = bearerToken(request, url);
+    const session = await requireMember(token, env);
+    const role = (session.role || '').toLowerCase();
+    const isOwner = session.isOwner || session.id === '1052909930073567232' || role === 'owner';
+    const isContributor = isOwner || role === 'contributor' || role === 'mod+';
+    if (!isContributor) throw fail(403, 'forbidden', 'Only Contributors or the Server Owner can add Incoming releases.');
+
+    const input = await jsonBody(request);
+    const title = cleanText(input.title, 120);
+    if (!title) throw fail(400, 'bad_input', 'Title is required.');
+    let rawSlug = input.slug || title;
+    const slug = rawSlug.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || ('incoming-' + Date.now().toString(36));
+    const kind = input.kind === 'software' ? 'software' : 'tool';
+    const os = ['windows', 'macos', 'both'].includes(input.os) ? input.os : 'both';
+    const category = cleanText(input.category || 'Adobe After Effects', 60);
+    const downloadUrl = String(input.download_url || '').trim();
+    const imageUrl = String(input.image_url || '').trim();
+    const size = cleanText(input.size || 'Vault Build', 40);
+    const creator = cleanText(input.creator || session.username, 60);
+    const details = cleanText(input.details || '', 1500);
+    const password = cleanText(input.password || input.pass, 60);
+    const voteLimit = Math.max(1, Math.min(1000, parseInt(input.vote_limit, 10) || 5));
+
+    const item = {
+      id: crypto.randomUUID(),
+      title,
+      slug,
+      kind,
+      os,
+      category,
+      download_url: downloadUrl,
+      image_url: imageUrl,
+      size,
+      creator,
+      details,
+      pass: password || undefined,
+      votes: 0,
+      voters: {}, // userId -> 1 or -1
+      vote_limit: voteLimit,
+      released: false,
+      by: session.id,
+      by_username: session.username,
+      created: new Date().toISOString()
+    };
+
+    // Post to Discord channel #incomming (ID: 1539962334729211934 in category Special 1539962304701931643)
+    let discordMsgId = null;
+    if (env.DISCORD_BOT_TOKEN) {
+      try {
+        const incommingChannel = '1539962334729211934';
+        const osLabel = os === 'both' ? 'Windows & macOS' : os === 'macos' ? 'macOS' : 'Windows';
+        const embed = {
+          author: { name: 'Kyro Incoming Release · Community Approval', icon_url: KYRO_ICON },
+          title: `⏳ INCOMING: ${title.toUpperCase()}`,
+          url: `https://kyro.new.tg#incoming`,
+          description: `**Section Tagline:** *"Items waiting for community approval. Vote to bring them live."*\n\n` +
+            (details ? `${details}\n\n` : '') +
+            `• **Creator:** \`${creator}\`\n• **Platform:** \`${osLabel}\`\n• **Size:** \`${size}\`\n• **Category:** \`${category}\`\n\n` +
+            `🎯 **Goal:** \`0 / ${voteLimit}\` Votes to Push Live!`,
+          color: 0x38bdf8,
+          image: imageUrl && /^https?:\/\//.test(imageUrl) ? { url: imageUrl } : undefined,
+          footer: { text: 'Vote on kyro.new.tg to bring this item live!' },
+          timestamp: item.created
+        };
+
+        const postRes = await fetch(`https://discord.com/api/v10/channels/${incommingChannel}/messages`, {
+          method: 'POST',
+          headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            content: `🚀 **New Incoming Resource Waiting for Approval!** — <@&1542127783440818226>`,
+            embeds: [embed],
+            components: [
+              {
+                type: 1,
+                components: [
+                  { type: 2, style: 5, label: 'Vote to Release ↗', url: 'https://kyro.new.tg#incoming' },
+                  { type: 2, style: 5, label: 'Kyro Vault ↗', url: 'https://kyro.new.tg' }
+                ]
+              }
+            ]
+          })
+        });
+        if (postRes.ok) {
+          const postData = await postRes.json();
+          discordMsgId = postData.id;
+        }
+      } catch (err) {
+        console.warn('[incoming] Discord announcement error:', err);
+      }
+    }
+
+    item.discord_msg_id = discordMsgId;
+
+    await mutateDoc(env, INCOMING_RELEASES_KEY, { items: [] }, curr => {
+      const list = Array.isArray(curr?.items) ? curr.items : [];
+      return { items: [item, ...list] };
+    });
+
+    await logBotAudit(env, 'Incoming Release Created', session, `"${title}" waiting for community approval (${voteLimit} votes required).`);
+    return json({ ok: true, item }, 201, cors);
+  }
+
+  // Delete an incoming release (Owner only)
+  if (request.method === 'DELETE') {
+    const token = bearerToken(request, url);
+    const session = await requireMember(token, env);
+    const isOwner = session.isOwner || session.id === '1052909930073567232' || (session.role || '').toLowerCase() === 'owner';
+    if (!isOwner) throw fail(403, 'forbidden', 'Only Server Owner can delete incoming items.');
+
+    const input = await jsonBody(request);
+    const id = input.id;
+    let deleted = null;
+    await mutateDoc(env, INCOMING_RELEASES_KEY, { items: [] }, curr => {
+      const list = Array.isArray(curr?.items) ? curr.items : [];
+      deleted = list.find(i => i.id === id);
+      return { items: list.filter(i => i.id !== id) };
+    });
+
+    if (deleted && deleted.discord_msg_id && env.DISCORD_BOT_TOKEN) {
+      fetch(`https://discord.com/api/v10/channels/1539962334729211934/messages/${deleted.discord_msg_id}`, {
+        method: 'DELETE',
+        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
+      }).catch(() => {});
+    }
+
+    return json({ ok: true, deleted: Boolean(deleted) }, 200, cors);
+  }
+
+  return json({ error: 'Use GET, POST, or DELETE.' }, 405, cors);
+}
+
+async function handleIncomingVote(request, url, env, cors) {
+  if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
+  const token = bearerToken(request, url);
+  const session = await requireMember(token, env);
+  const input = await jsonBody(request);
+  const id = input.id;
+  const delta = Number(input.delta) || 1; // 1 for "Speed It Up (+1)", -1 for "Hold Off (-1)"
+  if (!id) throw fail(400, 'bad_id', 'Resource ID is required.');
+
+  let targetItem = null;
+  let reachedGoal = false;
+
+  await mutateDoc(env, INCOMING_RELEASES_KEY, { items: [] }, curr => {
+    const list = Array.isArray(curr?.items) ? curr.items : [];
+    const found = list.find(i => i.id === id);
+    if (!found) return { items: list };
+
+    found.voters = found.voters || {};
+    const prev = found.voters[session.id] || 0;
+
+    if (prev === delta) {
+      // Toggle vote off if clicking same button again
+      delete found.voters[session.id];
+      found.votes = (found.votes || 0) - delta;
+    } else {
+      // Switch or apply vote
+      found.voters[session.id] = delta;
+      found.votes = (found.votes || 0) - prev + delta;
+    }
+
+    // Check if vote limit reached
+    if (!found.released && found.votes >= (found.vote_limit || 5)) {
+      found.released = true;
+      found.released_at = new Date().toISOString();
+      reachedGoal = true;
+    }
+
+    targetItem = found;
+    return { items: list };
+  });
+
+  if (!targetItem) throw fail(404, 'not_found', 'Incoming release item not found.');
+
+  // If goal reached, automatically publish resource to Public Vault & Discord!
+  if (reachedGoal) {
+    const vaultItem = {
+      ...targetItem,
+      status: 'approved',
+      created: new Date().toISOString()
+    };
+    await mutateDoc(env, VAULT_PUBLIC_ITEMS_KEY, { items: [] }, curr => {
+      const items = Array.isArray(curr?.items) ? curr.items : [];
+      return { items: [vaultItem, ...items.filter(i => i.slug !== vaultItem.slug)] };
+    });
+    // Publish automatically to announcements & downloads
+    await dispatchKyroDiscordPublish(vaultItem, env);
+
+    // Update the Discord message in #incomming to show "Now Live"
+    if (targetItem.discord_msg_id && env.DISCORD_BOT_TOKEN) {
+      try {
+        const incommingChannel = '1539962334729211934';
+        await fetch(`https://discord.com/api/v10/channels/${incommingChannel}/messages/${targetItem.discord_msg_id}`, {
+          method: 'PATCH',
+          headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            content: `🎉 **COMMUNITY GOAL REACHED — NOW LIVE!** — <@&1542127783440818226>`,
+            embeds: [{
+              author: { name: 'Kyro Incoming Release · Community Approval', icon_url: KYRO_ICON },
+              title: `✅ JUST DROPPED: ${targetItem.title.toUpperCase()}`,
+              url: `https://kyro.new.tg#${targetItem.slug}`,
+              description: `**Status Badge:** \`Now Live / Just Dropped\`\n\n` +
+                `Community vote goal of **${targetItem.vote_limit}** votes reached! This item has been unlocked and published directly to the Kyro Vault!`,
+              color: 0x10b981,
+              footer: { text: 'Available now on kyro.new.tg' },
+              timestamp: new Date().toISOString()
+            }],
+            components: [
+              {
+                type: 1,
+                components: [
+                  { type: 2, style: 5, label: 'Download Now ↗', url: `https://kyro.new.tg#${targetItem.slug}` }
+                ]
+              }
+            ]
+          })
+        });
+      } catch (e) {}
+    }
+
+    // Create notifications for owner and uploader
+    if (targetItem.by) {
+      await createNotification(
+        env,
+        targetItem.by,
+        'Community Goal Reached! 🎉',
+        `Your incoming item "${targetItem.title}" reached ${targetItem.vote_limit} community votes and is now live on Kyro!`,
+        'approved'
+      );
+    }
+  }
+
+  return json({
+    ok: true,
+    votes: targetItem.votes,
+    released: targetItem.released,
+    userVote: (targetItem.voters || {})[session.id] || 0
+  }, 200, cors);
+}
+
 async function handleVaultSubmissionManage(request, url, env, cors) {
   const token = bearerToken(request, url);
   const session = await requireMember(token, env);
@@ -1256,6 +1531,9 @@ async function handleVaultSubmissionManage(request, url, env, cors) {
         if (input.size) found.size = cleanText(input.size, 30);
         if (input.category) found.category = cleanText(input.category, 60);
         if (input.image_url) found.image_url = String(input.image_url).trim();
+        if (input.release_at !== undefined || input.releaseAt !== undefined) {
+          found.releaseAt = input.release_at || input.releaseAt || undefined;
+        }
         found.updated_at = new Date().toISOString();
         updatedSub = found;
       }
@@ -1275,6 +1553,9 @@ async function handleVaultSubmissionManage(request, url, env, cors) {
         if (input.size) found.size = cleanText(input.size, 30);
         if (input.category) found.category = cleanText(input.category, 60);
         if (input.image_url) found.image_url = String(input.image_url).trim();
+        if (input.release_at !== undefined || input.releaseAt !== undefined) {
+          found.releaseAt = input.release_at || input.releaseAt || undefined;
+        }
         found.updated_at = new Date().toISOString();
         updatedPublic = found;
         return { items: [found, ...items.filter(i => i !== found)] };
@@ -1537,6 +1818,7 @@ const VAULT_ITEMS_KEY = 'kyro.vault_items.v1';
 const DASHBOARD_CONFIG_KEY = 'kyro.dashboard_config.v1';
 const DASHBOARD_AUDIT_KEY = 'kyro.dashboard_audit.v1';
 const NOTIFICATIONS_KEY = 'kyro.notifications.v1';
+const INCOMING_RELEASES_KEY = 'kyro.incoming_releases.v1';
 const KYRO_ICON = 'https://raw.githubusercontent.com/kyroownr/Kyro-Websitee/main/assets/kyro-icon.png';
 
 async function handleVaultPublish(request, url, env, cors) {
@@ -1903,13 +2185,16 @@ function allowedOrigins(env) {
 function corsHeaders(request, env) {
   const origin = request.headers.get('origin') || '';
   const headers = {
-    'access-control-allow-methods': 'GET, POST, OPTIONS',
+    'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     'access-control-allow-headers': 'content-type, authorization',
     'access-control-max-age': '600',
     vary: 'Origin'
   };
-  if (allowedOrigins(env).includes(origin.replace(/\/$/, ''))) {
+  const allowed = allowedOrigins(env);
+  if (allowed.includes(origin.replace(/\/$/, '')) || origin.endsWith('.new.tg') || origin.includes('localhost') || origin.includes('127.0.0.1')) {
     headers['access-control-allow-origin'] = origin;
+  } else if (!origin) {
+    headers['access-control-allow-origin'] = '*';
   }
   return headers;
 }

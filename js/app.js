@@ -111,6 +111,7 @@
             os: osList,
             version: item.version || '1.0',
             creator: item.creator || item.by_username || 'Contributor',
+            releaseAt: item.releaseAt || item.release_at || undefined,
             downloads: 0,
             added: item.created ? item.created.slice(0, 10) : '2026-11-14',
             tags: [item.category || 'plugin', ...(osList)],
@@ -818,6 +819,176 @@
       '<span class="cell-arrow" aria-hidden="true">→</span></div>' +
       '<p class="cell-desc">' + esc(b.desc) + '</p>' +
       cellFoot(b, count);
+  }
+
+  /* ---------------------- Incoming Releases (Community Approval) ---------- */
+  let incomingReleases = [];
+
+  async function loadIncomingReleases() {
+    const grid = $('#incomingGrid');
+    const empty = $('#incomingEmpty');
+    const countNote = $('#incomingCountNote');
+    if (!grid) return;
+
+    try {
+      const headers = { Accept: 'application/json' };
+      if (auth.token) headers.Authorization = 'Bearer ' + auth.token;
+      const res = await fetch(AUTH_WORKER_URL + '/vault/incoming', {
+        headers,
+        credentials: 'omit'
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      incomingReleases = Array.isArray(data.incoming) ? data.incoming : [];
+
+      if (countNote) {
+        countNote.textContent = '· ' + (incomingReleases.length ? `${incomingReleases.length} ${incomingReleases.length === 1 ? 'release' : 'releases'}` : '0 releases');
+      }
+
+      if (!incomingReleases.length) {
+        grid.innerHTML = '';
+        if (empty) empty.hidden = false;
+        return;
+      }
+      if (empty) empty.hidden = true;
+
+      const isOwner = userIsOwner();
+
+      grid.innerHTML = incomingReleases.map(item => {
+        const votes = Number(item.votes || 0);
+        const limit = Number(item.vote_limit || 5);
+        const pct = Math.min(100, Math.max(0, Math.round((votes / limit) * 100)));
+        const isReleased = Boolean(item.released || votes >= limit);
+        const userVote = Number(item.userVote || 0);
+
+        const statusBadge = isReleased
+          ? '<span class="badge badge-free mono" style="font-size:0.75rem;padding:2px 8px;">Just Dropped</span>'
+          : '<span class="badge badge-pro mono" style="font-size:0.75rem;padding:2px 8px;">Voting In Progress</span>';
+
+        const thumb = item.image_url
+          ? `<img src="${esc(item.image_url)}" alt="${esc(item.title)}" style="width:100%;height:140px;object-fit:cover;border-radius:8px 8px 0 0;" />`
+          : `<div style="width:100%;height:90px;background:linear-gradient(135deg, rgba(56,189,248,0.1), rgba(0,0,0,0.4));display:flex;align-items:center;justify-content:center;border-radius:8px 8px 0 0;font-weight:700;color:var(--dim);letter-spacing:0.05em;">KYRO INCOMING</div>`;
+
+        return `
+          <div class="software-card" data-incoming-id="${esc(item.id)}" style="display:flex;flex-direction:column;border-radius:10px;overflow:hidden;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);transition:transform 0.2s, border-color 0.2s;">
+            ${thumb}
+            <div style="padding:14px;display:flex;flex-direction:column;flex:1;gap:8px;">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
+                <div>
+                  <h4 style="color:#fff;font-size:1.05rem;font-weight:700;margin:0 0 2px 0;">${esc(item.title)}</h4>
+                  <div style="color:var(--dim);font-size:0.75rem;">Platform: <span style="color:#38bdf8;">${esc(item.os)}</span> · By: <strong>${esc(item.by_username || 'Staff')}</strong></div>
+                </div>
+                ${statusBadge}
+              </div>
+
+              <p style="color:#cbd5e1;font-size:0.83rem;margin:4px 0 8px 0;line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;">
+                ${esc(item.details || 'Community approval build. Vote to bring this tool live to the Vault!')}
+              </p>
+
+              <!-- Community Approval Vote Progress Bar -->
+              <div style="margin-top:auto;background:rgba(0,0,0,0.35);padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.05);">
+                <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.78rem;margin-bottom:6px;">
+                  <span style="color:var(--dim);font-weight:600;">Community Goal:</span>
+                  <strong style="color:${isReleased ? '#10b981' : '#38bdf8'};font-family:inherit;">
+                    ${votes} / ${limit} votes (${pct}%)
+                  </strong>
+                </div>
+                <div style="height:6px;width:100%;background:rgba(255,255,255,0.08);border-radius:999px;overflow:hidden;">
+                  <div style="height:100%;width:${pct}%;background:${isReleased ? 'linear-gradient(90deg, #10b981, #34d399)' : 'linear-gradient(90deg, #38bdf8, #818cf8)'};border-radius:999px;transition:width 0.4s ease;"></div>
+                </div>
+              </div>
+
+              <!-- Community Vote Actions -->
+              <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
+                ${!isReleased ? `
+                  <button type="button" class="btn btn-sm ${userVote === 1 ? 'btn-primary' : 'btn-ghost'}" data-vote-action="1" data-id="${esc(item.id)}" style="flex:1;justify-content:center;font-size:0.8rem;gap:4px;">
+                    Speed It Up (+1)
+                  </button>
+                  <button type="button" class="btn btn-sm ${userVote === -1 ? 'btn-danger' : 'btn-ghost'}" data-vote-action="-1" data-id="${esc(item.id)}" style="flex:1;justify-content:center;font-size:0.8rem;gap:4px;">
+                    Hold Off (-1)
+                  </button>
+                ` : `
+                  <a href="#${esc(item.slug)}" class="btn btn-primary btn-sm" style="flex:1;justify-content:center;text-decoration:none;">
+                    Now Live · Get Resource ↗
+                  </a>
+                `}
+                ${isOwner ? `
+                  <button type="button" class="btn btn-ghost btn-sm" data-incoming-delete="${esc(item.id)}" title="Delete incoming item" style="padding:4px 8px;color:#ef4444;">
+                    ✕
+                  </button>
+                ` : ''}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // Wire Vote Buttons
+      grid.querySelectorAll('[data-vote-action]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (auth.state === OUT) {
+            toast({ title: 'Sign In Required', sub: 'Sign in with Discord to vote on releases.', icon: ICON.lock });
+            return;
+          }
+          const id = btn.dataset.id;
+          const delta = parseInt(btn.dataset.voteAction, 10);
+          btn.disabled = true;
+          try {
+            const res = await fetch(AUTH_WORKER_URL + '/vault/incoming/vote', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+              body: JSON.stringify({ id, delta }),
+              credentials: 'omit'
+            });
+            const data = await res.json();
+            if (res.ok) {
+              toast({
+                title: delta > 0 ? 'Vote Recorded!' : 'Feedback Noted',
+                sub: data.released ? 'Community goal reached! Item is now live!' : `Current votes: ${data.votes}`,
+                icon: ICON.check
+              });
+              loadIncomingReleases();
+              if (data.released) loadPublicVaultItems();
+            } else {
+              toast({ title: 'Vote failed', sub: data.error || 'Server error', icon: ICON.x });
+            }
+          } catch (err) {
+            toast({ title: 'Error', sub: err.message, icon: ICON.x });
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      });
+
+      // Wire Owner Delete for incoming
+      if (isOwner) {
+        grid.querySelectorAll('[data-incoming-delete]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            if (!confirm('Are you sure you want to delete this incoming release?')) return;
+            const id = btn.dataset.incomingDelete;
+            btn.disabled = true;
+            try {
+              const res = await fetch(AUTH_WORKER_URL + '/vault/incoming', {
+                method: 'DELETE',
+                headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+                body: JSON.stringify({ id }),
+                credentials: 'omit'
+              });
+              if (res.ok) {
+                toast({ title: 'Incoming item removed', sub: 'Deleted from website and Discord #incomming.', icon: ICON.check });
+                loadIncomingReleases();
+              } else {
+                toast({ title: 'Delete failed', sub: 'Server error', icon: ICON.x });
+              }
+            } catch (err) {
+              toast({ title: 'Error', sub: err.message, icon: ICON.x });
+            }
+          });
+        });
+      }
+    } catch (e) {
+      console.warn('Failed to load incoming releases:', e);
+    }
   }
 
   /* --------------------------- live server stats -------------------------
@@ -2246,6 +2417,18 @@
       });
     }
 
+    // Toggle Incoming options visibility
+    const isIncomingCheck = $('#vUpIsIncoming');
+    const incomingOptions = $('#vUpIncomingOptions');
+    if (isIncomingCheck && incomingOptions) {
+      isIncomingCheck.addEventListener('change', () => {
+        incomingOptions.style.display = isIncomingCheck.checked ? 'grid' : 'none';
+        if (btn) {
+          btn.textContent = isIncomingCheck.checked ? 'Submit to Ready to Release (#incomming)' : 'Submit Upload to Vault';
+        }
+      });
+    }
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       if (!auth.token) {
@@ -2269,6 +2452,10 @@
         cleanSlug = $('#vUpTitle').value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
       }
 
+      const isIncoming = Boolean($('#vUpIsIncoming')?.checked);
+      const voteLimit = parseInt($('#vUpVoteLimit')?.value, 10) || 5;
+      const releaseAtVal = $('#vUpReleaseAt')?.value ? new Date($('#vUpReleaseAt').value).toISOString() : null;
+
       const payload = {
         title: $('#vUpTitle')?.value.trim(),
         slug: cleanSlug,
@@ -2279,11 +2466,14 @@
         download_url: $('#vUpDownloadUrl')?.value.trim(),
         password: $('#vUpPassword')?.value.trim() || '',
         image_url: $('#vUpImageUrl')?.value.trim(),
-        details: $('#vUpDetails')?.value.trim()
+        details: $('#vUpDetails')?.value.trim(),
+        release_at: releaseAtVal,
+        vote_limit: voteLimit
       };
 
       try {
-        const res = await fetch(AUTH_WORKER_URL + '/vault/submissions', {
+        const endpoint = isIncoming ? '/vault/incoming' : '/vault/submissions';
+        const res = await fetch(AUTH_WORKER_URL + endpoint, {
           method: 'POST',
           headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
           body: JSON.stringify(payload),
@@ -2291,13 +2481,23 @@
         });
         const data = await res.json();
         if (res.ok) {
-          const isApproved = data.submission?.status === 'approved';
-          toast({
-            title: isApproved ? 'Resource Published!' : 'Submitted for Approval!',
-            sub: isApproved ? 'Live on Vault and posted to Discord!' : 'Owner will review your submission before public release.',
-            icon: ICON.check
-          });
+          if (isIncoming) {
+            toast({
+              title: 'Incoming Release Posted!',
+              sub: 'Live in "Ready to Release" and posted to #incomming for community voting!',
+              icon: ICON.check
+            });
+            loadIncomingReleases();
+          } else {
+            const isApproved = data.submission?.status === 'approved';
+            toast({
+              title: isApproved ? 'Resource Published!' : 'Submitted for Approval!',
+              sub: isApproved ? 'Live on Vault and posted to Discord!' : 'Owner will review your submission before public release.',
+              icon: ICON.check
+            });
+          }
           form.reset();
+          if (incomingOptions) incomingOptions.style.display = 'none';
           if (removeImgBtn) removeImgBtn.click();
           renderAccountUploads();
         } else {
@@ -2307,7 +2507,7 @@
         toast({ title: 'Network error', sub: err.message, icon: ICON.x });
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Submit Upload to Vault';
+        btn.textContent = isIncomingCheck?.checked ? 'Submit to Ready to Release (#incomming)' : 'Submit Upload to Vault';
       }
     });
   }
@@ -3071,6 +3271,7 @@
     const oemPassword = $('#oemPassword');
     const oemImageUrl = $('#oemImageUrl');
     const oemDetails = $('#oemDetails');
+    const oemReleaseAt = $('#oemReleaseAt');
 
     if (oemId) oemId.value = r.cloud_id || r.id;
     if (oemTitle) oemTitle.value = r.title || '';
@@ -3080,6 +3281,20 @@
     if (oemPassword) oemPassword.value = (r.files && r.files[0] && r.files[0].pass) || '';
     if (oemImageUrl) oemImageUrl.value = (r.gallery && r.gallery[0]) || '';
     if (oemDetails) oemDetails.value = r.desc || '';
+    if (oemReleaseAt) {
+      if (r.releaseAt) {
+        try {
+          const d = new Date(r.releaseAt);
+          // Format as YYYY-MM-DDTHH:mm for datetime-local
+          const pad = n => String(n).padStart(2, '0');
+          oemReleaseAt.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        } catch {
+          oemReleaseAt.value = '';
+        }
+      } else {
+        oemReleaseAt.value = '';
+      }
+    }
 
     if (ownerEditModalOverlay) showOverlay(ownerEditModalOverlay);
   }
@@ -3094,6 +3309,25 @@
     if (e.target === ownerEditModalOverlay) closeOwnerEditModal();
   });
 
+  // Countdown adjust buttons in Owner Edit Modal
+  $('#oemClearCountdown')?.addEventListener('click', () => {
+    const inp = $('#oemReleaseAt');
+    if (inp) inp.value = '';
+  });
+
+  document.querySelectorAll('[data-oem-adjust]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const inp = $('#oemReleaseAt');
+      if (!inp) return;
+      const deltaSec = parseInt(btn.dataset.oemAdjust, 10) || 0;
+      let currentMs = inp.value ? new Date(inp.value).getTime() : Date.now();
+      if (isNaN(currentMs)) currentMs = Date.now();
+      const nextDate = new Date(currentMs + deltaSec * 1000);
+      const pad = n => String(n).padStart(2, '0');
+      inp.value = `${nextDate.getFullYear()}-${pad(nextDate.getMonth() + 1)}-${pad(nextDate.getDate())}T${pad(nextDate.getHours())}:${pad(nextDate.getMinutes())}`;
+    });
+  });
+
   ownerEditModalForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!userIsOwner()) return;
@@ -3105,6 +3339,7 @@
     const password = $('#oemPassword')?.value.trim();
     const image_url = $('#oemImageUrl')?.value.trim();
     const details = $('#oemDetails')?.value.trim();
+    const release_at = $('#oemReleaseAt')?.value ? new Date($('#oemReleaseAt').value).toISOString() : null;
 
     if (!id || !title) {
       toast({ title: 'Validation error', sub: 'Title and resource ID are required.', icon: ICON.x });
@@ -3128,7 +3363,8 @@
           download_url,
           password,
           image_url,
-          details
+          details,
+          release_at
         }),
         credentials: 'omit'
       });
@@ -3376,6 +3612,7 @@
   renderSoftware();
   renderCategoryHead();
   renderBrowse();
+  loadIncomingReleases();
   renderReqCategories();
   wireRequestControls();
   initFeedbackDrawer();
