@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node bot_dashboard.js",
     "dashboard": "node bot_dashboard.js",
-    "deploy": "wrangler deploy --minify",
+    "deploy": "npx wrangler deploy --minify",
     "build:hardened": "node tools/build-hardened.cjs",
     "build:site": "node tools/build-site.cjs",
     "test": "node tools/requests.test.cjs && node tools/security.test.cjs && node tools/community.test.cjs && node tools/upload.test.cjs && node tools/dashboard.test.cjs && node tools/publish.test.cjs",
