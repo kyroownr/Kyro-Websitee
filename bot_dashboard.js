@@ -14,16 +14,18 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = 4000;
-// Bot token loaded from environment or local .env
-const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || (function() {
+const PORT = Number(process.env.PORT || 4000);
+// Bot token loaded from environment or local .env (gitignored). Uses the
+// imported fs/path — `require` is undefined in ES modules.
+const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || (() => {
   try {
-    const fs = require('fs');
-    if (fs.existsSync('.env')) {
-      const match = fs.readFileSync('.env', 'utf8').match(/DISCORD_BOT_TOKEN=([^\r\n]+)/);
-      if (match) return match[1].trim();
+    const envPath = path.join(__dirname, '.env');
+    if (fs.existsSync(envPath)) {
+      const raw = fs.readFileSync(envPath, 'utf8').replace(/^\uFEFF/, '');
+      const match = raw.match(/^\s*DISCORD_BOT_TOKEN\s*=\s*([^\r\n]+)/m);
+      if (match) return match[1].trim().replace(/^["']|["']$/g, '');
     }
-  } catch(e) {}
+  } catch (e) {}
   return '';
 })();
 const GUILD_ID = process.env.DISCORD_GUILD_ID || '1539961184323772498';
@@ -703,6 +705,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 `;
 
 const server = http.createServer(async (req, res) => {
+  // Loopback admin tool: reject any Host that isn't localhost so a malicious
+  // website cannot reach it via DNS rebinding (attacker domain -> 127.0.0.1).
+  const host = (req.headers.host || '').toLowerCase();
+  if (host !== `localhost:${PORT}` && host !== `127.0.0.1:${PORT}` && host !== `[::1]:${PORT}`) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Forbidden host.' }));
+    return;
+  }
   const url = new URL(req.url, `http://${req.headers.host}`);
 
   if (req.method === 'GET' && url.pathname === '/') {
@@ -847,10 +857,20 @@ const server = http.createServer(async (req, res) => {
   res.end(JSON.stringify({ error: 'Not found' }));
 });
 
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[Dashboard] Port ${PORT} is already in use. Another dashboard instance may be running — open http://localhost:${PORT}`);
+  } else {
+    console.error('[Dashboard] Server error:', err.message);
+  }
+  process.exit(1);
+});
+
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`=======================================================`);
   console.log(`🚀 Kyro Staff Bot Local Dashboard running on:`);
   console.log(`👉 http://localhost:${PORT}`);
+  console.log(`🔑 Bot token: ${BOT_TOKEN ? 'loaded' : 'MISSING — set DISCORD_BOT_TOKEN in .env (publish/moderation disabled)'}`);
   console.log(`Command /start-kyro in Discord will trigger auto-open!`);
   console.log(`=======================================================`);
 });
