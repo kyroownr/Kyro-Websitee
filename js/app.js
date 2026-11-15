@@ -166,8 +166,12 @@
   function normaliseAuth(v) {
     if (!v || (v.state !== LOGGED && v.state !== VERIFIED)) return { state: OUT, user: null, token: '' };
     const user = v.user && v.user.username
-      ? v.user
+      ? { username: v.user.username, id: v.user.id || '', avatar: v.user.avatar || '', initials: v.user.initials || '' }
       : { username: 'editor', id: '', avatar: '', initials: 'E' };
+    // Privilege flags are never trusted from storage. Role and is_owner are
+    // re-stated by the auth worker on every load (refreshDiscordRole), so a
+    // hand-edited localStorage entry cannot render owner UI even for the
+    // moment before the server replies.
     return { state: v.state, user, token: v.token || '' };
   }
   const saveAuth = () => write(K_AUTH, auth);
@@ -700,9 +704,11 @@
   }
 
   function userIsOwner() {
-    if (auth.state !== VERIFIED || !auth.user) return false;
-    const role = (auth.user.role || discordRole || '').toLowerCase();
-    return role === 'owner' || auth.user.id === '1052909930073567232' || Boolean(auth.user.is_owner);
+    // Owner status is decided by the auth worker, never by the browser.
+    // Role strings, user ids and localStorage can all be edited from DevTools,
+    // so the only trusted source is the server-verified is_owner flag that
+    // /verify rewrites on every session refresh.
+    return auth.state === VERIFIED && Boolean(auth.user && auth.user.is_owner === true);
   }
 
   function cardHTML(r, i) {
@@ -2078,7 +2084,7 @@
       const roleBadge = auth.user.role || (discordRole ? discordRole.toUpperCase() : (auth.state === VERIFIED ? 'Member' : 'Guest'));
       metaEl.textContent = '@' + auth.user.username + ' · ' + roleBadge + (auth.state === VERIFIED ? ' · Verified' : '');
 
-      const isContributorOrOwner = roleBadge.toLowerCase() === 'owner' || roleBadge.toLowerCase() === 'contributor' || roleBadge.toLowerCase() === 'mod+' || auth.user.id === '1052909930073567232';
+      const isContributorOrOwner = roleBadge.toLowerCase() === 'owner' || roleBadge.toLowerCase() === 'contributor' || roleBadge.toLowerCase() === 'mod+' || auth.user.is_owner === true;
       if (uploadsTab) uploadsTab.style.display = isContributorOrOwner ? 'flex' : 'none';
       checkUnreadNotifications();
     } else {

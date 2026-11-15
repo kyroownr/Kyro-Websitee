@@ -52,7 +52,8 @@ global.fetch = async (url, opts) => {
     if (method === 'POST') return jsonRes({ id: 'chan_new_' + (body && body.name || 'x').replace(/[^a-z0-9]/g, ''), name: body && body.name, type: body && body.type || 0, permission_overwrites: [] });
     return jsonRes([
       { id: 'chan1', name: 'general', type: 0, position: 1, permission_overwrites: mockOverwrites.chan1 },
-      { id: 'chan2', name: 'giveaways', type: 0, position: 2, permission_overwrites: mockOverwrites.chan2 }
+      { id: 'chan2', name: 'giveaways', type: 0, position: 2, permission_overwrites: mockOverwrites.chan2 },
+      { id: 'chan_forum', name: 'help', type: 15, position: 3, permission_overwrites: [] }
     ]);
   }
   if ((p === '/channels/chan1' || p === '/channels/chan2') && method === 'PATCH') {
@@ -99,6 +100,7 @@ global.fetch = async (url, opts) => {
     { id: '200000000000000003', username: 'alice' }, { id: '200000000000000004', username: 'bob' }, { id: BOT_ID, username: 'UtilityBot' }
   ]);
   if (p === '/channels/dm1/messages') return jsonRes({ id: 'dmsg1' });
+  if (p === '/channels/chan_forum/messages' && method === 'POST') return jsonRes({ id: 'msg1' });
   return jsonRes({}, 200);
 };
 
@@ -165,7 +167,7 @@ async function waitForServer() {
   // Guild detail
   const guild = await req('GET', '/api/guild?guild=guild1');
   ok(guild.status === 200 && guild.data.guild.name === 'Test Server', 'guild detail loads');
-  ok(guild.data.channels.length === 2 && guild.data.roles.length === 5, 'channels and roles load');
+  ok(guild.data.channels.length === 3 && guild.data.roles.length === 5, 'channels and roles load');
 
   // Config defaults
   const config = await req('GET', '/api/config?guild=guild1');
@@ -310,6 +312,20 @@ async function waitForServer() {
   ok(tk.status === 200 && tk.data.message_id === 'msg1', 'ticket button posted');
   const tkCall = lastCall((c) => c.method === 'POST' && c.path === '/channels/chan1/messages' && c.body.components);
   ok(tkCall && tkCall.body.components[0].components[0].custom_id === 'kyro-ticket:open:guild1', 'ticket open button custom_id');
+
+  // Ticket button to a forum channel (#help) — creates the post with a thread name
+  const tkForum = await req('POST', '/api/tickets/post', { guild: 'guild1', channelId: 'chan_forum', title: 'Tickets' });
+  ok(tkForum.status === 200 && tkForum.data.message_id === 'msg1', 'ticket button posted to forum channel');
+  const tkForumCall = lastCall((c) => c.method === 'POST' && c.path === '/channels/chan_forum/messages' && c.body.components);
+  ok(tkForumCall && tkForumCall.body.thread_name === 'Tickets', 'forum post carries thread_name');
+
+  // Ticket button to a deleted / unknown channel explains instead of "Unknown Channel"
+  const tkGone = await req('POST', '/api/tickets/post', { guild: 'guild1', channelId: '999999999999999999' });
+  ok(tkGone.status === 500 && /no longer exists/.test(tkGone.data.error), 'unknown channel gives an actionable error');
+
+  // Ticket button with a malformed channel id is rejected
+  const tkBad = await req('POST', '/api/tickets/post', { guild: 'guild1', channelId: '<script>alert(1)</script>' });
+  ok(tkBad.status === 500 && /invalid/.test(tkBad.data.error), 'malformed channel id rejected');
 
   // Security settings save
   const sec = await req('POST', '/api/security', { guild: 'guild1', antiNuke: true, antiNukeBan: true, antiNukeThreshold: 2, raidThreshold: 5, keywords: ['free nitro', 'ip grabber'] });

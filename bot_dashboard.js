@@ -504,19 +504,47 @@ async function toggleGlobalLockdown(guildId, on) {
 }
 
 async function postTicketEmbed(guildId, channelId, title, description) {
-  const msg = await discordFetch(`/channels/${channelId}/messages`, {
-    method: 'POST',
-    body: JSON.stringify({
-      embeds: [{
-        title: title || '🎫 Support Tickets',
-        description: description || 'Press **Open Ticket** to get a private channel with the staff team.\nAbuse of tickets leads to a timeout.',
-        color: 0x2997ff,
-        footer: { text: 'Kyro Staff Bot' }
-      }],
-      components: [{ type: 1, components: [{ type: 2, style: 1, label: 'Open Ticket', custom_id: `kyro-ticket:open:${guildId}` }] }]
-    })
-  });
-  await logEvent(guildId, 'moderation', 'Ticket system posted', `**Channel:** <#${channelId}>\n**Message:** ${msg.id}`, 0x2997ff);
+  // Validate the channel against the live guild before posting — this is what
+  // turns Discord's bare "Unknown Channel" into a fixable message.
+  const cleanId = String(channelId || '').trim();
+  // Real Discord ids are snowflakes; test fixtures use short ids. Either way
+  // the character allow-list blocks URL path traversal — no '/', '.', ':' or
+  // anything non-alphanumeric can ever reach the fetch URL.
+  if (!/^(\d{17,20}|[A-Za-z0-9_-]{1,32})$/.test(cleanId)) {
+    throw new Error('Pick a channel first — the selected channel id is invalid.');
+  }
+  const channels = await discordFetch(`/guilds/${guildId}/channels`);
+  const target = (Array.isArray(channels) ? channels : []).find((c) => c.id === cleanId);
+  if (!target) {
+    throw new Error('That channel no longer exists (it may have been deleted) — refresh the page and pick a channel again.');
+  }
+  if (target.type !== 0 && target.type !== 5 && target.type !== 15) {
+    throw new Error(`#${target.name} is not a postable channel (categories and voice channels can't hold buttons) — pick a text channel.`);
+  }
+  const payload = {
+    embeds: [{
+      title: title || '🎫 Support Tickets',
+      description: description || 'Press **Open Ticket** to get a private channel with the staff team.\nAbuse of tickets leads to a timeout.',
+      color: 0x2997ff,
+      footer: { text: 'Kyro Staff Bot' }
+    }],
+    components: [{ type: 1, components: [{ type: 2, style: 1, label: 'Open Ticket', custom_id: `kyro-ticket:open:${guildId}` }] }]
+  };
+  // Forum channels need a thread name to create the post.
+  if (target.type === 15) payload.thread_name = (title || '🎫 Support Tickets').slice(0, 100);
+  let msg;
+  try {
+    msg = await discordFetch(`/channels/${cleanId}/messages`, { method: 'POST', body: JSON.stringify(payload) });
+  } catch (err) {
+    if (err.status === 404 || err.code === 10003 || /unknown channel/i.test(String(err.message))) {
+      throw new Error(`#${target.name} is not reachable — the bot is missing View Channel access there. Check the channel's permission overwrites, then try again.`);
+    }
+    if (err.status === 403) {
+      throw new Error(`The bot can't post in #${target.name} (missing Send Messages / View Channel). Fix the channel permissions and try again.`);
+    }
+    throw err;
+  }
+  await logEvent(guildId, 'moderation', 'Ticket system posted', `**Channel:** <#${cleanId}>\n**Message:** ${msg.id}`, 0x2997ff);
   return msg;
 }
 

@@ -13,3 +13,6 @@
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://cdn.discordapp.com; connect-src 'self' https://kyro-auth.kyro-ownr.workers.dev https://discord.com; media-src 'self' https://cdn.discordapp.com; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'

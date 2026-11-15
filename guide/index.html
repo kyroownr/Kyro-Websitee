@@ -31,7 +31,7 @@
   <link rel="preconnect" href="https://kyro-auth.kyro-ownr.workers.dev" crossorigin />
   <link rel="dns-prefetch" href="https://discord.com" />
   <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="all" />
   <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
 
   <link rel="stylesheet" href="/css/styles.css?v=3.2" />
@@ -240,36 +240,7 @@
     </div>
   </footer>
 
-  <script>
-    /* Same live stamp as the vault page; this page ships no app bundle. */
-    (function () {
-      const editions = { windows: document.getElementById('guideWindows'), macos: document.getElementById('guideMac') };
-      const buttons = document.querySelectorAll('[data-guide-os]');
-      const selectEdition = (os) => {
-        Object.entries(editions).forEach(([key, panel]) => { panel.hidden = key !== os; });
-        buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.guideOs === os)));
-        document.getElementById('guideTitle').textContent = os === 'macos' ? "Beginner's Guide to After Effects (MacBook Edition)" : "Beginner's Guide to After Effects";
-        document.getElementById('guideLede').textContent = os === 'macos' ? 'Start here for MacBook setup, Apple Silicon plugin tips, composition settings, and macOS shortcuts.' : 'Start here for After Effects setup, plugins, composition settings, and shortcuts.';
-      };
-      let storedOs;
-      try { storedOs = JSON.parse(localStorage.getItem('kyro.os.v1')); } catch {}
-      const requestedOs = new URLSearchParams(location.search).get('os');
-      const defaultOs = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent + ' ' + navigator.platform) ? 'macos' : 'windows';
-      selectEdition(requestedOs === 'macos' || requestedOs === 'windows' ? requestedOs : storedOs === 'macos' || storedOs === 'windows' ? storedOs : defaultOs);
-      buttons.forEach(button => button.addEventListener('click', () => {
-        selectEdition(button.dataset.guideOs);
-        try { localStorage.setItem('kyro.os.v1', JSON.stringify(button.dataset.guideOs)); } catch {}
-      }));
-      const two = (n) => String(n).padStart(2, '0');
-      const el = document.getElementById('siteUpdated');
-      const tick = () => {
-        const d = new Date();
-        el.textContent = d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate()) +
-          ' ' + two(d.getHours()) + ':' + two(d.getMinutes()) + ':' + two(d.getSeconds());
-      };
-      tick();
-      setInterval(tick, 1000);
-    })();
-  </script>
+  <script defer src="/js/guide.js"></script>
+  <script defer src="/js/stamp.js"></script>
 </body>
 </html>
