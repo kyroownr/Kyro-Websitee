@@ -2343,6 +2343,7 @@ async function handleDashboardModerate(request, url, env, cors) {
 
 /* -------------------------------- Automatic Alert Section Member Monitor (Join ✅ / Leave ❌ Ban) ------------------------------- */
 const ALERT_CHANNEL_ID = '1570713380778541147'; // #alert channel
+const SAPPHIRE_BOT_ID = '678344927997853742'; // Sapphire join/leave alert author
 const CHECK_EMOJI = '%E2%9C%85'; // ✅
 const CROSS_EMOJI = '%E2%9D%8C'; // ❌
 
@@ -2362,6 +2363,9 @@ async function runAlertSectionMemberMonitor(env) {
     let actedCount = 0;
 
     for (const msg of msgs) {
+      // Only Sapphire's own join/leave alerts drive enforcement; a stray
+      // mention from anyone else in #alert must never trigger a ban.
+      if (msg.author?.id !== SAPPHIRE_BOT_ID) continue;
       const targetUser = msg.mentions?.[0];
       if (!targetUser || !targetUser.id) continue;
       // Do not ban bot or server owner
@@ -2484,7 +2488,10 @@ function corsHeaders(request, env) {
     vary: 'Origin'
   };
   const allowed = allowedOrigins(env);
-  if (allowed.includes(origin.replace(/\/$/, '')) || origin.endsWith('.new.tg') || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+  // Exact origin match only. Substring ("localhost") or wildcard ("*.new.tg")
+  // checks let hostile hosts like localhost.evil.com or any shared new.tg
+  // subdomain read authenticated responses cross-origin.
+  if (allowed.includes(origin.replace(/\/$/, ''))) {
     headers['access-control-allow-origin'] = origin;
   } else if (!origin) {
     headers['access-control-allow-origin'] = '*';
