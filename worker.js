@@ -94,6 +94,8 @@ export default {
       if (url.pathname === '/dashboard/settings') return await handleDashboardSettings(request, url, env, cors);
       if (url.pathname === '/dashboard/embed') return await handleDashboardEmbed(request, url, env, cors);
       if (url.pathname === '/dashboard/lockdown') return await handleDashboardLockdown(request, url, env, cors);
+      if (url.pathname === '/dashboard/moderate') return await handleDashboardModerate(request, url, env, cors);
+      if (url.pathname === '/dashboard/alert-monitor') return await handleAlertMonitorTrigger(request, url, env, cors);
       if (url.pathname === '/dashboard/audit') return await handleDashboardAudit(request, url, env, cors);
       return json({ error: 'Unknown route. Use /callback, /verify, /requests, /feedback, /invite, /downloads or /dashboard/*.' }, 404, cors);
     } catch (err) {
@@ -108,6 +110,10 @@ export default {
       }
       return json({ error: message, code: (err && err.code) || 'server_error' }, (err && err.status) || 500, cors);
     }
+  },
+
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runAlertSectionMemberMonitor(env));
   }
 };
 
@@ -2216,6 +2222,245 @@ async function handleDashboardAudit(request, url, env, cors) {
 
   const doc = (await readDoc(env, DASHBOARD_AUDIT_KEY, { logs: [] })).value;
   return json({ logs: doc.logs || [] }, 200, cors);
+}
+
+/* -------------------------------- Bot Moderation (Ban, Temp Ban, Unban, Timeout, Kick) ------------------------------- */
+async function handleDashboardModerate(request, url, env, cors) {
+  if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
+  const token = bearerToken(request, url);
+  const session = await requireMember(token, env);
+  checkAdminOrOwner(session);
+
+  if (!env.DISCORD_BOT_TOKEN) throw fail(500, 'no_bot_token', 'Discord bot token is not configured.');
+
+  const input = await jsonBody(request);
+  const action = String(input.action || '').toLowerCase(); // ban, tempban, unban, timeout, untimeout, kick
+  const userId = cleanText(input.user_id || input.userId, 40);
+  const reason = cleanText(input.reason || `Moderation action (${action}) via Kyro Dashboard by ${session.username}`, 200);
+  const duration = parseInt(input.duration, 10) || 3600; // seconds for tempban / timeout
+  const guildId = String(env.DISCORD_GUILD_ID || env.KYRO_GUILD_ID);
+
+  if (!userId || !/^\d{17,20}$/.test(userId)) {
+    throw fail(400, 'bad_user_id', 'Provide a valid Discord User ID.');
+  }
+
+  const reasonHeader = {
+    authorization: 'Bot ' + env.DISCORD_BOT_TOKEN,
+    'X-Audit-Log-Reason': encodeURIComponent(reason)
+  };
+
+  if (action === 'ban' || action === 'tempban') {
+    const banRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/bans/${userId}`, {
+      method: 'PUT',
+      headers: { ...reasonHeader, 'content-type': 'application/json' },
+      body: JSON.stringify({ delete_message_seconds: 0 })
+    });
+    if (!banRes.ok) {
+      const errText = await banRes.text();
+      throw fail(banRes.status, 'discord_ban_failed', `Ban request rejected: ${errText}`);
+    }
+
+    if (action === 'tempban') {
+      // Store tempban expiration in KV
+      const tempbanKey = `kyro.tempban.${userId}`;
+      if (env.KYRO_DATA) {
+        await env.KYRO_DATA.put(tempbanKey, JSON.stringify({
+          userId,
+          guildId,
+          expiresAt: Date.now() + duration * 1000,
+          reason
+        }), { expirationTtl: duration + 3600 });
+      }
+    }
+
+    await logBotAudit(env, action === 'tempban' ? `🔨 Temp Ban (${Math.round(duration / 60)}m)` : '🔨 Ban Member', session, `Target: <@${userId}> · Reason: ${reason}`);
+    return json({ ok: true, message: action === 'tempban' ? `User <@${userId}> temp-banned for ${Math.round(duration / 60)} minutes.` : `User <@${userId}> permanently banned.` }, 200, cors);
+  }
+
+  if (action === 'unban') {
+    const unbanRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/bans/${userId}`, {
+      method: 'DELETE',
+      headers: reasonHeader
+    });
+    if (!unbanRes.ok) {
+      const errText = await unbanRes.text();
+      throw fail(unbanRes.status, 'discord_unban_failed', `Unban request rejected: ${errText}`);
+    }
+    await logBotAudit(env, '🕊️ Unban Member', session, `Unbanned: <@${userId}> · Reason: ${reason}`);
+    return json({ ok: true, message: `User <@${userId}> has been unbanned.` }, 200, cors);
+  }
+
+  if (action === 'timeout') {
+    const until = new Date(Date.now() + duration * 1000).toISOString();
+    const toRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
+      method: 'PATCH',
+      headers: { ...reasonHeader, 'content-type': 'application/json' },
+      body: JSON.stringify({ communication_disabled_until: until })
+    });
+    if (!toRes.ok) {
+      const errText = await toRes.text();
+      throw fail(toRes.status, 'discord_timeout_failed', `Timeout rejected: ${errText}`);
+    }
+    await logBotAudit(env, `⏱️ Timeout Member (${Math.round(duration / 60)}m)`, session, `Target: <@${userId}> · Reason: ${reason}`);
+    return json({ ok: true, message: `User <@${userId}> timed out for ${Math.round(duration / 60)} minutes.` }, 200, cors);
+  }
+
+  if (action === 'untimeout') {
+    const untoRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
+      method: 'PATCH',
+      headers: { ...reasonHeader, 'content-type': 'application/json' },
+      body: JSON.stringify({ communication_disabled_until: null })
+    });
+    if (!untoRes.ok) {
+      const errText = await untoRes.text();
+      throw fail(untoRes.status, 'discord_untimeout_failed', `Remove timeout rejected: ${errText}`);
+    }
+    await logBotAudit(env, '⏱️ Timeout Removed', session, `Target: <@${userId}>`);
+    return json({ ok: true, message: `Timeout removed for user <@${userId}>.` }, 200, cors);
+  }
+
+  if (action === 'kick') {
+    const kickRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
+      method: 'DELETE',
+      headers: reasonHeader
+    });
+    if (!kickRes.ok) {
+      const errText = await kickRes.text();
+      throw fail(kickRes.status, 'discord_kick_failed', `Kick rejected: ${errText}`);
+    }
+    await logBotAudit(env, '👢 Kick Member', session, `Kicked: <@${userId}> · Reason: ${reason}`);
+    return json({ ok: true, message: `User <@${userId}> kicked from server.` }, 200, cors);
+  }
+
+  throw fail(400, 'bad_action', 'Unknown moderation action. Use ban, tempban, unban, timeout, untimeout, or kick.');
+}
+
+/* -------------------------------- Automatic Alert Section Member Monitor (Join ✅ / Leave ❌ Ban) ------------------------------- */
+const ALERT_CHANNEL_ID = '1570713380778541147'; // #alert channel
+const CHECK_EMOJI = '%E2%9C%85'; // ✅
+const CROSS_EMOJI = '%E2%9D%8C'; // ❌
+
+async function runAlertSectionMemberMonitor(env) {
+  if (!env.DISCORD_BOT_TOKEN) return { processed: 0 };
+  const guildId = String(env.DISCORD_GUILD_ID || env.KYRO_GUILD_ID);
+
+  try {
+    // 1. Fetch recent join alert messages from Sapphire in #alert
+    const msgsRes = await fetch(`https://discord.com/api/v10/channels/${ALERT_CHANNEL_ID}/messages?limit=25`, {
+      headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
+    });
+    if (!msgsRes.ok) return { error: 'Failed to read alert channel' };
+    const msgs = await msgsRes.json();
+    if (!Array.isArray(msgs)) return { processed: 0 };
+
+    let actedCount = 0;
+
+    for (const msg of msgs) {
+      const targetUser = msg.mentions?.[0];
+      if (!targetUser || !targetUser.id) continue;
+      // Do not ban bot or server owner
+      if (targetUser.id === '1052909930073567232' || targetUser.id === '1571036271839682601' || targetUser.bot) continue;
+
+      const reactions = msg.reactions || [];
+      const hasCross = reactions.some(r => r.emoji.name === '❌');
+      const hasCheck = reactions.some(r => r.emoji.name === '✅');
+
+      // Check if user is still in guild
+      const memberRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${targetUser.id}`, {
+        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
+      });
+
+      if (memberRes.ok) {
+        // User is IN server: ensure ✅ is added if not yet reacted
+        const myCheck = reactions.find(r => r.emoji.name === '✅')?.me;
+        if (!myCheck) {
+          await fetch(`https://discord.com/api/v10/channels/${ALERT_CHANNEL_ID}/messages/${msg.id}/reactions/${CHECK_EMOJI}/@me`, {
+            method: 'PUT',
+            headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
+          });
+          actedCount++;
+        }
+      } else if (memberRes.status === 404) {
+        // User has LEFT server!
+        // Per server rule: "Don't join and leave this bot for resources, you will get banned."
+        if (!hasCross) {
+          // Remove ✅ reaction if present
+          await fetch(`https://discord.com/api/v10/channels/${ALERT_CHANNEL_ID}/messages/${msg.id}/reactions/${CHECK_EMOJI}/@me`, {
+            method: 'DELETE',
+            headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
+          }).catch(() => {});
+
+          // Add ❌ reaction
+          await fetch(`https://discord.com/api/v10/channels/${ALERT_CHANNEL_ID}/messages/${msg.id}/reactions/${CROSS_EMOJI}/@me`, {
+            method: 'PUT',
+            headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
+          });
+
+          // Ban user for leaving per server rule
+          const banRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/bans/${targetUser.id}`, {
+            method: 'PUT',
+            headers: {
+              authorization: 'Bot ' + env.DISCORD_BOT_TOKEN,
+              'content-type': 'application/json',
+              'X-Audit-Log-Reason': encodeURIComponent('Server Rule: Left server after joining for resources. Automatic ban.')
+            },
+            body: JSON.stringify({ delete_message_seconds: 0 })
+          });
+
+          // Log to private audit channel
+          const auditChannel = '1571403237788221611';
+          await fetch(`https://discord.com/api/v10/channels/${auditChannel}/messages`, {
+            method: 'POST',
+            headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
+            body: JSON.stringify({
+              embeds: [{
+                title: '🛡️ Auto-Enforcement: Member Banned for Leaving',
+                description: `User **${targetUser.username}** (<@${targetUser.id}>) left the server after joining.\nMarked with ❌ in <#${ALERT_CHANNEL_ID}> and automatically banned per server rule.`,
+                color: 0xef4444,
+                timestamp: new Date().toISOString()
+              }]
+            })
+          });
+
+          actedCount++;
+        }
+      }
+    }
+
+    // 2. Check and lift expired temp-bans if any
+    if (env.KYRO_DATA) {
+      const tempbansDoc = await env.KYRO_DATA.list({ prefix: 'kyro.tempban.' });
+      for (const key of tempbansDoc.keys || []) {
+        try {
+          const raw = await env.KYRO_DATA.get(key.name);
+          if (raw) {
+            const tb = JSON.parse(raw);
+            if (Date.now() >= tb.expiresAt) {
+              await fetch(`https://discord.com/api/v10/guilds/${guildId}/bans/${tb.userId}`, {
+                method: 'DELETE',
+                headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'X-Audit-Log-Reason': 'Temp-ban duration expired' }
+              });
+              await env.KYRO_DATA.delete(key.name);
+            }
+          }
+        } catch {}
+      }
+    }
+
+    return { ok: true, actedCount };
+  } catch (err) {
+    console.warn('[alert-monitor] Error running monitor:', err);
+    return { error: err.message };
+  }
+}
+
+async function handleAlertMonitorTrigger(request, url, env, cors) {
+  const token = bearerToken(request, url);
+  const session = await requireMember(token, env);
+  checkAdminOrOwner(session);
+
+  const res = await runAlertSectionMemberMonitor(env);
+  return json(res, 200, cors);
 }
 
 /* -------------------------------- plumbing ------------------------------- */

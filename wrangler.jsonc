@@ -17,6 +17,9 @@
 
   // Plaintext. Without KYRO_GUILD_ID readSession() can never report a member,
   // so verification would silently fail for everyone.
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
   "vars": {
     "KYRO_GUILD_ID": "1539961184323772498",
     "DISCORD_GUILD_ID": "1539961184323772498",

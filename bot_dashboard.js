@@ -536,7 +536,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
             <label>Action</label>
             <select id="modAction">
               <option value="timeout">Timeout / Temp Mute</option>
+              <option value="untimeout">Remove Timeout (Untimeout)</option>
+              <option value="tempban">Temp Ban</option>
               <option value="ban">Ban User</option>
+              <option value="unban">Unban User (Not Ban)</option>
               <option value="kick">Kick User</option>
             </select>
           </div>
@@ -579,9 +582,25 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     const btnMod = document.getElementById('btnMod');
 
     modAction.addEventListener('change', () => {
-      modDurationGroup.style.display = modAction.value === 'timeout' ? 'block' : 'none';
-      btnMod.style.background = modAction.value === 'ban' ? '#dc2626' : modAction.value === 'kick' ? '#d97706' : '#ef4444';
-      btnMod.textContent = modAction.value === 'ban' ? '🔨 Ban User from Kyro' : modAction.value === 'kick' ? '👢 Kick User from Kyro' : '⚡ Timeout User';
+      const needsDuration = modAction.value === 'timeout' || modAction.value === 'tempban';
+      modDurationGroup.style.display = needsDuration ? 'block' : 'none';
+      
+      if (modAction.value === 'ban' || modAction.value === 'tempban') {
+        btnMod.style.background = '#dc2626';
+        btnMod.textContent = modAction.value === 'tempban' ? '⏳ Temp Ban User from Kyro' : '🔨 Ban User from Kyro';
+      } else if (modAction.value === 'unban') {
+        btnMod.style.background = '#10b981';
+        btnMod.textContent = '🕊️ Unban User (Remove Ban)';
+      } else if (modAction.value === 'untimeout') {
+        btnMod.style.background = '#10b981';
+        btnMod.textContent = '⏱️ Remove Timeout (Untimeout)';
+      } else if (modAction.value === 'kick') {
+        btnMod.style.background = '#d97706';
+        btnMod.textContent = '👢 Kick User from Kyro';
+      } else {
+        btnMod.style.background = '#ef4444';
+        btnMod.textContent = '⚡ Timeout User';
+      }
     });
 
     modForm.addEventListener('submit', async (e) => {
@@ -749,6 +768,17 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
+        if (action === 'untimeout') {
+          await discordFetch(`/guilds/${GUILD_ID}/members/${userId}`, {
+            method: 'PATCH',
+            headers: reasonHeader,
+            body: JSON.stringify({ communication_disabled_until: null })
+          });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, message: `Timeout removed for <@${userId}>.` }));
+          return;
+        }
+
         if (action === 'ban') {
           await discordFetch(`/guilds/${GUILD_ID}/bans/${userId}`, {
             method: 'PUT',
@@ -757,6 +787,39 @@ const server = http.createServer(async (req, res) => {
           });
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, message: `User <@${userId}> banned successfully.` }));
+          return;
+        }
+
+        if (action === 'tempban') {
+          const seconds = duration || 3600;
+          await discordFetch(`/guilds/${GUILD_ID}/bans/${userId}`, {
+            method: 'PUT',
+            headers: reasonHeader,
+            body: JSON.stringify({ delete_message_seconds: 0 })
+          });
+          setTimeout(async () => {
+            try {
+              await discordFetch(`/guilds/${GUILD_ID}/bans/${userId}`, {
+                method: 'DELETE',
+                headers: { 'X-Audit-Log-Reason': 'Temp-ban expired' }
+              });
+              console.log(`[TempBan] Lifted temp-ban for user ${userId}`);
+            } catch (e) {
+              console.error(`[TempBan] Failed to unban ${userId}:`, e.message);
+            }
+          }, seconds * 1000);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, message: `User <@${userId}> temp-banned for ${Math.round(seconds / 60)} minutes.` }));
+          return;
+        }
+
+        if (action === 'unban') {
+          await discordFetch(`/guilds/${GUILD_ID}/bans/${userId}`, {
+            method: 'DELETE',
+            headers: reasonHeader
+          });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, message: `User <@${userId}> unbanned successfully.` }));
           return;
         }
 
