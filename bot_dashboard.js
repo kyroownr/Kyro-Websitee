@@ -250,17 +250,35 @@ function rolePresetPermissions(name) {
   if (/(admin|owner|founder)/.test(n)) return { perms: '8', label: 'Administrator' };
   if (/(muted|jail|quarantine|prison)/.test(n)) return { perms: String(PERM.VIEW | PERM.HISTORY), label: 'read-only (punishment role)' };
   if (/(mod|staff|helper|trial)/.test(n)) return { perms: String(base | PERM.KICK | PERM.TIMEOUT | PERM.MANAGE_MSG | PERM.MENTION | PERM.MUTE | PERM.MOVE | PERM.NICK | PERM.AUDIT), label: 'moderation powers' };
-  if (/(member|verified|guest|community)/.test(n)) return { perms: String(base), label: 'chat basics' };
-  return null;
+  if (/(support|modmail|ticket)/.test(n)) return { perms: String(base | PERM.MANAGE_MSG | PERM.TIMEOUT), label: 'support team powers' };
+  if (/(editor)/.test(n)) return { perms: String(base | PERM.MANAGE_MSG | PERM.MENTION), label: 'editor powers (manage messages)' };
+  if (/(vip|booster|premium|donator|legend)/.test(n)) return { perms: String(base | PERM.MENTION), label: 'VIP perks' };
+  if (/(member|verified|guest|community|contributor|explorer|people)/.test(n)) return { perms: String(base), label: 'chat basics' };
+  // Custom role with no keyword match: explain it by shape and optimise to a safe baseline.
+  return { perms: String(base), label: 'custom role → safe baseline (chat basics)' };
 }
 
 async function applyPermissionPresets(guildId) {
-  const roles = await discordFetch(`/guilds/${guildId}/roles`);
+  const [roles, botId] = await Promise.all([
+    discordFetch(`/guilds/${guildId}/roles`),
+    getBotUserId()
+  ]);
+  // The bot can only edit roles strictly below its own highest role.
+  let botTop = -1;
+  try {
+    const me = await discordFetch(`/guilds/${guildId}/members/${botId}`);
+    for (const rid of me.roles || []) {
+      const r = roles.find((x) => x.id === rid);
+      if (r) botTop = Math.max(botTop, r.position);
+    }
+  } catch (e) {}
   const applied = [], skipped = [];
   for (const role of roles) {
-    if (role.managed || role.name === '@everyone' || /bot/i.test(role.name)) { skipped.push(`${role.name} — managed/bot role`); continue; }
+    if (role.managed) { skipped.push(`${role.name} — managed integration role (Discord-owned)`); continue; }
+    if (role.name === '@everyone') { skipped.push('@everyone — default role, left as-is (protects verification gates)'); continue; }
+    if (/bot/i.test(role.name)) { skipped.push(`${role.name} — bot role`); continue; }
+    if (role.position >= botTop) { skipped.push(`${role.name} — above the Kyro Bot role; drag the bot higher in Server Settings → Roles and re-run`); continue; }
     const preset = rolePresetPermissions(role.name);
-    if (!preset) { skipped.push(`${role.name} — no preset matched, left untouched`); continue; }
     try {
       await discordFetch(`/guilds/${guildId}/roles/${role.id}`, {
         method: 'PATCH', headers: { 'X-Audit-Log-Reason': 'Kyro auto permissions' },
@@ -321,8 +339,12 @@ async function setupVerification(guildId, opts = {}) {
   };
   upsert(guildId, 0, 0n, 2048n | 64n);
   upsert(role.id, 1, 1024n | 2048n | 65536n | 64n, 0n);
-  await discordFetch(`/channels/${channel.id}`, { method: 'PATCH', body: JSON.stringify({ permission_overwrites: overwrites }) });
-  steps.push('Locked sending in the verify channel until verified');
+  try {
+    await discordFetch(`/channels/${channel.id}`, { method: 'PATCH', body: JSON.stringify({ permission_overwrites: overwrites }) });
+    steps.push('Locked sending in the verify channel until verified');
+  } catch (e) {
+    steps.push('⚠️ Could not lock the verify channel (permissions) — the Verify button still works.');
+  }
   // 4. Verify message + button (handled by the Kyro applications worker)
   const msg = await discordFetch(`/channels/${channel.id}/messages`, {
     method: 'POST',
@@ -1495,6 +1517,15 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, { ok: true, message_id: msg.id });
     }
 
+/* Turns Discord's bare "Missing Permissions" into an actionable explanation. */
+function permErrorHint(err) {
+  const msg = String((err && err.message) || '');
+  if (err && (err.status === 403 || /missing permissions|missing perms|permission/i.test(msg))) {
+    return 'The Kyro bot is missing Manage Roles / Manage Channels. Fix it: Server Settings → Roles → drag "Kyro Bot" above the roles it manages, or re-add the bot with Administrator → https://discord.com/oauth2/authorize?client_id=1570702041993711706&permissions=8&scope=bot%20applications.commands';
+  }
+  return null;
+}
+
     // ---- Setup & Security endpoints ----
     if (req.method === 'POST' && p === '/api/permissions/apply') {
       const body = await readBody(req);
@@ -1509,8 +1540,13 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const gid = body.guild || guildId;
       if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
-      const steps = await setupVerification(gid, { channelId: body.channelId, gate: Boolean(body.gate) });
-      return sendJSON(res, 200, { steps });
+      try {
+        const steps = await setupVerification(gid, { channelId: body.channelId, gate: Boolean(body.gate) });
+        return sendJSON(res, 200, { steps });
+      } catch (err) {
+        const hint = permErrorHint(err);
+        return sendJSON(res, hint ? 403 : 500, { error: hint || (err.message || 'Verification setup failed.') });
+      }
     }
 
     if (req.method === 'POST' && p === '/api/verify/remove') {
@@ -1526,8 +1562,13 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const gid = body.guild || guildId;
       if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
-      const steps = await runAutoSetup(gid, { gate: Boolean(body.gate), permissions: Boolean(body.permissions) });
-      return sendJSON(res, 200, { steps });
+      try {
+        const steps = await runAutoSetup(gid, { gate: Boolean(body.gate), permissions: Boolean(body.permissions) });
+        return sendJSON(res, 200, { steps });
+      } catch (err) {
+        const hint = permErrorHint(err);
+        return sendJSON(res, hint ? 403 : 500, { error: hint || (err.message || 'Auto setup failed.') });
+      }
     }
 
     if (req.method === 'POST' && p === '/api/security') {

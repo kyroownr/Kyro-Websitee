@@ -333,29 +333,47 @@ const PERM = {
   CONNECT: 1n << 20n, SPEAK: 1n << 21n, MUTE: 1n << 22n, MOVE: 1n << 24n, NICK: 1n << 27n,
   APPCMD: 1n << 31n, THREAD_CREATE: 1n << 35n, STICKER: 1n << 37n, THREAD_SEND: 1n << 38n, TIMEOUT: 1n << 40n
 };
-/* Best-practice permission set per role name. Roles that match nothing stay untouched. */
+/* Best-practice permission set per role name. Roles that match nothing get a
+   safe baseline so every role ends up optimised. */
 function rolePreset(name) {
   const n = String(name || '').toLowerCase();
   const base = PERM.VIEW | PERM.SEND | PERM.REACT | PERM.EMBED | PERM.ATTACH | PERM.HISTORY | PERM.EXTERN | PERM.STICKER | PERM.CONNECT | PERM.SPEAK | PERM.APPCMD | PERM.THREAD_CREATE | PERM.THREAD_SEND;
-  if (/(admin|owner|founder)/.test(n)) return '8';
-  if (/(muted|jail|quarantine|prison)/.test(n)) return String(PERM.VIEW | PERM.HISTORY);
-  if (/(mod|staff|helper|trial)/.test(n)) return String(base | PERM.KICK | PERM.TIMEOUT | PERM.MANAGE_MSG | PERM.MENTION | PERM.MUTE | PERM.MOVE | PERM.NICK | PERM.AUDIT);
-  if (/(member|verified|guest|community)/.test(n)) return String(base);
-  return null;
+  if (/(admin|owner|founder)/.test(n)) return { perms: '8', label: 'Administrator' };
+  if (/(muted|jail|quarantine|prison)/.test(n)) return { perms: String(PERM.VIEW | PERM.HISTORY), label: 'read-only (punishment role)' };
+  if (/(mod|staff|helper|trial)/.test(n)) return { perms: String(base | PERM.KICK | PERM.TIMEOUT | PERM.MANAGE_MSG | PERM.MENTION | PERM.MUTE | PERM.MOVE | PERM.NICK | PERM.AUDIT), label: 'moderation powers' };
+  if (/(support|modmail|ticket)/.test(n)) return { perms: String(base | PERM.MANAGE_MSG | PERM.TIMEOUT), label: 'support team powers' };
+  if (/(editor)/.test(n)) return { perms: String(base | PERM.MANAGE_MSG | PERM.MENTION), label: 'editor powers (manage messages)' };
+  if (/(vip|booster|premium|donator|legend)/.test(n)) return { perms: String(base | PERM.MENTION), label: 'VIP perks' };
+  if (/(member|verified|guest|community|contributor|explorer|people)/.test(n)) return { perms: String(base), label: 'chat basics' };
+  return { perms: String(base), label: 'custom role → safe baseline (chat basics)' };
 }
 
-/* /setup permissions — rewrite every recognised role to its preset. */
+/* /setup permissions — rewrite every known role to its preset. */
 async function applyRolePresets(env, guildId) {
-  const roles = await botCall(env, `/guilds/${guildId}/roles`);
+  const [roles, me] = await Promise.all([
+    botCall(env, `/guilds/${guildId}/roles`),
+    botCall(env, `/users/@me`)
+  ]);
+  // The bot can only edit roles strictly below its own highest role.
+  let botTop = -1;
+  try {
+    const member = await botCall(env, `/guilds/${guildId}/members/${me.id}`);
+    for (const rid of member.roles || []) {
+      const r = roles.find((x) => x.id === rid);
+      if (r) botTop = Math.max(botTop, r.position);
+    }
+  } catch (err) {}
   const applied = [], skipped = [];
   for (const role of roles) {
-    if (role.managed || role.name === '@everyone' || /bot/i.test(role.name)) { skipped.push(role.name); continue; }
-    const perms = rolePreset(role.name);
-    if (!perms) { skipped.push(role.name); continue; }
+    if (role.managed) { skipped.push(`${role.name} — managed integration role`); continue; }
+    if (role.name === '@everyone') { skipped.push('@everyone — default role, left as-is (protects verification gates)'); continue; }
+    if (/bot/i.test(role.name)) { skipped.push(`${role.name} — bot role`); continue; }
+    if (role.position >= botTop) { skipped.push(`${role.name} — above the Kyro Bot role; drag the bot higher and re-run`); continue; }
+    const preset = rolePreset(role.name);
     try {
-      await botCall(env, `/guilds/${guildId}/roles/${role.id}`, 'PATCH', { permissions: perms }, { 'X-Audit-Log-Reason': 'Kyro auto permissions' });
-      applied.push(`${role.name} → ${perms === '8' ? 'Administrator' : 'best-practice preset'}`);
-    } catch (err) { skipped.push(role.name); }
+      await botCall(env, `/guilds/${guildId}/roles/${role.id}`, 'PATCH', { permissions: preset.perms }, { 'X-Audit-Log-Reason': 'Kyro auto permissions' });
+      applied.push(`${role.name} → ${preset.label}`);
+    } catch (err) { skipped.push(`${role.name} — failed: ${err.message || 'unknown error'}`); }
   }
   return { applied, skipped };
 }

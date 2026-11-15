@@ -23,6 +23,7 @@ process.env.DASHBOARD_DATA_FILE = TMP_DATA;
 const realFetch = global.fetch;
 const calls = [];
 const BOT_ID = 'bot0000000000000001';
+let failRoleCreation = false;
 
 function jsonRes(obj, status) {
   const s = status || 200;
@@ -59,13 +60,19 @@ global.fetch = async (url, opts) => {
     return jsonRes({ id: p.split('/').pop() });
   }
   if (p === '/guilds/guild1/roles') {
-    if (method === 'POST') return jsonRes({ id: 'role_new_' + String(body && body.name || 'x').replace(/[^a-z0-9]/g, ''), name: body && body.name, managed: false, position: 5 });
+    if (method === 'POST') {
+      if (failRoleCreation) return jsonRes({ message: 'Missing Permissions' }, 403);
+      return jsonRes({ id: 'role_new_' + String(body && body.name || 'x').replace(/[^a-z0-9]/g, ''), name: body && body.name, managed: false, position: 5 });
+    }
     return jsonRes([
       { id: 'guild1', name: '@everyone', color: 0, position: 0, managed: false },
       { id: 'role1', name: 'Member', color: 5793266, position: 1, managed: false },
-      { id: 'role2', name: 'VIP', color: 15844367, position: 2, managed: false }
+      { id: 'role2', name: 'VIP', color: 15844367, position: 2, managed: false },
+      { id: 'role3', name: 'Owner', color: 0, position: 20, managed: false },
+      { id: 'role_bot', name: 'Kyro Bot', color: 0, position: 10, managed: false }
     ]);
   }
+  if (p === '/guilds/guild1/members/bot0000000000000001') return jsonRes({ user: { id: BOT_ID, username: 'UtilityBot' }, roles: ['role_bot'] });
   if (/^\/guilds\/guild1\/roles\/[^/]+$/.test(p) && method === 'PATCH') return jsonRes({ id: p.split('/').pop(), permissions: body && body.permissions });
   if (p === '/guilds/guild1/members') return jsonRes([
     { user: { id: '200000000000000003', username: 'alice', global_name: 'Alice', avatar: null, bot: false }, nick: null, roles: ['role1'], joined_at: '2026-01-01T00:00:00.000Z' }
@@ -158,7 +165,7 @@ async function waitForServer() {
   // Guild detail
   const guild = await req('GET', '/api/guild?guild=guild1');
   ok(guild.status === 200 && guild.data.guild.name === 'Test Server', 'guild detail loads');
-  ok(guild.data.channels.length === 2 && guild.data.roles.length === 3, 'channels and roles load');
+  ok(guild.data.channels.length === 2 && guild.data.roles.length === 5, 'channels and roles load');
 
   // Config defaults
   const config = await req('GET', '/api/config?guild=guild1');
@@ -260,10 +267,14 @@ async function waitForServer() {
   ok(cw.status === 200, 'warnings cleared');
 
   // ---- Setup & Security suite ----
-  // Auto permissions: Member -> preset, VIP untouched
+  // Auto permissions: Member -> chat basics, VIP -> safe baseline, protected roles skipped
   const perms = await req('POST', '/api/permissions/apply', { guild: 'guild1' });
-  ok(perms.status === 200 && perms.data.applied.length === 1 && perms.data.applied[0].startsWith('Member'), 'permission preset applied to Member');
-  ok(perms.data.skipped.some((s) => s.startsWith('VIP')), 'unknown roles skipped');
+  ok(perms.status === 200 && perms.data.applied.length === 2, 'two roles optimised');
+  ok(perms.data.applied.some((s) => s.startsWith('Member') && s.includes('chat basics')), 'Member gets chat basics');
+  ok(perms.data.applied.some((s) => s.startsWith('VIP') && s.includes('VIP perks')), 'VIP role optimised to perks tier');
+  ok(perms.data.skipped.some((s) => s.startsWith('@everyone')), '@everyone protected');
+  ok(perms.data.skipped.some((s) => s.startsWith('Owner') && s.includes('above the Kyro Bot')), 'roles above the bot skipped with explanation');
+  ok(perms.data.skipped.some((s) => s.startsWith('Kyro Bot')), 'bot roles skipped');
   ok(lastCall((c) => c.method === 'PATCH' && c.path === '/guilds/guild1/roles/role1' && c.body.permissions), 'Member role permissions PATCHed');
 
   // Verification setup (no gate) — creates role, channel and posts the button
@@ -334,6 +345,12 @@ async function waitForServer() {
   // Mod stats leaderboard
   const ms2 = await req('GET', '/api/modstats?guild=guild1');
   ok(ms2.status === 200 && Array.isArray(ms2.data.stats), 'mod stats endpoint');
+
+  // Verification permission failure explains the fix instead of bare "Missing Permissions"
+  failRoleCreation = true;
+  const vfFail = await req('POST', '/api/verify/setup', { guild: 'guild1' });
+  ok(vfFail.status === 403 && /oauth2\/authorize/.test(vfFail.data.error), 'verification permission error explains the fix');
+  failRoleCreation = false;
 
   console.log(JSON.stringify({ checks: passed, multiServer: 'guild selector + per-guild isolation', features: 'moderation, giveaways, reaction roles, automod, welcome, logging, setup, security, utility, embed', discord: 'mocked REST', result: 'passed' }));
   shutdown(0);
