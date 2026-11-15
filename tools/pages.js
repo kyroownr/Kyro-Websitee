@@ -70,6 +70,7 @@ const head = (p) => `<!DOCTYPE html>
 
       <nav class="nav-right" aria-label="Site">
         <button type="button" class="nav-link" id="paletteOpen">Search</button>
+        <a class="nav-link" href="/incoming">Incoming</a>
         <a class="nav-link" href="/guide">Guide</a>
         <a class="nav-link" href="/about">About</a>
         <a class="nav-link" href="#discordCard">Community</a>
@@ -179,3 +180,51 @@ const applyPage = applyBase.slice(0, mainStart).replace('data-page="category" da
 fs.mkdirSync(path.join(root, 'apply'), { recursive: true });
 fs.writeFileSync(path.join(root, 'apply', 'index.html'), applyPage, 'utf8');
 console.log('apply/index.html written');
+
+// Generate /incoming page (Ready to Release)
+const incomingBase = head({
+  id: 'incoming',
+  title: 'Ready to Release — Community Approval',
+  desc: 'Items waiting for community approval. Vote to bring them live.',
+  meta: 'Vote on incoming builds and releases before they go live on Kyro. Community approval directly determines what lands in the Vault.'
+});
+const incMainStart = incomingBase.indexOf('  <main class="shell">');
+const incMainEnd = incomingBase.indexOf('  </main>', incMainStart) + '  </main>'.length;
+const incomingMain = `  <main class="shell">
+    <header class="page-head">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+        <p class="section-label" style="margin-bottom:0;">Incoming</p>
+        <span class="badge badge-free mono" style="font-size:0.7rem;letter-spacing:0.04em;">COMMUNITY APPROVAL</span>
+      </div>
+      <h1 class="page-title">Ready to Release</h1>
+      <p class="page-lede">Items waiting for community approval. Vote to bring them live.</p>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+        <span class="page-meta" id="incomingCountNote">· Loading releases…</span>
+      </div>
+    </header>
+
+    <!-- ============ Access status strip ============ -->
+    <section class="access-strip" id="accessStrip" aria-live="polite"></section>
+
+    <!-- ============ Incoming Items Grid ============ -->
+    <section class="incoming-section" id="incomingSection" style="margin: 24px 0 48px 0;">
+      <div class="grid" id="incomingGrid" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:16px;"></div>
+      <div class="empty" id="incomingEmpty" hidden style="background:rgba(255,255,255,0.02);border:1px dashed rgba(255,255,255,0.1);border-radius:12px;padding:36px 20px;text-align:center;">
+        <p style="color:#cbd5e1;font-size:0.95rem;margin-bottom:6px;">No incoming items right now.</p>
+        <p style="color:var(--dim);font-size:0.82rem;">When staff or contributors ready a build for community approval, it appears here!</p>
+      </div>
+    </section>
+
+    <!-- ============ Split community banner ============ -->
+    <section class="banner" id="discordCard" aria-label="Kyro Discord"></section>
+  </main>`;
+
+const incomingPage = incomingBase.slice(0, incMainStart)
+  .replace('data-page="category" data-category="incoming"', 'data-page="incoming"')
+  .replace('href="#discordCard"', 'href="/#discordCard"')
+  .replace('<a class="nav-link" href="/incoming">Incoming</a>', '<a class="nav-link is-current" href="/incoming" aria-current="page">Incoming</a>')
+  + incomingMain + incomingBase.slice(incMainEnd) + overlays;
+
+fs.mkdirSync(path.join(root, 'incoming'), { recursive: true });
+fs.writeFileSync(path.join(root, 'incoming', 'index.html'), incomingPage, 'utf8');
+console.log('incoming/index.html written');

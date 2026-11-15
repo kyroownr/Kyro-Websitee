@@ -46,6 +46,7 @@
 
       <nav class="nav-right" aria-label="Site">
         <button type="button" class="nav-link" id="paletteOpen">Search</button>
+        <a class="nav-link" href="/incoming">Incoming</a>
         <a class="nav-link" href="/guide">Guide</a>
         <a class="nav-link" href="/about">About</a>
         <a class="nav-link" href="#discordCard">Community</a>
@@ -103,30 +104,6 @@
      /windows and /macos pages, exactly like keyfla.me ==================== -->
     <p class="section-label">Browse</p>
     <div class="browse" id="browseGrid"></div>
-
-    <!-- ============ Incoming Releases: Community Approval Section ============ -->
-    <section class="incoming-section" id="incomingSection" style="margin: 48px 0;">
-      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
-        <div>
-          <div style="display:flex;align-items:center;gap:8px;">
-            <p class="section-label" style="margin-bottom:0;">Incoming</p>
-            <span class="badge badge-free mono" style="font-size:0.7rem;letter-spacing:0.04em;">COMMUNITY APPROVAL</span>
-          </div>
-          <h2 style="font-size:1.35rem;font-weight:700;color:#fff;margin-top:4px;">Ready to Release</h2>
-          <p style="color:var(--dim);font-size:0.88rem;margin-top:2px;">Items waiting for community approval. Vote to bring them live.</p>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <span style="font-size:0.8rem;color:var(--dim);" id="incomingCountNote">· Loading releases…</span>
-        </div>
-      </div>
-
-      <!-- Incoming Items Grid -->
-      <div class="grid" id="incomingGrid" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:16px;"></div>
-      <div class="empty" id="incomingEmpty" hidden style="background:rgba(255,255,255,0.02);border:1px dashed rgba(255,255,255,0.1);border-radius:12px;padding:32px 20px;text-align:center;">
-        <p style="color:#cbd5e1;font-size:0.95rem;margin-bottom:6px;">No incoming items right now.</p>
-        <p style="color:var(--dim);font-size:0.82rem;">When staff or contributors ready a build for community approval, it appears here!</p>
-      </div>
-    </section>
 
     <section class="application-cta" aria-labelledby="applyCtaTitle">
       <div>

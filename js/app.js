@@ -476,7 +476,7 @@
   }
 
   function startLogin() {
-    if (document.body.dataset.page === 'apply' || document.body.dataset.page === 'feedback') {
+    if (document.body.dataset.page === 'apply' || document.body.dataset.page === 'feedback' || document.body.dataset.page === 'incoming') {
       writeSession(K_RETURN, location.pathname + location.search);
     }
     const state = (window.crypto && crypto.randomUUID)
