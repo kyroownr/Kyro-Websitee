@@ -31,6 +31,7 @@ function jsonRes(obj, status) {
 }
 
 // Discord REST mock router.
+const mockOverwrites = { chan1: [], chan2: [] };
 global.fetch = async (url, opts) => {
   const u = String(url);
   if (!u.startsWith('https://discord.com/api/v10')) return realFetch(url, opts);
@@ -46,15 +47,26 @@ global.fetch = async (url, opts) => {
     { id: 'guild2', name: 'Second Server', icon: null, owner: false, approximate_member_count: 42, permissions: '8' }
   ]);
   if (/^\/guilds\/guild1$/.test(p)) return jsonRes({ id: 'guild1', name: 'Test Server', icon: null, owner_id: '1052909930073567232', approximate_member_count: 100, approximate_presence_count: 20, verification_level: 2, premium_tier: 1 });
-  if (p === '/guilds/guild1/channels') return jsonRes([
-    { id: 'chan1', name: 'general', type: 0, position: 1, permission_overwrites: [] },
-    { id: 'chan2', name: 'giveaways', type: 0, position: 2 }
-  ]);
-  if (p === '/guilds/guild1/roles') return jsonRes([
-    { id: 'guild1', name: '@everyone', color: 0, position: 0, managed: false },
-    { id: 'role1', name: 'Member', color: 5793266, position: 1, managed: false },
-    { id: 'role2', name: 'VIP', color: 15844367, position: 2, managed: false }
-  ]);
+  if (p === '/guilds/guild1/channels') {
+    if (method === 'POST') return jsonRes({ id: 'chan_new_' + (body && body.name || 'x').replace(/[^a-z0-9]/g, ''), name: body && body.name, type: body && body.type || 0, permission_overwrites: [] });
+    return jsonRes([
+      { id: 'chan1', name: 'general', type: 0, position: 1, permission_overwrites: mockOverwrites.chan1 },
+      { id: 'chan2', name: 'giveaways', type: 0, position: 2, permission_overwrites: mockOverwrites.chan2 }
+    ]);
+  }
+  if ((p === '/channels/chan1' || p === '/channels/chan2') && method === 'PATCH') {
+    if (body && body.permission_overwrites) mockOverwrites[p.split('/').pop()] = body.permission_overwrites;
+    return jsonRes({ id: p.split('/').pop() });
+  }
+  if (p === '/guilds/guild1/roles') {
+    if (method === 'POST') return jsonRes({ id: 'role_new_' + String(body && body.name || 'x').replace(/[^a-z0-9]/g, ''), name: body && body.name, managed: false, position: 5 });
+    return jsonRes([
+      { id: 'guild1', name: '@everyone', color: 0, position: 0, managed: false },
+      { id: 'role1', name: 'Member', color: 5793266, position: 1, managed: false },
+      { id: 'role2', name: 'VIP', color: 15844367, position: 2, managed: false }
+    ]);
+  }
+  if (/^\/guilds\/guild1\/roles\/[^/]+$/.test(p) && method === 'PATCH') return jsonRes({ id: p.split('/').pop(), permissions: body && body.permissions });
   if (p === '/guilds/guild1/members') return jsonRes([
     { user: { id: '200000000000000003', username: 'alice', global_name: 'Alice', avatar: null, bot: false }, nick: null, roles: ['role1'], joined_at: '2026-01-01T00:00:00.000Z' }
   ]);
@@ -67,8 +79,7 @@ global.fetch = async (url, opts) => {
   if (/^\/guilds\/guild1\/bans\/[^/]+$/.test(p)) return jsonRes({}, 204); // PUT ban / DELETE unban
   if (p === '/users/200000000000000003') return jsonRes({ id: '200000000000000003', username: 'alice', global_name: 'Alice', avatar: null, discriminator: '0', bot: false });
   if (p === '/users/200000000000000003/channels') return jsonRes({ id: 'dm1' });
-  if (p === '/channels/chan1' && method === 'GET') return jsonRes({ id: 'chan1', permission_overwrites: [] });
-  if (p === '/channels/chan1' && method === 'PATCH') return jsonRes({ id: 'chan1' });
+  if (p === '/channels/chan1' && method === 'GET') return jsonRes({ id: 'chan1', permission_overwrites: mockOverwrites.chan1 });
   if (p === '/channels/chan1/messages' && method === 'GET') return jsonRes([
     { id: 'm1', content: 'hello world', author: { id: '200000000000000003', bot: false }, mentions: [], member: { roles: [] } }
   ]);
@@ -130,7 +141,7 @@ async function waitForServer() {
   ok(status.status === 200 && status.data.tokenLoaded === true, 'status reports token loaded');
   const html = await realFetch(BASE + '/');
   const htmlText = await html.text();
-  ok(html.status === 200 && /Utility Bot/.test(htmlText) && /Giveaways/.test(htmlText), 'serves dashboard HTML');
+  ok(html.status === 200 && /Kyro Staff Bot/.test(htmlText) && /Giveaways/.test(htmlText), 'serves dashboard HTML');
   ok(!/Publish Kyro Vault/.test(htmlText) && !/Kyro Live Preview/.test(htmlText), 'no Kyro publisher/preview in UI');
 
   // Host guard (raw http so the Host header is honoured)
@@ -248,6 +259,82 @@ async function waitForServer() {
   const cw = await req('POST', '/api/warnings/clear', { guild: 'guild1' });
   ok(cw.status === 200, 'warnings cleared');
 
-  console.log(JSON.stringify({ checks: passed, multiServer: 'guild selector + per-guild isolation', features: 'moderation, giveaways, reaction roles, automod, welcome, logging, utility, embed', discord: 'mocked REST', result: 'passed' }));
+  // ---- Setup & Security suite ----
+  // Auto permissions: Member -> preset, VIP untouched
+  const perms = await req('POST', '/api/permissions/apply', { guild: 'guild1' });
+  ok(perms.status === 200 && perms.data.applied.length === 1 && perms.data.applied[0].startsWith('Member'), 'permission preset applied to Member');
+  ok(perms.data.skipped.some((s) => s.startsWith('VIP')), 'unknown roles skipped');
+  ok(lastCall((c) => c.method === 'PATCH' && c.path === '/guilds/guild1/roles/role1' && c.body.permissions), 'Member role permissions PATCHed');
+
+  // Verification setup (no gate) — creates role, channel and posts the button
+  const vf = await req('POST', '/api/verify/setup', { guild: 'guild1' });
+  ok(vf.status === 200 && vf.data.steps.length >= 3, 'verification setup steps');
+  ok(lastCall((c) => c.method === 'POST' && c.path === '/guilds/guild1/channels' && c.body.name === '✅┃verify'), 'verify channel created');
+  const vfMsg = lastCall((c) => c.method === 'POST' && /\/messages$/.test(c.path) && c.body.components);
+  ok(vfMsg && /kyro-verify:guild1:/.test(vfMsg.body.components[0].components[0].custom_id), 'verify button custom_id correct');
+  const vfcfg = await req('GET', '/api/config?guild=guild1');
+  ok(vfcfg.data.verification.enabled === true && vfcfg.data.verification.roleId, 'verification state saved');
+
+  // Verification with gate — hides the other text channels
+  const vfGate = await req('POST', '/api/verify/setup', { guild: 'guild1', gate: true });
+  ok(vfGate.status === 200 && /Gated/.test(vfGate.data.steps.join(' ')), 'gate enabled step reported');
+  const gatedPatch = lastCall((c) => c.method === 'PATCH' && c.path === '/channels/chan1' && c.body.permission_overwrites);
+  ok(gatedPatch && gatedPatch.body.permission_overwrites.some((o) => o.id === 'guild1' && (BigInt(o.deny) & 1024n) !== 0n), 'gate denies @everyone view on other channels');
+
+  // Un-hide
+  const ungate = await req('POST', '/api/verify/remove', { guild: 'guild1' });
+  ok(ungate.status === 200 && ungate.data.touched >= 1, 'gate removed');
+  const ungatedPatch = lastCall((c) => c.method === 'PATCH' && c.path === '/channels/chan1' && c.body.permission_overwrites);
+  ok(ungatedPatch && (BigInt(ungatedPatch.body.permission_overwrites.find((o) => o.id === 'guild1').deny) & 1024n) === 0n, 'un-gate clears view deny');
+
+  // One-click auto setup
+  const asr = await req('POST', '/api/autosetup', { guild: 'guild1', gate: false, permissions: true });
+  ok(asr.status === 200 && asr.data.steps.some((s) => /#welcome/.test(s)) && asr.data.steps.some((s) => /AutoMod/.test(s)), 'one-click setup steps');
+  const ascfg = await req('GET', '/api/config?guild=guild1');
+  ok(ascfg.data.welcome.enabled && ascfg.data.logging.enabled && ascfg.data.automod.enabled, 'auto setup enabled welcome/logging/automod');
+  ok(ascfg.data.security.antiNuke === true, 'auto setup enabled anti-nuke');
+
+  // Ticket button post
+  const tk = await req('POST', '/api/tickets/post', { guild: 'guild1', channelId: 'chan1' });
+  ok(tk.status === 200 && tk.data.message_id === 'msg1', 'ticket button posted');
+  const tkCall = lastCall((c) => c.method === 'POST' && c.path === '/channels/chan1/messages' && c.body.components);
+  ok(tkCall && tkCall.body.components[0].components[0].custom_id === 'kyro-ticket:open:guild1', 'ticket open button custom_id');
+
+  // Security settings save
+  const sec = await req('POST', '/api/security', { guild: 'guild1', antiNuke: true, antiNukeBan: true, antiNukeThreshold: 2, raidThreshold: 5, keywords: ['free nitro', 'ip grabber'] });
+  ok(sec.status === 200 && sec.data.security.raidThreshold === 5 && sec.data.security.keywords.length === 2, 'security settings saved');
+  const seccfg = await req('GET', '/api/config?guild=guild1');
+  ok(seccfg.data.security.antiNuke === true && seccfg.data.security.antiNukeThreshold === 2, 'security settings persisted');
+
+  // Global lockdown
+  const gl = await req('POST', '/api/lockdown', { guild: 'guild1', on: true });
+  ok(gl.status === 200 && gl.data.touched >= 1, 'global lockdown touches channels');
+  const glPatch = lastCall((c) => c.method === 'PATCH' && c.path === '/channels/chan1' && c.body.permission_overwrites);
+  ok(glPatch && (BigInt(glPatch.body.permission_overwrites.find((o) => o.id === 'guild1').deny) & 2048n) !== 0n, 'lockdown denies send on channels');
+  const glOff = await req('POST', '/api/lockdown', { guild: 'guild1', on: false });
+  ok(glOff.status === 200, 'global unlock');
+
+  // Mass ban
+  const mb = await req('POST', '/api/massban', { guild: 'guild1', ids: '300000000000000001, not-an-id, 300000000000000002', reason: 'raid' });
+  ok(mb.status === 200 && mb.data.banned.length === 2 && mb.data.failed.length === 0, 'mass ban bans valid ids only');
+
+  // Softban = ban + unban
+  const sb = await req('POST', '/api/moderate', { guild: 'guild1', action: 'softban', userId: '200000000000000003', reason: 'cleanup' });
+  ok(sb.status === 200 && sb.data.ok, 'softban executes');
+  ok(lastCall((c) => c.method === 'DELETE' && c.path === '/guilds/guild1/bans/200000000000000003'), 'softban unbans right after ban');
+
+  // Warning escalation: threshold reached -> auto timeout
+  const weSave = await req('POST', '/api/security', { guild: 'guild1', warnEscalation: { enabled: true, timeoutAt: 2, timeoutMinutes: 60, kickAt: 5, banAt: 7 } });
+  ok(weSave.status === 200, 'escalation config saved');
+  await req('POST', '/api/moderate', { guild: 'guild1', action: 'warn', userId: '200000000000000003', reason: 'warn one', serverName: 'Test Server' });
+  const warn2 = await req('POST', '/api/moderate', { guild: 'guild1', action: 'warn', userId: '200000000000000003', reason: 'warn two', serverName: 'Test Server' });
+  ok(/automatic timeout/.test(warn2.data.message), 'escalation auto-times-out at threshold');
+  ok(lastCall((c) => c.method === 'PATCH' && c.path === '/guilds/guild1/members/200000000000000003' && c.body.communication_disabled_until), 'escalation timeout applied');
+
+  // Mod stats leaderboard
+  const ms2 = await req('GET', '/api/modstats?guild=guild1');
+  ok(ms2.status === 200 && Array.isArray(ms2.data.stats), 'mod stats endpoint');
+
+  console.log(JSON.stringify({ checks: passed, multiServer: 'guild selector + per-guild isolation', features: 'moderation, giveaways, reaction roles, automod, welcome, logging, setup, security, utility, embed', discord: 'mocked REST', result: 'passed' }));
   shutdown(0);
 })().catch((err) => { console.error('TEST ERROR:', err.message || err); shutdown(1); });

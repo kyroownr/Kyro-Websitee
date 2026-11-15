@@ -93,6 +93,19 @@ const whoisCommand = {
   ]
 };
 
+const setupCommand = {
+  name: 'setup',
+  description: 'One-click server setup — best-practice permissions and verification.',
+  type: 1,
+  options: [
+    { name: 'permissions', description: 'Apply best-practice permissions to every recognised role (mods+)', type: 1, options: [] },
+    {
+      name: 'verification', description: 'Set up the Verify button + Verified role in a channel (mods+)', type: 1,
+      options: [{ name: 'channel', description: 'Channel (defaults to the current one)', type: 7, required: false }]
+    }
+  ]
+};
+
 const COMMANDS = [
   {
     name: 'invite', description: 'Kyro invite links and website', type: 1, options: []
@@ -126,7 +139,8 @@ const COMMANDS = [
     ]
   },
   modCommand,
-  whoisCommand
+  whoisCommand,
+  setupCommand
 ];
 
 async function main() {

@@ -326,6 +326,125 @@ async function whoisEmbed(env, guildId, targetUserId, query) {
   };
 }
 
+/* ---------------- Owner server setup: permission presets & verification ---------------- */
+const PERM = {
+  KICK: 1n << 1n, AUDIT: 1n << 7n, REACT: 1n << 6n, VIEW: 1n << 10n, SEND: 1n << 11n, MANAGE_MSG: 1n << 13n,
+  EMBED: 1n << 14n, ATTACH: 1n << 15n, HISTORY: 1n << 16n, MENTION: 1n << 17n, EXTERN: 1n << 18n,
+  CONNECT: 1n << 20n, SPEAK: 1n << 21n, MUTE: 1n << 22n, MOVE: 1n << 24n, NICK: 1n << 27n,
+  APPCMD: 1n << 31n, THREAD_CREATE: 1n << 35n, STICKER: 1n << 37n, THREAD_SEND: 1n << 38n, TIMEOUT: 1n << 40n
+};
+/* Best-practice permission set per role name. Roles that match nothing stay untouched. */
+function rolePreset(name) {
+  const n = String(name || '').toLowerCase();
+  const base = PERM.VIEW | PERM.SEND | PERM.REACT | PERM.EMBED | PERM.ATTACH | PERM.HISTORY | PERM.EXTERN | PERM.STICKER | PERM.CONNECT | PERM.SPEAK | PERM.APPCMD | PERM.THREAD_CREATE | PERM.THREAD_SEND;
+  if (/(admin|owner|founder)/.test(n)) return '8';
+  if (/(muted|jail|quarantine|prison)/.test(n)) return String(PERM.VIEW | PERM.HISTORY);
+  if (/(mod|staff|helper|trial)/.test(n)) return String(base | PERM.KICK | PERM.TIMEOUT | PERM.MANAGE_MSG | PERM.MENTION | PERM.MUTE | PERM.MOVE | PERM.NICK | PERM.AUDIT);
+  if (/(member|verified|guest|community)/.test(n)) return String(base);
+  return null;
+}
+
+/* /setup permissions — rewrite every recognised role to its preset. */
+async function applyRolePresets(env, guildId) {
+  const roles = await botCall(env, `/guilds/${guildId}/roles`);
+  const applied = [], skipped = [];
+  for (const role of roles) {
+    if (role.managed || role.name === '@everyone' || /bot/i.test(role.name)) { skipped.push(role.name); continue; }
+    const perms = rolePreset(role.name);
+    if (!perms) { skipped.push(role.name); continue; }
+    try {
+      await botCall(env, `/guilds/${guildId}/roles/${role.id}`, 'PATCH', { permissions: perms }, { 'X-Audit-Log-Reason': 'Kyro auto permissions' });
+      applied.push(`${role.name} → ${perms === '8' ? 'Administrator' : 'best-practice preset'}`);
+    } catch (err) { skipped.push(role.name); }
+  }
+  return { applied, skipped };
+}
+
+/* /setup verification — ensure a Verified role + verify channel with a working button. */
+async function setupVerificationInChannel(env, guildId, channelId) {
+  const roles = await botCall(env, `/guilds/${guildId}/roles`);
+  let role = roles.find(r => !r.managed && r.name === 'Verified');
+  let created = false;
+  if (!role) {
+    role = await botCall(env, `/guilds/${guildId}/roles`, 'POST',
+      { name: 'Verified', color: 0x30D158, permissions: '0', mentionable: false },
+      { 'X-Audit-Log-Reason': 'Kyro verification setup' });
+    created = true;
+  }
+  let channel = null;
+  if (channelId) { try { channel = await botCall(env, `/channels/${channelId}`); } catch {} }
+  if (!channel || channel.guild_id !== guildId) {
+    const channels = await botCall(env, `/guilds/${guildId}/channels`);
+    channel = channels.find(c => c.type === 0 && /verify/i.test(c.name)) || null;
+    if (!channel) {
+      channel = await botCall(env, `/guilds/${guildId}/channels`, 'POST',
+        { name: '✅┃verify', type: 0, topic: 'Press Verify to unlock the server.' },
+        { 'X-Audit-Log-Reason': 'Kyro verification setup' });
+    }
+  }
+  const overwrites = Array.isArray(channel.permission_overwrites) ? channel.permission_overwrites.slice() : [];
+  const upsert = (id, type, allowAdd, denyAdd) => {
+    const i = overwrites.findIndex(o => o.id === id && o.type === type);
+    const allow = BigInt(i >= 0 ? (overwrites[i].allow || '0') : '0') | allowAdd;
+    const deny = BigInt(i >= 0 ? (overwrites[i].deny || '0') : '0') | denyAdd;
+    const entry = { id, type, allow: allow.toString(), deny: deny.toString() };
+    if (i >= 0) overwrites[i] = entry; else overwrites.push(entry);
+  };
+  upsert(guildId, 0, 0n, 2048n | 64n);                  // @everyone: no send / react until verified
+  upsert(role.id, 1, 1024n | 2048n | 65536n | 64n, 0n); // Verified: view / send / history / react
+  await botCall(env, `/channels/${channel.id}`, 'PATCH', { permission_overwrites: overwrites }, { 'X-Audit-Log-Reason': 'Kyro verification setup' });
+  await botCall(env, `/channels/${channel.id}/messages`, 'POST', {
+    embeds: [{
+      title: '🔒 Verify to unlock the server',
+      description: 'Press **Verify** below to prove you are human and unlock every channel.\nThis keeps spammers and raiders out.',
+      color: 0x30D158,
+      footer: { text: 'Kyro Staff Bot', icon_url: KYRO_ICON_URL }
+    }],
+    components: [{ type: 1, components: [{ type: 2, style: 3, label: '✅ Verify', custom_id: `kyro-verify:${guildId}:${role.id}` }] }]
+  }, { 'X-Audit-Log-Reason': 'Kyro verification setup' });
+  return { channelId: channel.id, roleId: role.id, created };
+}
+
+/* Support / modmail tickets: a member presses "Open Ticket" and gets a private
+   channel with the staff team. No gateway or storage needed — the member's id
+   lives in the channel topic and the button custom_id, so the Close button can
+   verify ownership statelessly. */
+async function openTicketChannel(env, guildId, userId) {
+  const guild = await botCall(env, `/guilds/${guildId}`);
+  const user = await botCall(env, `/users/${userId}`);
+  const channels = await botCall(env, `/guilds/${guildId}/channels`);
+  const existing = (Array.isArray(channels) ? channels : [])
+    .find(c => c.type === 0 && String(c.topic || '').includes('Support ticket for') && String(c.topic || '').includes(userId));
+  if (existing) return { existingId: existing.id };
+  const overwrites = [
+    { id: guildId, type: 0, allow: '0', deny: '1024' },
+    { id: userId, type: 1, allow: VIEW_OR_SEND, deny: '0' },
+    { id: guild.owner_id, type: 1, allow: VIEW_OR_SEND, deny: '0' }
+  ];
+  if (/^\d{17,20}$/.test(String(env.DISCORD_MOD_ROLE_ID || ''))) {
+    overwrites.push({ id: String(env.DISCORD_MOD_ROLE_ID), type: 1, allow: VIEW_OR_SEND, deny: '0' });
+  }
+  const channel = await botCall(env, `/guilds/${guildId}/channels`, 'POST', {
+    name: ('support-' + String(user.username || 'member').toLowerCase().replace(/[^a-z0-9]+/g, '-')).slice(0, 90),
+    type: 0,
+    topic: `Support ticket for ${userId}`,
+    permission_overwrites: overwrites
+  }, { 'X-Audit-Log-Reason': 'Kyro support ticket' });
+  await botCall(env, `/channels/${channel.id}/messages`, 'POST', {
+    content: `<@${userId}>`,
+    allowed_mentions: { parse: ['users'] },
+    embeds: [{
+      author: { name: 'Kyro Support Ticket', icon_url: KYRO_ICON_URL },
+      title: 'Private support ticket',
+      description: `**Opened by:** <@${userId}>\nDescribe your issue below — the staff team can see this channel.\nPress **Close Ticket** once it is resolved.`,
+      color: 0x2997FF,
+      timestamp: new Date().toISOString()
+    }],
+    components: [{ type: 1, components: [{ type: 2, style: 4, label: 'Close Ticket', custom_id: `kyro-ticket:close:${guildId}:${userId}` }] }]
+  });
+  return { channelId: channel.id, guildName: guild.name };
+}
+
 /* Appeal button in the ban DM opens a private ticket only the owner can decide on. */
 async function openAppealTicket(env, guildId, requesterId, applicationId) {
   const guild = await botCall(env, `/guilds/${guildId}`);
@@ -914,6 +1033,47 @@ export async function handleApplicationInteractions(request, env, ctx) {
       return response({ type: 5 });
     }
 
+    if (cmdName === 'setup') {
+      if (!isModOrOwner) {
+        return response({ type: 4, data: { content: '❌ Mods and Server Owners only.', flags: 64 } });
+      }
+      const sub = interaction.data?.options?.[0]?.name;
+      const subOpts = interaction.data?.options?.[0]?.options || [];
+      ctx.waitUntil((async () => {
+        let payload;
+        try {
+          if (sub === 'permissions') {
+            const result = await applyRolePresets(env, guildId);
+            payload = {
+              content: `🛡️ **Auto permissions applied.**\n${result.applied.length ? result.applied.map(r => '• ' + r).join('\n') : 'No roles matched a preset.'}\n\n_Left untouched: ${result.skipped.length} role(s) without a preset (custom roles are never auto-changed)._`,
+              allowed_mentions: { parse: [] }
+            };
+          } else if (sub === 'verification') {
+            const out = await setupVerificationInChannel(env, guildId, subOpts.find(o => o.name === 'channel')?.value || interaction.channel_id);
+            payload = {
+              content: `✅ **Verification is live** in <#${out.channelId}>.\nMembers press **Verify** and get <@&${out.roleId}>${out.created ? ' (created just now)' : ''}.\nUse the dashboard's *Server Setup* tab to also hide every channel until members verify.`,
+              allowed_mentions: { parse: [] }
+            };
+          } else {
+            payload = { content: 'Unknown setup option.', allowed_mentions: { parse: [] } };
+          }
+        } catch (err) {
+          payload = {
+            content: '❌ ' + (err.message || 'Setup failed.') +
+              (String(err.message).toLowerCase().includes('permission') || String(err.message).toLowerCase().includes('missing') ? `\n• Re-grant Administrator: <https://discord.com/oauth2/authorize?client_id=${interaction.application_id}&permissions=8&scope=bot%20applications.commands>` : ''),
+            allowed_mentions: { parse: [] }
+          };
+        }
+        try {
+          await fetch(DISCORD_API + '/webhooks/' + interaction.application_id + '/' + interaction.token + '/messages/@original', {
+            method: 'PATCH', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload), redirect: 'manual', signal: AbortSignal.timeout(8000)
+          });
+        } catch (postErr) { console.warn('[kyro-bot] setup followup failed:', postErr); }
+      })());
+      return response({ type: 5 });
+    }
+
     return response({ type: 4, data: { content: 'Unknown command.', flags: 64 } });
   }
 
@@ -969,6 +1129,83 @@ export async function handleApplicationInteractions(request, env, ctx) {
       } catch (err) { console.warn('[kyro-applications] Failed to save role selection:', err); }
     })());
     return response({ type: 4, data: { content: selectedRole === 'none' ? 'Set to: Do not assign role on approval.' : `Set role to assign on approval: <@&${selectedRole}>`, flags: 64 } });
+  }
+
+  // "Open Ticket" button posted by the dashboard's ticket system.
+  const ticketOpenMatch = /^kyro-ticket:open:(\d{17,20})$/.exec(interaction.data?.custom_id || '');
+  if (interaction.type === 3 && ticketOpenMatch) {
+    const [, ticketGuildId] = ticketOpenMatch;
+    if (!interaction.member?.user?.id) {
+      return response({ type: 4, data: { content: 'Tickets work inside the server only.', flags: 64 } });
+    }
+    ctx.waitUntil((async () => {
+      let ack;
+      try {
+        const t = await openTicketChannel(env, ticketGuildId, interaction.member.user.id);
+        ack = t.existingId ? `📋 You already have an open ticket: <#${t.existingId}>` : `📋 Your ticket is open: <#${t.channelId}>`;
+      } catch (err) {
+        console.warn('[kyro-ticket] open failed:', err);
+        ack = '❌ Could not open your ticket: ' + (err.message || 'try again later.');
+      }
+      try {
+        await fetch(DISCORD_API + '/webhooks/' + interaction.application_id + '/' + interaction.token + '/messages/@original', {
+          method: 'PATCH', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: ack, allowed_mentions: { parse: [] } }), redirect: 'manual', signal: AbortSignal.timeout(8000)
+        });
+      } catch {}
+    })());
+    return response({ type: 5, data: { flags: 64 } });
+  }
+
+  // "Close Ticket" — only the opener or staff can close it.
+  const ticketCloseMatch = /^kyro-ticket:close:(\d{17,20}):(\d{17,20})$/.exec(interaction.data?.custom_id || '');
+  if (interaction.type === 3 && ticketCloseMatch) {
+    const [, ticketGuildId, ticketOwnerId] = ticketCloseMatch;
+    const closerId = interaction.member?.user?.id || '';
+    let allowed = closerId === ticketOwnerId;
+    if (!allowed && closerId) {
+      const closerPerms = BigInt(interaction.member?.permissions || '0');
+      allowed = (closerPerms & BigInt(0x8)) === BigInt(0x8) || (interaction.member.roles || []).includes(String(env.DISCORD_MOD_ROLE_ID));
+    }
+    if (!allowed) {
+      return response({ type: 4, data: { content: 'Only the ticket opener or staff can close it.', flags: 64 } });
+    }
+    ctx.waitUntil((async () => {
+      try {
+        try { await botCall(env, `/channels/${interaction.channel_id}/messages/${interaction.message.id}`, 'PATCH', { components: [] }); } catch {}
+        await botCall(env, `/channels/${interaction.channel_id}`, 'DELETE', undefined, { 'X-Audit-Log-Reason': `Ticket closed by ${closerId}` });
+      } catch (err) { console.warn('[kyro-ticket] close failed:', err); }
+    })());
+    return response({ type: 4, data: { content: '🔒 Closing this ticket…', flags: 64 } });
+  }
+
+  // "✅ Verify" button inside the verify channel — grants the Verified role.
+  const verifyMatch = /^kyro-verify:(\d{17,20}):(\d{17,20})$/.exec(interaction.data?.custom_id || '');
+  if (interaction.type === 3 && verifyMatch) {
+    const [, verifyGuildId, verifyRoleId] = verifyMatch;
+    if (!interaction.member?.user?.id) {
+      return response({ type: 4, data: { content: 'Verification works inside the server only.', flags: 64 } });
+    }
+    if ((interaction.member.roles || []).includes(verifyRoleId)) {
+      return response({ type: 4, data: { content: '✅ You are already verified — welcome aboard!', flags: 64 } });
+    }
+    ctx.waitUntil((async () => {
+      let ack;
+      try {
+        await botCall(env, `/guilds/${verifyGuildId}/members/${interaction.member.user.id}/roles/${verifyRoleId}`, 'PUT');
+        ack = '✅ You are verified — every channel is unlocked. Welcome aboard!';
+      } catch (err) {
+        ack = '❌ Could not verify you' + (String(err.message).toLowerCase().includes('permission') || String(err.message).toLowerCase().includes('missing')
+          ? ' — ask the Server Owner to re-grant Administrator for the bot.' : ': ' + (err.message || 'try again.'));
+      }
+      try {
+        await fetch(DISCORD_API + '/webhooks/' + interaction.application_id + '/' + interaction.token + '/messages/@original', {
+          method: 'PATCH', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: ack, allowed_mentions: { parse: [] } }), redirect: 'manual', signal: AbortSignal.timeout(8000)
+        });
+      } catch {}
+    })());
+    return response({ type: 5, data: { flags: 64 } });
   }
 
   // "Request Unban" button inside the punishment DM (works in DMs — no guild member record).

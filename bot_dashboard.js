@@ -76,6 +76,14 @@ function guildConfig(db, guildId) {
       giveaways: [],
       warnings: [],
       tempbans: [],
+      verification: { enabled: false, channelId: '', roleId: '', gate: false, messageId: '', gatedChannels: [] },
+      security: {
+        raidMode: false, autoRaid: true, raidThreshold: 10, raidCooldown: 0,
+        antiNuke: false, antiNukeThreshold: 3, antiNukeBan: false, nukeCooldown: {},
+        keywordAlerts: false, keywords: ['free nitro', 'steamcommun', 'ip grabber', 'self harm', 'kill yourself'],
+        warnEscalation: { enabled: true, timeoutAt: 3, timeoutMinutes: 120, kickAt: 5, banAt: 7 },
+        raidsSeen: []
+      },
       audit: []
     };
   }
@@ -227,6 +235,301 @@ async function dmPunished(guildId, userId, action, reason, serverName, withAppea
 }
 
 // ---------------------------------------------------------------------------
+// Server setup: auto permissions, verification, one-click preset, tickets
+// ---------------------------------------------------------------------------
+const PERM = {
+  KICK: 1n << 1n, AUDIT: 1n << 7n, REACT: 1n << 6n, VIEW: 1n << 10n, SEND: 1n << 11n, MANAGE_MSG: 1n << 13n,
+  EMBED: 1n << 14n, ATTACH: 1n << 15n, HISTORY: 1n << 16n, MENTION: 1n << 17n, EXTERN: 1n << 18n,
+  CONNECT: 1n << 20n, SPEAK: 1n << 21n, MUTE: 1n << 22n, MOVE: 1n << 24n, NICK: 1n << 27n,
+  APPCMD: 1n << 31n, THREAD_CREATE: 1n << 35n, STICKER: 1n << 37n, THREAD_SEND: 1n << 38n, TIMEOUT: 1n << 40n
+};
+
+function rolePresetPermissions(name) {
+  const n = String(name || '').toLowerCase();
+  const base = PERM.VIEW | PERM.SEND | PERM.REACT | PERM.EMBED | PERM.ATTACH | PERM.HISTORY | PERM.EXTERN | PERM.STICKER | PERM.CONNECT | PERM.SPEAK | PERM.APPCMD | PERM.THREAD_CREATE | PERM.THREAD_SEND;
+  if (/(admin|owner|founder)/.test(n)) return { perms: '8', label: 'Administrator' };
+  if (/(muted|jail|quarantine|prison)/.test(n)) return { perms: String(PERM.VIEW | PERM.HISTORY), label: 'read-only (punishment role)' };
+  if (/(mod|staff|helper|trial)/.test(n)) return { perms: String(base | PERM.KICK | PERM.TIMEOUT | PERM.MANAGE_MSG | PERM.MENTION | PERM.MUTE | PERM.MOVE | PERM.NICK | PERM.AUDIT), label: 'moderation powers' };
+  if (/(member|verified|guest|community)/.test(n)) return { perms: String(base), label: 'chat basics' };
+  return null;
+}
+
+async function applyPermissionPresets(guildId) {
+  const roles = await discordFetch(`/guilds/${guildId}/roles`);
+  const applied = [], skipped = [];
+  for (const role of roles) {
+    if (role.managed || role.name === '@everyone' || /bot/i.test(role.name)) { skipped.push(`${role.name} — managed/bot role`); continue; }
+    const preset = rolePresetPermissions(role.name);
+    if (!preset) { skipped.push(`${role.name} — no preset matched, left untouched`); continue; }
+    try {
+      await discordFetch(`/guilds/${guildId}/roles/${role.id}`, {
+        method: 'PATCH', headers: { 'X-Audit-Log-Reason': 'Kyro auto permissions' },
+        body: JSON.stringify({ permissions: preset.perms })
+      });
+      applied.push(`${role.name} → ${preset.label}`);
+    } catch (e) { skipped.push(`${role.name} — failed: ${e.message}`); }
+  }
+  return { applied, skipped };
+}
+
+async function ensureChannel(guildId, wantedName, options = {}) {
+  const clean = wantedName.toLowerCase();
+  const channels = await discordFetch(`/guilds/${guildId}/channels`);
+  const found = channels.find((c) => c.type === (options.type || 0) && c.name.toLowerCase() === clean);
+  if (found) return { channel: found, created: false };
+  const channel = await discordFetch(`/guilds/${guildId}/channels`, {
+    method: 'POST', headers: { 'X-Audit-Log-Reason': 'Kyro auto setup' },
+    body: JSON.stringify({ name: wantedName, type: options.type || 0, topic: options.topic })
+  });
+  return { channel, created: true };
+}
+
+async function setupVerification(guildId, opts = {}) {
+  const db = loadDB();
+  const g = guildConfig(db, guildId);
+  g.verification = g.verification || { enabled: false, channelId: '', roleId: '', gate: false, messageId: '', gatedChannels: [] };
+  const steps = [];
+  // 1. Verified role
+  const roles = await discordFetch(`/guilds/${guildId}/roles`);
+  let role = roles.find((r) => !r.managed && r.name === 'Verified');
+  if (!role) {
+    role = await discordFetch(`/guilds/${guildId}/roles`, {
+      method: 'POST', headers: { 'X-Audit-Log-Reason': 'Kyro verification setup' },
+      body: JSON.stringify({ name: 'Verified', color: 0x30d158, permissions: '0', mentionable: false })
+    });
+    steps.push('Created role **Verified**');
+  } else steps.push('Using existing role **Verified**');
+  // 2. Verify channel
+  let channel;
+  if (opts.channelId) {
+    channel = (await discordFetch(`/guilds/${guildId}/channels`)).find((c) => c.id === opts.channelId);
+    if (!channel) throw new Error('Selected channel no longer exists.');
+    steps.push(`Using <#${channel.id}>`);
+  } else {
+    const made = await ensureChannel(guildId, '✅┃verify', { topic: 'Press Verify to unlock the server.' });
+    channel = made.channel;
+    steps.push(made.created ? 'Created channel **✅┃verify**' : `Using existing channel <#${channel.id}>`);
+  }
+  // 3. Overwrites: @everyone cannot send/react; Verified can
+  const overwrites = Array.isArray(channel.permission_overwrites) ? channel.permission_overwrites.slice() : [];
+  const upsert = (id, type, allowAdd, denyAdd) => {
+    const i = overwrites.findIndex((o) => o.id === id && o.type === type);
+    const allow = BigInt(i >= 0 ? (overwrites[i].allow || '0') : '0') | allowAdd;
+    const deny = BigInt(i >= 0 ? (overwrites[i].deny || '0') : '0') | denyAdd;
+    const entry = { id, type, allow: allow.toString(), deny: deny.toString() };
+    if (i >= 0) overwrites[i] = entry; else overwrites.push(entry);
+  };
+  upsert(guildId, 0, 0n, 2048n | 64n);
+  upsert(role.id, 1, 1024n | 2048n | 65536n | 64n, 0n);
+  await discordFetch(`/channels/${channel.id}`, { method: 'PATCH', body: JSON.stringify({ permission_overwrites: overwrites }) });
+  steps.push('Locked sending in the verify channel until verified');
+  // 4. Verify message + button (handled by the Kyro applications worker)
+  const msg = await discordFetch(`/channels/${channel.id}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({
+      embeds: [{
+        title: '🔒 Verify to unlock the server',
+        description: 'Press **Verify** below to prove you are human and unlock every channel.\nThis keeps spammers and raiders out.',
+        color: 0x30d158,
+        footer: { text: 'Kyro Staff Bot' }
+      }],
+      components: [{ type: 1, components: [{ type: 2, style: 3, label: '✅ Verify', custom_id: `kyro-verify:${guildId}:${role.id}` }] }]
+    })
+  });
+  steps.push('Posted the **Verify** button message');
+  g.verification.enabled = true;
+  g.verification.channelId = channel.id;
+  g.verification.roleId = role.id;
+  g.verification.messageId = msg.id;
+  // 5. Optional gate: hide every other text channel until verified
+  if (opts.gate) {
+    const gated = await gateChannels(guildId, channel.id, role, true);
+    g.verification.gate = true;
+    g.verification.gatedChannels = gated;
+    steps.push(`Gated **${gated.length} channels** — hidden until members verify`);
+  }
+  saveDB(db);
+  await logEvent(guildId, 'moderation', 'Verification setup', steps.map((s) => '• ' + s).join('\n'), 0x30d158);
+  return steps;
+}
+
+async function gateChannels(guildId, verifyChannelId, verifiedRole, on) {
+  const channels = await discordFetch(`/guilds/${guildId}/channels`);
+  const roles = await discordFetch(`/guilds/${guildId}/roles`);
+  const bypassRoles = roles.filter((r) => !r.managed && /(admin|owner|mod|staff|helper|trial|bot)/i.test(r.name));
+  const touched = [];
+  for (const ch of channels) {
+    if (ch.type !== 0 || ch.id === verifyChannelId) continue;
+    const overwrites = Array.isArray(ch.permission_overwrites) ? ch.permission_overwrites.slice() : [];
+    const idx = overwrites.findIndex((o) => o.id === guildId && o.type === 0);
+    const allow = BigInt(idx >= 0 ? (overwrites[idx].allow || '0') : '0');
+    let deny = BigInt(idx >= 0 ? (overwrites[idx].deny || '0') : '0');
+    const before = deny;
+    if (on) deny |= 1024n; else deny &= ~1024n;
+    if (deny === before) continue;
+    if (idx >= 0) overwrites[idx] = { id: guildId, type: 0, allow: on ? (allow & ~1024n).toString() : allow.toString(), deny: deny.toString() };
+    else overwrites.push({ id: guildId, type: 0, allow: '0', deny: deny.toString() });
+    if (on) for (const r of bypassRoles.concat(verifiedRole ? [verifiedRole] : [])) {
+      const bi = overwrites.findIndex((o) => o.id === r.id && o.type === 1);
+      const bAllow = BigInt(bi >= 0 ? (overwrites[bi].allow || '0') : '0') | 1024n;
+      const entry = { id: r.id, type: 1, allow: bAllow.toString(), deny: bi >= 0 ? overwrites[bi].deny : '0' };
+      if (bi >= 0) overwrites[bi] = entry; else overwrites.push(entry);
+    }
+    try {
+      await discordFetch(`/channels/${ch.id}`, { method: 'PATCH', body: JSON.stringify({ permission_overwrites: overwrites }) });
+      touched.push(ch.name);
+    } catch (e) {}
+  }
+  return touched;
+}
+
+async function clearVerificationGate(guildId) {
+  const db = loadDB();
+  const g = guildConfig(db, guildId);
+  const v = g.verification || {};
+  const gated = v.gatedChannels || [];
+  let role = null;
+  if (v.roleId) {
+    try { role = (await discordFetch(`/guilds/${guildId}/roles`)).find((r) => r.id === v.roleId); } catch (e) {}
+  }
+  const touched = await gateChannels(guildId, v.channelId, role, false);
+  v.gate = false;
+  v.gatedChannels = [];
+  v.enabled = false;
+  saveDB(db);
+  return { gated, touched };
+}
+
+/* One-click preset: channels + welcome + logging + automod + verification + permissions */
+async function runAutoSetup(guildId, opts = {}) {
+  const db = loadDB();
+  const g = guildConfig(db, guildId);
+  const steps = [];
+  // 1. Core channels
+  const welcomeCh = await ensureChannel(guildId, 'welcome', { topic: 'Welcome messages for new members' });
+  steps.push(welcomeCh.created ? 'Created #welcome' : '#welcome already exists');
+  const logCh = await ensureChannel(guildId, 'mod-log', { topic: 'Kyro Staff Bot logging' });
+  steps.push(logCh.created ? 'Created #mod-log' : '#mod-log already exists');
+  const annCh = await ensureChannel(guildId, 'announcements', { topic: 'Server announcements (Kyro bot)' });
+  steps.push(annCh.created ? 'Created #announcements' : '#announcements already exists');
+  const channels = await discordFetch(`/guilds/${guildId}/channels`);
+  const textChannels = channels.filter((c) => c.type === 0);
+  // 2. Welcome defaults
+  g.welcome = g.welcome || {};
+  g.welcome.enabled = true;
+  g.welcome.channelId = welcomeCh.channel.id;
+  g.welcome.useEmbed = true;
+  g.welcome.embedColor = '#2997FF';
+  g.welcome.message = 'Welcome {user} to **{server}**! You are member #{membercount}.';
+  steps.push('Welcome messages enabled → #welcome');
+  // 3. Logging defaults
+  g.logging = g.logging || { enabled: false, channelId: '', events: {} };
+  g.logging.enabled = true;
+  g.logging.channelId = logCh.channel.id;
+  g.logging.events = { moderation: true, giveaways: true, reactionRoles: true, automod: true, welcome: true, joins: true };
+  steps.push('Full logging enabled → #mod-log');
+  // 4. AutoMod defaults on all text channels
+  g.automod = g.automod || {};
+  g.automod.enabled = true;
+  g.automod.blockInvites = true;
+  g.automod.maxMentions = 5;
+  g.automod.maxEmojis = 10;
+  g.automod.capsPercent = 80;
+  g.automod.action = 'timeout';
+  g.automod.timeoutSeconds = 600;
+  g.automod.channels = textChannels.map((c) => c.id);
+  steps.push(`AutoMod enabled on **${textChannels.length} channels** (timeout, scam/invite/mention filters)`);
+  // 5. Security defaults
+  g.security = g.security || {};
+  g.security.autoRaid = true;
+  g.security.raidThreshold = 10;
+  g.security.antiNuke = true;
+  g.security.antiNukeThreshold = 3;
+  g.security.keywordAlerts = true;
+  steps.push('Security: auto-raid detection, anti-nuke and keyword alerts enabled');
+  // 6. Verification
+  saveDB(db);
+  const vSteps = await setupVerification(guildId, { gate: Boolean(opts.gate) });
+  steps.push(...vSteps);
+  // 7. Optional permission presets
+  if (opts.permissions) {
+    const res = await applyPermissionPresets(guildId);
+    steps.push(`Permissions: **${res.applied.length} roles updated** (${res.skipped.length} left untouched)`);
+  }
+  saveDB(db);
+  await logEvent(guildId, 'moderation', 'One-click server setup', steps.map((s) => '• ' + s).join('\n').slice(0, 1900), 0x2997ff);
+  return steps;
+}
+
+/* Global lockdown: deny @everyone send everywhere (raid mode core move). */
+async function toggleGlobalLockdown(guildId, on) {
+  const channels = await discordFetch(`/guilds/${guildId}/channels`);
+  let touched = 0;
+  for (const ch of channels) {
+    if (ch.type !== 0) continue;
+    const overwrites = Array.isArray(ch.permission_overwrites) ? ch.permission_overwrites.slice() : [];
+    const idx = overwrites.findIndex((o) => o.id === guildId && o.type === 0);
+    const allow = BigInt(idx >= 0 ? (overwrites[idx].allow || '0') : '0');
+    let deny = BigInt(idx >= 0 ? (overwrites[idx].deny || '0') : '0');
+    const before = deny;
+    if (on) deny |= 2048n; else deny &= ~2048n;
+    if (deny === before) continue;
+    if (idx >= 0) overwrites[idx] = { id: guildId, type: 0, allow: on ? (allow & ~2048n).toString() : allow.toString(), deny: deny.toString() };
+    else overwrites.push({ id: guildId, type: 0, allow: '0', deny: deny.toString() });
+    try { await discordFetch(`/channels/${ch.id}`, { method: 'PATCH', body: JSON.stringify({ permission_overwrites: overwrites }) }); touched++; } catch (e) {}
+  }
+  return touched;
+}
+
+async function postTicketEmbed(guildId, channelId, title, description) {
+  const msg = await discordFetch(`/channels/${channelId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({
+      embeds: [{
+        title: title || '🎫 Support Tickets',
+        description: description || 'Press **Open Ticket** to get a private channel with the staff team.\nAbuse of tickets leads to a timeout.',
+        color: 0x2997ff,
+        footer: { text: 'Kyro Staff Bot' }
+      }],
+      components: [{ type: 1, components: [{ type: 2, style: 1, label: 'Open Ticket', custom_id: `kyro-ticket:open:${guildId}` }] }]
+    })
+  });
+  await logEvent(guildId, 'moderation', 'Ticket system posted', `**Channel:** <#${channelId}>\n**Message:** ${msg.id}`, 0x2997ff);
+  return msg;
+}
+
+async function massBan(guildId, ids, reason, deleteDays) {
+  const reasonHeader = { 'X-Audit-Log-Reason': String(reason || 'Kyro mass ban').slice(0, 400) };
+  const results = { banned: [], failed: [] };
+  for (const id of ids) {
+    try {
+      await dmPunished(guildId, id, 'ban', reason || 'Mass ban', '', { withAppeal: true });
+    } catch (e) {}
+    try {
+      await discordFetch(`/guilds/${guildId}/bans/${id}`, { method: 'PUT', headers: reasonHeader, body: JSON.stringify({ delete_message_seconds: Math.min(Number(deleteDays) || 0, 7) * 86400 }) });
+      results.banned.push(id);
+    } catch (e) { results.failed.push(id); }
+  }
+  await logEvent(guildId, 'moderation', 'Mass ban executed', `**Banned:** ${results.banned.length}\n**Failed:** ${results.failed.length}\n**Reason:** ${reason || 'No reason'}`, 0x7f1d1d);
+  return results;
+}
+
+/* Mod activity leaderboard from the local audit trail. */
+function modStats(guildId) {
+  const db = loadDB();
+  const g = guildConfig(db, guildId);
+  const counts = {};
+  for (const a of g.audit || []) {
+    const who = a.moderator || a.action && a.action !== 'automod' ? a.moderator : null;
+    if (!who || who === 'Dashboard') continue;
+    counts[who] = counts[who] || { actions: 0, last: a.created_at };
+    counts[who].actions++;
+    if (a.created_at > counts[who].last) counts[who].last = a.created_at;
+  }
+  return Object.entries(counts).map(([moderator, s]) => ({ moderator, actions: s.actions, last: s.last })).sort((a, b) => b.actions - a.actions);
+}
+
+// ---------------------------------------------------------------------------
 // Moderation
 // ---------------------------------------------------------------------------
 async function moderate(guildId, body) {
@@ -276,6 +579,13 @@ async function moderate(guildId, body) {
     await dmPunished(guildId, userId, 'unban', reason, body.serverName);
     return finish(`Unbanned <@${userId}>.`);
   }
+  if (action === 'softban') {
+    // Ban + immediate unban: removes a member and their recent messages without the full ban.
+    await dmPunished(guildId, userId, 'ban', `${reason || 'Softban'} (ban will be lifted automatically)`, body.serverName);
+    await discordFetch(`/guilds/${guildId}/bans/${userId}`, { method: 'PUT', headers: reasonHeader, body: JSON.stringify({ delete_message_seconds: 86400 }) });
+    await discordFetch(`/guilds/${guildId}/bans/${userId}`, { method: 'DELETE', headers: reasonHeader });
+    return finish(`Softbanned <@${userId}> — messages purged, they can rejoin.`);
+  }
   if (action === 'kick') {
     await dmPunished(guildId, userId, 'kick', reason, body.serverName);
     await discordFetch(`/guilds/${guildId}/members/${userId}`, { method: 'DELETE', headers: reasonHeader });
@@ -292,6 +602,33 @@ async function moderate(guildId, body) {
       } catch (e) {}
     }
     await logEvent(guildId, 'moderation', 'Moderation • warn', `**User:** <@${userId}>\n**Moderator:** ${moderator}\n**Reason:** ${reason}\n**Total warnings:** ${g.warnings.filter((w) => w.userId === userId).length}`, 0xfee75c);
+    // Warning escalation for big teams: at N warnings the bot punishes automatically.
+    const we = (g.security && g.security.warnEscalation) || {};
+    if (we.enabled !== false && (we.timeoutAt || we.kickAt || we.banAt)) {
+      const count = g.warnings.filter((w) => w.userId === userId).length;
+      const name = body.serverName || 'the server';
+      try {
+        if (we.banAt && count >= Number(we.banAt)) {
+          await dmPunished(guildId, userId, 'ban', `Reached ${count} warnings in ${name}.`, name, { withAppeal: true });
+          await discordFetch(`/guilds/${guildId}/bans/${userId}`, { method: 'PUT', headers: reasonHeader, body: JSON.stringify({ delete_message_seconds: 0 }) });
+          await logEvent(guildId, 'moderation', 'Warning escalation • banned', `<@${userId}> hit **${count} warnings** and was banned automatically.`, 0x7f1d1d);
+          return { ok: true, message: `Warned <@${userId}> — **${count} warnings** triggered an automatic ban.` };
+        }
+        if (we.kickAt && count >= Number(we.kickAt)) {
+          await dmPunished(guildId, userId, 'kick', `Reached ${count} warnings in ${name}.`, name);
+          await discordFetch(`/guilds/${guildId}/members/${userId}`, { method: 'DELETE', headers: reasonHeader });
+          await logEvent(guildId, 'moderation', 'Warning escalation • kicked', `<@${userId}> hit **${count} warnings** and was kicked automatically.`, 0xed4245);
+          return { ok: true, message: `Warned <@${userId}> — **${count} warnings** triggered an automatic kick.` };
+        }
+        if (we.timeoutAt && count >= Number(we.timeoutAt)) {
+          const secs = Math.min(Math.max(Number(we.timeoutMinutes) || 120, 1), 40320) * 60;
+          await discordFetch(`/guilds/${guildId}/members/${userId}`, { method: 'PATCH', headers: reasonHeader, body: JSON.stringify({ communication_disabled_until: new Date(Date.now() + secs * 1000).toISOString() }) });
+          await dmPunished(guildId, userId, 'timeout', `Reached ${count} warnings in ${name}.`, name);
+          await logEvent(guildId, 'moderation', 'Warning escalation • timeout', `<@${userId}> hit **${count} warnings** and was timed out automatically.`, 0xed4245);
+          return { ok: true, message: `Warned <@${userId}> — **${count} warnings** triggered an automatic timeout.` };
+        }
+      } catch (e) {}
+    }
     return { ok: true, message: `Warned <@${userId}>. Total warnings: ${g.warnings.filter((w) => w.userId === userId).length}.` };
   }
   if (action === 'purge') {
@@ -641,9 +978,116 @@ async function runWelcomeGuild(guildId, g) {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Big-team security: raid watch, anti-nuke, keyword alerts
+// ---------------------------------------------------------------------------
+const NUKE_ACTIONS = { 12: 'channel deleted', 32: 'role deleted', 22: 'member banned', 50: 'webhook created', 52: 'webhook deleted' };
+
+/* Sudden join spikes (mass-join raids) trip raid mode: global lockdown + alert. */
+async function runRaidWatch(guildId, g) {
+  const sec = g.security || (g.security = {});
+  if (!sec.autoRaid || sec.raidMode) return;
+  const members = await discordFetch(`/guilds/${guildId}/members?limit=1000`);
+  const cutoff = Date.now() - 60 * 1000;
+  const recentJoins = (Array.isArray(members) ? members : []).filter((m) => m.joined_at && Date.parse(m.joined_at) >= cutoff);
+  sec.recentJoins = recentJoins.length;
+  if (recentJoins.length < (Number(sec.raidThreshold) || 10)) return;
+  if (sec.raidCooldown && Date.now() < sec.raidCooldown) return;
+  sec.raidCooldown = Date.now() + 10 * 60 * 1000;
+  const touched = await toggleGlobalLockdown(guildId, true);
+  sec.raidMode = true;
+  await logEvent(guildId, 'security', '🚨 RAID DETECTED — server locked', `**${recentJoins.length} members joined in under a minute** (threshold ${sec.raidThreshold}).\n**Locked:** ${touched} channels.\nTurn *Raid Mode* off in the Security tab to unlock once it is clear.`, 0x7f1d1d);
+}
+
+/* Rogue admin detection: strips every role from (and optionally bans) anyone who
+   deletes channels/roles, mass-bans members or creates webhooks at attack speed. */
+async function runAntiNuke(guildId, g) {
+  const sec = g.security || (g.security = {});
+  if (!sec.antiNuke) return;
+  const [guild, logs] = await Promise.all([
+    discordFetch(`/guilds/${guildId}`),
+    discordFetch(`/guilds/${guildId}/audit-logs?limit=50`)
+  ]);
+  const botId = await getBotUserId();
+  const cutoff = Date.now() - 5 * 60 * 1000;
+  const byUser = {};
+  for (const e of logs.audit_log_entries || []) {
+    if (!NUKE_ACTIONS[e.action_type] || !e.user_id) continue;
+    const who = e.user_id;
+    if (who === guild.owner_id || who === botId) continue; // owner and the bot itself are trusted
+    const when = Number((BigInt(e.id) >> 22n) + 1420070400000n);
+    if (when < cutoff) continue;
+    (byUser[who] = byUser[who] || []).push(NUKE_ACTIONS[e.action_type]);
+  }
+  for (const [who, acts] of Object.entries(byUser)) {
+    if (acts.length < (Number(sec.antiNukeThreshold) || 3)) continue;
+    const windowKey = Math.floor(Date.now() / (30 * 60 * 1000));
+    sec.nukeCooldown = sec.nukeCooldown || {};
+    if (sec.nukeCooldown[who] === windowKey) continue;
+    sec.nukeCooldown[who] = windowKey;
+    let demoted = false, banned = false;
+    try {
+      const member = await discordFetch(`/guilds/${guildId}/members/${who}`);
+      for (const rid of member.roles || []) {
+        try { await discordFetch(`/guilds/${guildId}/members/${who}/roles/${rid}`, { method: 'DELETE', headers: { 'X-Audit-Log-Reason': 'Kyro anti-nuke: demotion' } }); } catch (e) {}
+      }
+      demoted = (member.roles || []).length > 0;
+    } catch (e) {}
+    if (sec.antiNukeBan) {
+      try {
+        await dmPunished(guildId, who, 'ban', 'Anti-nuke: repeated destructive actions detected.', '', { withAppeal: true });
+        await discordFetch(`/guilds/${guildId}/bans/${who}`, { method: 'PUT', headers: { 'X-Audit-Log-Reason': 'Kyro anti-nuke' }, body: JSON.stringify({ delete_message_seconds: 0 }) });
+        banned = true;
+      } catch (e) {}
+    }
+    await logEvent(guildId, 'security', '🛡️ ANTI-NUKE triggered', `**Member:** <@${who}>\n**Suspicious actions (5 min):** ${acts.length} × ${[...new Set(acts)].join(', ')}\n**Taken:** ${demoted ? 'all roles stripped' : 'no roles to strip'}${banned ? ' + **banned**' : ''}`, 0x7f1d1d);
+  }
+}
+
+/* Sensitive-term alerts (self-harm, scams, doxxing bait) surfaced to #mod-log. */
+async function runKeywordAlerts(guildId, g) {
+  const sec = g.security || (g.security = {});
+  if (!sec.keywordAlerts || !Array.isArray(sec.keywords) || !sec.keywords.length) return;
+  const channels = (g.automod && g.automod.channels) || [];
+  if (!channels.length) return;
+  const logChannelId = g.logging && g.logging.enabled && g.logging.channelId;
+  sec.alerted = sec.alerted || [];
+  const seen = new Set(sec.alerted.slice(-300));
+  let hitAny = false;
+  for (const channelId of channels) {
+    let msgs = [];
+    try { msgs = await discordFetch(`/channels/${channelId}/messages?limit=10`); } catch (e) { continue; }
+    for (const msg of msgs) {
+      if (!msg.id || seen.has(msg.id)) continue;
+      seen.add(msg.id);
+      const content = String(msg.content || '');
+      const hit = sec.keywords.find((k) => k && content.toLowerCase().includes(String(k).toLowerCase()));
+      if (!hit) continue;
+      hitAny = true;
+      if (logChannelId) {
+        try {
+          await discordFetch(`/channels/${logChannelId}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({
+              embeds: [{
+                title: '🚨 Keyword alert',
+                description: `**Channel:** <#${channelId}>\n**Author:** <@${msg.author ? msg.author.id : '?'}> (${msg.author ? msg.author.username : ''})\n**Keyword:** ${hit}\n**Message:** ${content.slice(0, 300)}\n[Jump to message](https://discord.com/channels/${guildId}/${channelId}/${msg.id})`,
+                color: 0xff9f0a,
+                timestamp: new Date().toISOString()
+              }]
+            })
+          });
+        } catch (e) {}
+      }
+    }
+  }
+  sec.alerted = [...seen].slice(-300);
+  if (hitAny) saveDB(loadDB());
+}
+
 // Background poller
 // ---------------------------------------------------------------------------
-const lastRun = { giveaways: 0, reactionRoles: 0, automod: 0, welcome: 0, tempbans: 0 };
+const lastRun = { giveaways: 0, reactionRoles: 0, automod: 0, welcome: 0, tempbans: 0, security: 0 };
 let polling = false;
 
 async function pollTick() {
@@ -711,6 +1155,18 @@ async function pollTick() {
       for (const guildId of guildIds) {
         const g = guildConfig(db, guildId);
         try { await runWelcomeGuild(guildId, g); changed = true; } catch (e) {}
+      }
+    }
+
+    // Big-team security suite — heavier checks, run about every 45 seconds.
+    if (now - lastRun.security > 45000) {
+      lastRun.security = now;
+      for (const guildId of guildIds) {
+        const g = guildConfig(db, guildId);
+        try { await runRaidWatch(guildId, g); } catch (e) {}
+        try { await runAntiNuke(guildId, g); } catch (e) {}
+        try { await runKeywordAlerts(guildId, g); } catch (e) {}
+        changed = true;
       }
     }
 
@@ -817,7 +1273,8 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, {
         automod: g.automod, welcome: g.welcome, logging: g.logging,
         reactionRoles: g.reactionRoles, giveaways: g.giveaways,
-        warnings: g.warnings, audit: g.audit, tempbans: g.tempbans
+        warnings: g.warnings, audit: g.audit, tempbans: g.tempbans,
+        verification: g.verification, security: g.security
       });
     }
 
@@ -1036,6 +1493,110 @@ const server = http.createServer(async (req, res) => {
       });
       await logEvent(gid, 'moderation', 'Embed sent', `**Channel:** <#${channelId}>\n**Title:** ${embed.title || '(no title)'}`, 0x5865f2);
       return sendJSON(res, 200, { ok: true, message_id: msg.id });
+    }
+
+    // ---- Setup & Security endpoints ----
+    if (req.method === 'POST' && p === '/api/permissions/apply') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const result = await applyPermissionPresets(gid);
+      await logEvent(gid, 'security', 'Auto permissions applied', `**Updated:** ${result.applied.length}\n${result.applied.map((a) => '• ' + a).join('\n')}`.slice(0, 1900), 0x30d158);
+      return sendJSON(res, 200, result);
+    }
+
+    if (req.method === 'POST' && p === '/api/verify/setup') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const steps = await setupVerification(gid, { channelId: body.channelId, gate: Boolean(body.gate) });
+      return sendJSON(res, 200, { steps });
+    }
+
+    if (req.method === 'POST' && p === '/api/verify/remove') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const out = await clearVerificationGate(gid);
+      await logEvent(gid, 'security', 'Verification gate removed', `**Un-hidden channels:** ${out.touched.length || 0}`, 0x95a5a6);
+      return sendJSON(res, 200, { touched: out.touched.length });
+    }
+
+    if (req.method === 'POST' && p === '/api/autosetup') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const steps = await runAutoSetup(gid, { gate: Boolean(body.gate), permissions: Boolean(body.permissions) });
+      return sendJSON(res, 200, { steps });
+    }
+
+    if (req.method === 'POST' && p === '/api/security') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      const sec = g.security;
+      const notes = [];
+      if (body.raidMode !== undefined && Boolean(body.raidMode) !== Boolean(sec.raidMode)) {
+        const on = Boolean(body.raidMode);
+        sec.raidMode = on;
+        const touched = await toggleGlobalLockdown(gid, on);
+        notes.push(`${on ? '🔒 Raid Mode ON' : '🔓 Raid Mode OFF'} — ${touched} channels ${on ? 'locked' : 'unlocked'}`);
+        await logEvent(gid, 'security', on ? 'Raid Mode enabled' : 'Raid Mode disabled', `**Channels touched:** ${touched}`, on ? 0x7f1d1d : 0x30d158);
+      }
+      for (const key of ['autoRaid', 'antiNuke', 'antiNukeBan', 'keywordAlerts']) {
+        if (body[key] !== undefined) sec[key] = Boolean(body[key]);
+      }
+      if (body.raidThreshold !== undefined) sec.raidThreshold = Math.min(Math.max(Number(body.raidThreshold) || 10, 2), 500);
+      if (body.antiNukeThreshold !== undefined) sec.antiNukeThreshold = Math.min(Math.max(Number(body.antiNukeThreshold) || 3, 1), 50);
+      if (Array.isArray(body.keywords)) sec.keywords = body.keywords.map((k) => String(k).toLowerCase().trim()).filter(Boolean).slice(0, 30);
+      if (body.warnEscalation && typeof body.warnEscalation === 'object') {
+        const we = sec.warnEscalation || {};
+        const incoming = body.warnEscalation;
+        sec.warnEscalation = {
+          enabled: incoming.enabled !== undefined ? Boolean(incoming.enabled) : we.enabled !== false,
+          timeoutAt: Number(incoming.timeoutAt) || we.timeoutAt || 3,
+          timeoutMinutes: Number(incoming.timeoutMinutes) || we.timeoutMinutes || 120,
+          kickAt: Number(incoming.kickAt) || we.kickAt || 5,
+          banAt: Number(incoming.banAt) || we.banAt || 7
+        };
+      }
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true, notes, security: sec });
+    }
+
+    if (req.method === 'POST' && p === '/api/lockdown') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const touched = await toggleGlobalLockdown(gid, Boolean(body.on));
+      await logEvent(gid, 'security', body.on ? 'Global lockdown ON' : 'Global lockdown OFF', `**Channels touched:** ${touched}`, body.on ? 0x7f1d1d : 0x30d158);
+      return sendJSON(res, 200, { touched });
+    }
+
+    if (req.method === 'POST' && p === '/api/massban') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const ids = String(body.ids || '').split(/[\s,;]+/).map((s) => s.trim()).filter((s) => /^\d{17,20}$/.test(s)).slice(0, 100);
+      if (!ids.length) return sendJSON(res, 400, { error: 'No valid user IDs provided.' });
+      const result = await massBan(gid, ids, body.reason, body.deleteDays);
+      return sendJSON(res, 200, result);
+    }
+
+    if (req.method === 'POST' && p === '/api/tickets/post') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      const channelId = body.channelId;
+      if (!gid || !channelId) return sendJSON(res, 400, { error: 'guild and channelId are required' });
+      const msg = await postTicketEmbed(gid, channelId, body.title, body.description);
+      return sendJSON(res, 200, { ok: true, message_id: msg.id });
+    }
+
+    if (req.method === 'GET' && p === '/api/modstats') {
+      if (!guildId) return sendJSON(res, 400, { error: 'guild is required' });
+      return sendJSON(res, 200, { stats: modStats(guildId) });
     }
 
     return sendJSON(res, 404, { error: 'Not found' });

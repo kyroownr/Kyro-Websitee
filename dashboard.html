@@ -231,6 +231,9 @@
       <div class="nav-item" data-tab="automod"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9 5v6c0 5-4 8-9 9-5-1-9-4-9-9V7z"/><path d="M9 12l2 2 4-4"/></svg>AutoMod</div>
       <div class="nav-item" data-tab="welcome"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>Welcome</div>
       <div class="nav-item" data-tab="logging"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>Logging</div>
+      <div class="nav-label">Setup</div>
+      <div class="nav-item" data-tab="setup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9 5v6c0 5-4 8-9 9-5-1-9-4-9-9V7z"/><path d="M12 8v4M12 16h.01"/></svg>Server Setup</div>
+      <div class="nav-item" data-tab="security"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>Security</div>
       <div class="nav-label">Tools</div>
       <div class="nav-item" data-tab="utility"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>Utility</div>
       <div class="nav-item" data-tab="embed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>Embed Sender</div>
@@ -277,6 +280,7 @@
                   <option value="untimeout">Remove timeout</option>
                   <option value="warn">Warn</option>
                   <option value="kick">Kick</option>
+                  <option value="softban">Softban (kick + message purge)</option>
                   <option value="tempban">Temp ban</option>
                   <option value="ban">Ban</option>
                   <option value="unban">Unban</option>
@@ -474,6 +478,125 @@
         </div>
       </section>
 
+      <!-- SERVER SETUP -->
+      <section class="panel" data-panel="setup">
+        <div class="panel-head"><h2>Server Setup</h2><p>One-click configuration — full server preset, best-practice permissions, verification and tickets.</p></div>
+        <div class="card" style="border-left:3px solid #2997FF">
+          <div class="card-title">⚡ One-Click Server Setup</div>
+          <div class="card-desc">Creates <b>#welcome</b>, <b>#mod-log</b> and <b>#announcements</b>, enables Welcome + full Logging + AutoMod (scam/invite/mention filters on every channel), turns on security defaults and sets up verification. Safe to re-run — existing channels are reused.</div>
+          <label class="check"><input type="checkbox" id="asGate"> Hide every channel until members verify</label>
+          <label class="check"><input type="checkbox" id="asPerms"> Also apply best-practice role permissions</label>
+          <div class="btn-row"><button class="btn" id="asRun">Run full setup</button></div>
+          <div class="status" id="asStatus"></div>
+          <div class="list" id="asSteps"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">🛡️ Auto Permissions</div>
+          <div class="card-desc">Rewrites role permissions to best practice: <b>Admin/Owner</b> → Administrator · <b>Mod/Staff/Helper</b> → moderation powers · <b>Member/Verified/Guest</b> → chat basics · <b>Muted/Jail</b> → read-only. Unknown custom roles are never touched.</div>
+          <div class="btn-row"><button class="btn" id="apRun">Apply best permissions</button></div>
+          <div class="status" id="apStatus"></div>
+          <div class="list" id="apResult"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">✅ Verification</div>
+          <div class="card-desc">Posts a <b>Verify</b> button that grants the Verified role. Members can't type in the verify channel until verified. The button works in Discord directly (handled by the Kyro worker).</div>
+          <div class="field"><label>Channel (blank = find or create ✅┃verify)</label><select id="vfChannel"><option value="">Find or create ✅┃verify</option></select></div>
+          <label class="check"><input type="checkbox" id="vfGate"> Hide every other channel until verified</label>
+          <div class="btn-row">
+            <button class="btn" id="vfSetup">Set up verification</button>
+            <button class="btn ghost" id="vfUngate">Un-hide channels</button>
+          </div>
+          <div class="status" id="vfStatus"></div>
+          <div class="list" id="vfResult"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">🎫 Support / Modmail Tickets</div>
+          <div class="card-desc">Posts an <b>Open Ticket</b> button. Members get a private channel only they, the mod role and the owner can see — with a Close Ticket button. Duplicate tickets are detected automatically.</div>
+          <div class="field"><label>Channel for the Open Ticket button</label><select id="tkChannel"></select></div>
+          <div class="grid g2">
+            <div class="field"><label>Title (optional)</label><input id="tkTitle" placeholder="🎫 Support Tickets"></div>
+            <div class="field"><label>Description (optional)</label><input id="tkDesc" placeholder="Press Open Ticket to reach the staff team."></div>
+          </div>
+          <div class="btn-row"><button class="btn" id="tkPost">Post ticket button</button></div>
+          <div class="status" id="tkStatus"></div>
+        </div>
+      </section>
+
+      <!-- SECURITY -->
+      <section class="panel" data-panel="security">
+        <div class="panel-head"><h2>Security</h2><p>Raid mode, anti-nuke, lockdown, keyword alerts, warning escalation, mass actions and mod activity.</p></div>
+        <div class="card" style="border-left:3px solid #FF453A">
+          <div class="card-title">🚨 Raid Mode & Auto-Raid Detection</div>
+          <div class="card-desc">Raid Mode locks sending in every text channel at once. Auto-Raid watches for join spikes — if more members than the threshold join within a minute, the server locks automatically and #mod-log gets an alert.</div>
+          <div class="btn-row">
+            <button class="btn" id="rmOn">Lock server now (Raid Mode ON)</button>
+            <button class="btn ghost" id="rmOff">Unlock (Raid Mode OFF)</button>
+          </div>
+          <div class="grid g2" style="margin-top:6px">
+            <div class="field"><label>Auto-raid join threshold / minute</label><input id="rmThreshold" type="number" min="2" max="500"></div>
+            <label class="check" style="align-self:end"><input type="checkbox" id="rmAuto"> Auto-detect join raids</label>
+          </div>
+          <div class="btn-row"><button class="btn ghost sm" id="rmSave">Save raid settings</button></div>
+          <div class="status" id="rmStatus"></div>
+        </div>
+        <div class="card" style="border-left:3px solid #FF9F0A">
+          <div class="card-title">🛡️ Anti-Nuke</div>
+          <div class="card-desc">Watches the audit log for rogue admins deleting channels/roles, mass-banning members or creating webhooks. When someone crosses the threshold they lose <b>all their roles</b> instantly (and optionally get banned). The server owner and this bot are always trusted.</div>
+          <label class="check"><input type="checkbox" id="anEnabled"> Enable anti-nuke</label>
+          <label class="check"><input type="checkbox" id="anBan"> Ban rogue admins (after demotion)</label>
+          <div class="field" style="max-width:260px"><label>Destructive actions before demotion</label><input id="anThreshold" type="number" min="1" max="50"></div>
+          <div class="btn-row"><button class="btn ghost sm" id="anSave">Save anti-nuke settings</button></div>
+          <div class="status" id="anStatus"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">🔒 Global Lockdown</div>
+          <div class="card-desc">Manually lock or unlock message sending in every text channel — independent of Raid Mode state tracking.</div>
+          <div class="btn-row">
+            <button class="btn danger" id="glOn">Lock all channels</button>
+            <button class="btn ghost" id="glOff">Unlock all channels</button>
+          </div>
+          <div class="status" id="glStatus"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">🚩 Keyword Alerts</div>
+          <div class="card-desc">Scans recent messages in your AutoMod channels and reports anything matching these terms to #mod-log — self-harm phrases, scam bait, doxxing links.</div>
+          <label class="check"><input type="checkbox" id="kaEnabled"> Enable keyword alerts</label>
+          <div class="field"><label>Keywords (comma separated)</label><textarea id="kaKeywords" rows="2" placeholder="free nitro, steamcommun, ip grabber…"></textarea></div>
+          <div class="btn-row"><button class="btn ghost sm" id="kaSave">Save keyword alerts</button></div>
+          <div class="status" id="kaStatus"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">⚖️ Warning Escalation</div>
+          <div class="card-desc">Automatic punishment when a member accumulates warnings — no mod has to remember to escalate.</div>
+          <label class="check"><input type="checkbox" id="weEnabled"> Enable auto escalation</label>
+          <div class="grid g3">
+            <div class="field"><label>Timeout at</label><input id="weTimeoutAt" type="number" min="1"></div>
+            <div class="field"><label>Kick at</label><input id="weKickAt" type="number" min="1"></div>
+            <div class="field"><label>Ban at</label><input id="weBanAt" type="number" min="1"></div>
+          </div>
+          <div class="field" style="max-width:260px"><label>Timeout minutes</label><input id="weTimeoutMinutes" type="number" min="1"></div>
+          <div class="btn-row"><button class="btn ghost sm" id="weSave">Save escalation</button></div>
+          <div class="status" id="weStatus"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">💥 Mass Ban</div>
+          <div class="card-desc">Ban a list of user IDs in one go (raider dumps, bot waves). Every banned user still gets the DM + unban-request button.</div>
+          <div class="field"><label>User IDs (space / comma separated, max 100)</label><textarea id="mbIds" rows="3" placeholder="123456789012345678 987654321098765432"></textarea></div>
+          <div class="grid g2">
+            <div class="field"><label>Reason</label><input id="mbReason" placeholder="Reason shown in their DM"></div>
+            <div class="field"><label>Delete days</label><input id="mbDays" type="number" min="0" max="7" value="1"></div>
+          </div>
+          <div class="btn-row"><button class="btn danger" id="mbRun">Ban all listed</button></div>
+          <div class="status" id="mbStatus"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">📊 Mod Activity</div>
+          <div class="card-desc">Who is actually moderating — actions recorded from this dashboard per moderator.</div>
+          <div class="btn-row"><button class="btn ghost sm" id="msRefresh">Refresh leaderboard</button></div>
+          <div class="list" id="msList"></div>
+        </div>
+      </section>
+
       <!-- UTILITY -->
       <section class="panel" data-panel="utility">
         <div class="panel-head"><h2>Utility</h2><p>Look up users and search members.</p></div>
@@ -579,7 +702,7 @@
   function clearStatus(el){ el.className='status'; el.textContent=''; }
 
   // ---- Navigation ----
-  const TAB_TITLES = { overview:'Overview', moderation:'Moderation', giveaways:'Giveaways', reactionroles:'Reaction Roles', automod:'AutoMod', welcome:'Welcome', logging:'Logging', utility:'Utility', embed:'Embed Sender' };
+  const TAB_TITLES = { overview:'Overview', moderation:'Moderation', giveaways:'Giveaways', reactionroles:'Reaction Roles', automod:'AutoMod', welcome:'Welcome', logging:'Logging', setup:'Server Setup', security:'Security', utility:'Utility', embed:'Embed Sender' };
   function switchTab(name){
     state.tab = name;
     $$('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.tab===name));
@@ -665,7 +788,7 @@
   }
   function populateSelectors(){
     const cfg = state.config || {};
-    ['#chanSelect','#gvChannel','#rrChannel','#wChannel','#logChannel','#emChannel'].forEach(sel=>{
+    ['#chanSelect','#gvChannel','#rrChannel','#wChannel','#logChannel','#emChannel','#vfChannel','#tkChannel'].forEach(sel=>{
       const el = $(sel); if(!el) return;
       const cur = el.value;
       el.innerHTML = '<option value="">Select channel…</option>' + chanOptions(cur);
@@ -687,6 +810,8 @@
     else if(name==='automod') renderAutomod();
     else if(name==='welcome') renderWelcome();
     else if(name==='logging') renderLogging();
+    else if(name==='setup') renderSetup();
+    else if(name==='security') renderSecurity();
     else if(name==='embed') updateEmbedPreview();
   }
 
@@ -895,6 +1020,23 @@
     catch(err){ setStatus($('#logStatus'), err.message,'error'); }
   });
 
+  // ---- Server Setup ----
+  function renderSetup(){
+    if($('#vfChannel') && $('#vfChannel').options[0]) $('#vfChannel').options[0].textContent = 'Find or create ✅┃verify';
+  }
+
+  // ---- Security ----
+  function renderSecurity(){
+    const s=(state.config&&state.config.security)||{};
+    $('#rmAuto').checked=s.autoRaid!==false; $('#rmThreshold').value=s.raidThreshold||10;
+    $('#anEnabled').checked=!!s.antiNuke; $('#anBan').checked=!!s.antiNukeBan; $('#anThreshold').value=s.antiNukeThreshold||3;
+    $('#kaEnabled').checked=!!s.keywordAlerts; $('#kaKeywords').value=(s.keywords||[]).join(', ');
+    const we=s.warnEscalation||{};
+    $('#weEnabled').checked=we.enabled!==false; $('#weTimeoutAt').value=we.timeoutAt||3; $('#weKickAt').value=we.kickAt||5; $('#weBanAt').value=we.banAt||7; $('#weTimeoutMinutes').value=we.timeoutMinutes||120;
+    if(s.raidMode) setStatus($('#rmStatus'),'⚠️ RAID MODE ACTIVE — all channels locked.','error'); else clearStatus($('#rmStatus'));
+    loadModStats();
+  }
+
   // ---- Utility ----
   $('#utilLookup').addEventListener('click', async ()=>{
     clearStatus($('#utilStatus')); $('#utilResult').innerHTML='';
@@ -973,9 +1115,101 @@
     finally{ $('#emSubmit').disabled=false; }
   });
 
-  // ---- Config refresh (light) ----
-  async function refreshConfigOnly(){
+  // ---- Server Setup handlers ----
+  $('#asRun').addEventListener('click', async ()=>{
+    clearStatus($('#asStatus')); $('#asSteps').innerHTML='<div class="loading">Running full setup — this creates channels and posts messages, give it a few seconds…</div>';
+    $('#asRun').disabled=true;
+    try{
+      const r=await post('/api/autosetup',{ guild:state.guild.id, gate:$('#asGate').checked, permissions:$('#asPerms').checked });
+      $('#asSteps').innerHTML=(r.steps||[]).map(s=>`<div class="list-item"><div class="li-main"><div class="li-title">${esc(s)}</div></div><span class="tag green">done</span></div>`).join('');
+      setStatus($('#asStatus'),'Full setup complete.','success'); toast('One-click setup complete','success'); refreshGuild();
+    }catch(err){ $('#asSteps').innerHTML=''; setStatus($('#asStatus'), err.message,'error'); }
+    finally{ $('#asRun').disabled=false; }
+  });
+
+  $('#apRun').addEventListener('click', async ()=>{
+    clearStatus($('#apStatus')); $('#apResult').innerHTML='<div class="loading">Applying permission presets…</div>';
+    $('#apRun').disabled=true;
+    try{
+      const r=await post('/api/permissions/apply',{ guild:state.guild.id });
+      const rows=[...r.applied.map(x=>`<div class="list-item"><div class="li-main"><div class="li-title">${esc(x)}</div></div><span class="tag green">updated</span></div>`), ...r.skipped.map(x=>`<div class="list-item"><div class="li-main"><div class="li-title">${esc(x)}</div></div><span class="tag gray">skipped</span></div>`)];
+      $('#apResult').innerHTML=rows.join('')||'<div class="empty">Nothing changed.</div>';
+      setStatus($('#apStatus'),`Updated ${r.applied.length} role${r.applied.length===1?'':'s'}.`, r.applied.length?'success':'');
+      toast(`Auto permissions: ${r.applied.length} updated`, r.applied.length?'success':''); refreshGuild();
+    }catch(err){ $('#apResult').innerHTML=''; setStatus($('#apStatus'), err.message,'error'); }
+    finally{ $('#apRun').disabled=false; }
+  });
+
+  $('#vfSetup').addEventListener('click', async ()=>{
+    clearStatus($('#vfStatus')); $('#vfResult').innerHTML='<div class="loading">Setting up verification…</div>';
+    $('#vfSetup').disabled=true;
+    try{
+      const r=await post('/api/verify/setup',{ guild:state.guild.id, channelId:$('#vfChannel').value, gate:$('#vfGate').checked });
+      $('#vfResult').innerHTML=(r.steps||[]).map(s=>`<div class="list-item"><div class="li-main"><div class="li-title">${esc(s)}</div></div><span class="tag green">done</span></div>`).join('');
+      setStatus($('#vfStatus'),'Verification is live — members can press Verify now.','success'); toast('Verification set up','success'); refreshGuild();
+    }catch(err){ $('#vfResult').innerHTML=''; setStatus($('#vfStatus'), err.message,'error'); }
+    finally{ $('#vfSetup').disabled=false; }
+  });
+
+  $('#vfUngate').addEventListener('click', async ()=>{
+    clearStatus($('#vfStatus'));
+    try{
+      const r=await post('/api/verify/remove',{ guild:state.guild.id });
+      setStatus($('#vfStatus'),`Un-hidden ${r.touched||0} channel${(r.touched||0)===1?'':'s'}.`,'success'); toast('Channels un-hidden','success'); refreshGuild();
+    }catch(err){ setStatus($('#vfStatus'), err.message,'error'); }
+  });
+
+  $('#tkPost').addEventListener('click', async ()=>{
+    clearStatus($('#tkStatus'));
+    const channelId=$('#tkChannel').value;
+    if(!channelId){ setStatus($('#tkStatus'),'Select a channel.','error'); return; }
+    $('#tkPost').disabled=true;
+    try{
+      await post('/api/tickets/post',{ guild:state.guild.id, channelId, title:$('#tkTitle').value, description:$('#tkDesc').value });
+      setStatus($('#tkStatus'),'Ticket button posted — members can open tickets now.','success'); toast('Ticket button posted','success');
+    }catch(err){ setStatus($('#tkStatus'), err.message,'error'); }
+    finally{ $('#tkPost').disabled=false; }
+  });
+
+  // ---- Security handlers ----
+  $('#rmOn').addEventListener('click', async ()=>{ clearStatus($('#rmStatus')); try{ const r=await post('/api/security',{ guild:state.guild.id, raidMode:true }); setStatus($('#rmStatus'),(r.notes||[]).join(' · ')||'Raid Mode ON.','error'); toast('Raid Mode ON — server locked','success'); refreshGuild(); }catch(err){ setStatus($('#rmStatus'), err.message,'error'); } });
+  $('#rmOff').addEventListener('click', async ()=>{ clearStatus($('#rmStatus')); try{ const r=await post('/api/security',{ guild:state.guild.id, raidMode:false }); setStatus($('#rmStatus'),(r.notes||[]).join(' · ')||'Raid Mode OFF.','success'); toast('Raid Mode OFF — server unlocked','success'); refreshGuild(); }catch(err){ setStatus($('#rmStatus'), err.message,'error'); } });
+  $('#rmSave').addEventListener('click', async ()=>{ clearStatus($('#rmStatus')); try{ await post('/api/security',{ guild:state.guild.id, autoRaid:$('#rmAuto').checked, raidThreshold:Number($('#rmThreshold').value)||10 }); setStatus($('#rmStatus'),'Raid settings saved.','success'); }catch(err){ setStatus($('#rmStatus'), err.message,'error'); } });
+
+  $('#anSave').addEventListener('click', async ()=>{ clearStatus($('#anStatus')); try{ await post('/api/security',{ guild:state.guild.id, antiNuke:$('#anEnabled').checked, antiNukeBan:$('#anBan').checked, antiNukeThreshold:Number($('#anThreshold').value)||3 }); setStatus($('#anStatus'),'Anti-nuke settings saved.','success'); }catch(err){ setStatus($('#anStatus'), err.message,'error'); } });
+
+  $('#glOn').addEventListener('click', async ()=>{ clearStatus($('#glStatus')); try{ const r=await post('/api/lockdown',{ guild:state.guild.id, on:true }); setStatus($('#glStatus'),`Locked ${r.touched} channels.`,'error'); toast('Global lockdown ON','success'); }catch(err){ setStatus($('#glStatus'), err.message,'error'); } });
+  $('#glOff').addEventListener('click', async ()=>{ clearStatus($('#glStatus')); try{ const r=await post('/api/lockdown',{ guild:state.guild.id, on:false }); setStatus($('#glStatus'),`Unlocked ${r.touched} channels.`,'success'); toast('Global lockdown OFF','success'); }catch(err){ setStatus($('#glStatus'), err.message,'error'); } });
+
+  $('#kaSave').addEventListener('click', async ()=>{ clearStatus($('#kaStatus')); try{ await post('/api/security',{ guild:state.guild.id, keywordAlerts:$('#kaEnabled').checked, keywords:$('#kaKeywords').value.split(',').map(s=>s.trim()).filter(Boolean) }); setStatus($('#kaStatus'),'Keyword alerts saved.','success'); }catch(err){ setStatus($('#kaStatus'), err.message,'error'); } });
+
+  $('#weSave').addEventListener('click', async ()=>{ clearStatus($('#weStatus')); try{ await post('/api/security',{ guild:state.guild.id, warnEscalation:{ enabled:$('#weEnabled').checked, timeoutAt:Number($('#weTimeoutAt').value)||3, timeoutMinutes:Number($('#weTimeoutMinutes').value)||120, kickAt:Number($('#weKickAt').value)||5, banAt:Number($('#weBanAt').value)||7 } }); setStatus($('#weStatus'),'Warning escalation saved.','success'); }catch(err){ setStatus($('#weStatus'), err.message,'error'); } });
+
+  $('#mbRun').addEventListener('click', async ()=>{
+    clearStatus($('#mbStatus'));
+    const ids=$('#mbIds').value.trim();
+    if(!ids){ setStatus($('#mbStatus'),'Paste at least one user ID.','error'); return; }
+    if(!confirm('Ban every listed user ID? Each one gets a DM with an unban-request button.')) return;
+    $('#mbRun').disabled=true;
+    try{
+      const r=await post('/api/massban',{ guild:state.guild.id, ids, reason:$('#mbReason').value, deleteDays:Number($('#mbDays').value)||0 });
+      setStatus($('#mbStatus'),`Banned ${r.banned.length}${r.failed.length?` — failed ${r.failed.length}`:''}.`,'success'); toast(`Mass ban: ${r.banned.length} banned`,'success');
+    }catch(err){ setStatus($('#mbStatus'), err.message,'error'); }
+    finally{ $('#mbRun').disabled=false; }
+  });
+
+  $('#msRefresh').addEventListener('click', loadModStats);
+  async function loadModStats(){
     if(!state.guild) return;
+    $('#msList').innerHTML='<div class="loading">Loading…</div>';
+    try{
+      const r=await api('/api/modstats'+gquery());
+      $('#msList').innerHTML=(r.stats||[]).length ? r.stats.map((s,i)=>`<div class="list-item"><div class="li-main"><div class="li-title">${i===0?'👑 ':''}${esc(s.moderator)}</div><div class="li-sub">last action ${fmtDate(s.last)}</div></div><span class="tag blue">${s.actions} actions</span></div>`).join('') : '<div class="empty">No moderation actions recorded yet.</div>';
+    }catch(err){ $('#msList').innerHTML='<div class="empty">'+esc(err.message)+'</div>'; }
+  }
+
+  // ---- Config refresh (light) ----
+  async function refreshConfigOnly(){    if(!state.guild) return;
     try{ state.config = await api('/api/config'+gquery()); renderTab(state.tab); }catch(e){}
   }
 
