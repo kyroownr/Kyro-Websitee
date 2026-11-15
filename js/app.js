@@ -81,68 +81,73 @@
   try { localStorage.removeItem(K_RES); } catch (err) { /* private mode */ }
   const saved = new Set(read(K_SAVED, []));
 
-  // Merge approved contributor/owner items from cloud
+  let hiddenResources = new Set();
+  const isHiddenResource = (...values) => values.some(value => value && hiddenResources.has(String(value).toLowerCase()));
+
+  // Merge approved contributor/owner items from cloud. Rebuild the whole list
+  // every time so a deletion (including a built-in catalogue entry) is visible
+  // immediately instead of waiting for a cache to clear.
   async function loadPublicVaultItems() {
     try {
       const res = await fetch(AUTH_WORKER_URL + '/vault/public');
-      if (res.ok) {
-        const data = await res.json();
-        const cloudItems = (data.items || []).map(item => {
-          let itemSlug = (item.slug || '').toLowerCase();
-          if (/^https?:\/\//i.test(itemSlug)) {
-            try {
-              const u = new URL(itemSlug);
-              const parts = u.pathname.split('/').filter(Boolean);
-              itemSlug = parts[parts.length - 1] || u.hash.replace(/^#\/?/, '') || u.hostname.replace(/\./g, '-');
-            } catch {}
-          }
-          itemSlug = itemSlug.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || item.id;
-
-          const osList = item.os === 'both' ? ['windows', 'macos'] : [item.os || 'windows'];
-          const resourceKind = item.kind === 'software' ? 'software' : 'tool';
-
-          return {
-            id: itemSlug,
-            cloud_id: item.id,
-            title: item.title,
-            desc: item.details || `${item.title} — verified resource on Kyro.`,
-            category: item.category || (resourceKind === 'software' ? 'software' : 'extension'),
-            kind: resourceKind,
-            os: osList,
-            version: item.version || '1.0',
-            creator: item.creator || item.by_username || 'Contributor',
-            releaseAt: item.releaseAt || item.release_at || undefined,
-            downloads: 0,
-            added: item.created ? item.created.slice(0, 10) : '2026-11-14',
-            tags: [item.category || 'plugin', ...(osList)],
-            gallery: item.image_url ? [item.image_url] : [],
-            files: item.download_url ? [{
-              ext: 'link',
-              name: item.title,
-              size: item.size || 'Vault Build',
-              label: item.title,
-              url: item.download_url,
-              pass: item.pass || item.password || undefined
-            }] : []
-          };
-        });
-
-        if (cloudItems.length) {
-          const seedIds = new Set((window.KYRO_SEED || []).map(r => r.id));
-          resources = (window.KYRO_SEED || []).map(r => Object.assign({}, r));
-          const existingIds = new Set(resources.map(r => r.id));
-          cloudItems.forEach(ci => {
-            if (!existingIds.has(ci.id)) {
-              resources.push(ci);
-              existingIds.add(ci.id);
-            }
-          });
-          renderSoftware();
-          renderCategoryHead();
-          renderBrowse();
-          checkUrlDeepLink();
+      if (!res.ok) return;
+      const data = await res.json();
+      hiddenResources = new Set((Array.isArray(data.hidden) ? data.hidden : []).map(value => String(value).toLowerCase()));
+      const cloudItems = (data.items || []).map(item => {
+        let itemSlug = (item.slug || '').toLowerCase();
+        if (/^https?:\/\//i.test(itemSlug)) {
+          try {
+            const u = new URL(itemSlug);
+            const parts = u.pathname.split('/').filter(Boolean);
+            itemSlug = parts[parts.length - 1] || u.hash.replace(/^#\/?/, '') || u.hostname.replace(/\./g, '-');
+          } catch {}
         }
-      }
+        itemSlug = itemSlug.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || item.id;
+
+        const osList = item.os === 'both' ? ['windows', 'macos'] : [item.os || 'windows'];
+        const resourceKind = item.kind === 'software' ? 'software' : 'tool';
+
+        return {
+          id: itemSlug,
+          cloud_id: item.id,
+          title: item.title,
+          desc: item.details || `${item.title} — verified resource on Kyro.`,
+          category: item.category || (resourceKind === 'software' ? 'software' : 'extension'),
+          kind: resourceKind,
+          os: osList,
+          version: item.version || '1.0',
+          creator: item.creator || item.by_username || 'Contributor',
+          releaseAt: item.releaseAt || item.release_at || undefined,
+          downloads: 0,
+          added: item.created ? item.created.slice(0, 10) : '2026-11-14',
+          tags: [item.category || 'plugin', ...(osList)],
+          gallery: item.image_url ? [item.image_url] : [],
+          files: item.download_url ? [{
+            ext: 'link',
+            name: item.title,
+            size: item.size || 'Vault Build',
+            label: item.title,
+            url: item.download_url,
+            pass: item.pass || item.password || undefined
+          }] : []
+        };
+      }).filter(item => !isHiddenResource(item.id, item.cloud_id));
+
+      const seed = window.KYRO_SEED || [];
+      const seedIds = new Set(seed.map(r => r.id));
+      resources = seed
+        .filter(r => !isHiddenResource(r.id, r.slug))
+        .map(r => Object.assign({}, r));
+      cloudItems.forEach(item => {
+        if (seedIds.has(item.id)) return;
+        seedIds.add(item.id);
+        resources.push(item);
+      });
+
+      renderSoftware();
+      renderCategoryHead();
+      renderBrowse();
+      checkUrlDeepLink();
     } catch (e) {
       // Offline fallback
     }
@@ -872,8 +877,8 @@
             : '<span class="badge badge-pro mono" style="font-size:0.75rem;padding:2px 8px;">Voting In Progress</span>';
 
         const thumb = item.image_url
-          ? `<img src="${esc(item.image_url)}" alt="${esc(item.title)}" style="width:100%;height:140px;object-fit:cover;border-radius:8px 8px 0 0;" />`
-          : `<div style="width:100%;height:90px;background:linear-gradient(135deg, rgba(56,189,248,0.1), rgba(0,0,0,0.4));display:flex;align-items:center;justify-content:center;border-radius:8px 8px 0 0;font-weight:700;color:var(--dim);letter-spacing:0.05em;">KYRO INCOMING</div>`;
+          ? `<img src="${esc(item.image_url)}" alt="${esc(item.title)}" loading="lazy" decoding="async" style="width:100%;height:140px;object-fit:cover;border-radius:8px 8px 0 0;" />`
+          : `<img src="/assets/incoming-preview.png" alt="${esc(item.title)} — coming to the Vault" loading="lazy" decoding="async" style="width:100%;height:140px;object-fit:cover;border-radius:8px 8px 0 0;" />`;
 
         return `
           <div class="software-card" data-incoming-id="${esc(item.id)}" style="display:flex;flex-direction:column;border-radius:10px;overflow:hidden;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);transition:transform 0.2s, border-color 0.2s;">
@@ -927,6 +932,14 @@
                   </button>
                 `}
                 ${isOwner ? `
+                  ${!isReleased ? `
+                    <button type="button" class="btn btn-primary btn-sm" data-incoming-release="${esc(item.id)}" title="Release this item to the Vault right now" style="padding:4px 10px;background:linear-gradient(90deg,#10b981,#34d399);border-color:#10b981;color:#06251a;">
+                      ⚡ Release Now
+                    </button>
+                  ` : ''}
+                  <button type="button" class="btn btn-ghost btn-sm" data-incoming-edit="${esc(item.id)}" title="Edit votes, goal and details" style="padding:4px 8px;color:#38bdf8;">
+                    ✎
+                  </button>
                   <button type="button" class="btn btn-ghost btn-sm" data-incoming-delete="${esc(item.id)}" title="Delete incoming item" style="padding:4px 8px;color:#ef4444;">
                     ✕
                   </button>
@@ -974,6 +987,42 @@
         });
       });
 
+      // Wire Owner Edit for incoming (votes, goal, copy, links)
+      if (isOwner) {
+        grid.querySelectorAll('[data-incoming-edit]').forEach(btn => {
+          btn.addEventListener('click', () => openIncomingEditor(btn.dataset.incomingEdit));
+        });
+        // Release directly: skips the community vote and pushes it to the Vault.
+        grid.querySelectorAll('[data-incoming-release]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const id = btn.dataset.incomingRelease;
+            const item = incomingReleases.find(r => r.id === id);
+            if (!item || !confirm(`Release "${item.title}" to the Vault right now, skipping the vote?`)) return;
+            btn.disabled = true;
+            try {
+              const res = await fetch(AUTH_WORKER_URL + '/vault/incoming', {
+                method: 'PATCH',
+                headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+                body: JSON.stringify({ id, released: true }),
+                credentials: 'omit'
+              });
+              const data = await res.json().catch(() => ({}));
+              if (res.ok && data.item && data.item.released) {
+                toast({ title: 'Released to the Vault', sub: `"${item.title}" is now live.`, icon: ICON.check });
+                loadIncomingReleases();
+                loadPublicVaultItems();
+              } else {
+                toast({ title: 'Release failed', sub: data.error || 'Server error', icon: ICON.x });
+                btn.disabled = false;
+              }
+            } catch (err) {
+              toast({ title: 'Error', sub: err.message, icon: ICON.x });
+              btn.disabled = false;
+            }
+          });
+        });
+      }
+
       // Wire Owner Delete for incoming
       if (isOwner) {
         grid.querySelectorAll('[data-incoming-delete]').forEach(btn => {
@@ -988,11 +1037,15 @@
                 body: JSON.stringify({ id }),
                 credentials: 'omit'
               });
-              if (res.ok) {
-                toast({ title: 'Incoming item removed', sub: 'Deleted from website and Discord #incomming.', icon: ICON.check });
+              const data = await res.json().catch(() => ({}));
+              if (res.ok && data.deleted) {
+                toast({ title: 'Incoming item removed', sub: 'Removed from the website and the #incomming announcement.', icon: ICON.check });
+                loadIncomingReleases();
+              } else if (res.ok) {
+                toast({ title: 'Nothing to delete', sub: 'That incoming item was already gone.', icon: ICON.check });
                 loadIncomingReleases();
               } else {
-                toast({ title: 'Delete failed', sub: 'Server error', icon: ICON.x });
+                toast({ title: 'Delete failed', sub: data.error || 'Server error', icon: ICON.x });
               }
             } catch (err) {
               toast({ title: 'Error', sub: err.message, icon: ICON.x });
@@ -1004,6 +1057,144 @@
       console.warn('Failed to load incoming releases:', e);
     }
   }
+
+  /* Owner editor for an incoming card. Votes are absolute, so the owner can
+     set a believable number even when the server has only a handful of members. */
+  function openIncomingEditor(id) {
+    const item = incomingReleases.find(release => release.id === id);
+    if (!item) return;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'overlay overlay-top';
+    overlay.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true" aria-label="Edit incoming release" style="padding:22px;width:min(680px,100%);">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px;">
+          <div>
+            <p class="section-label" style="margin-bottom:4px;">Owner tools</p>
+            <h3 style="margin:0;font-size:1.2rem;">Edit incoming release</h3>
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" data-inc-close aria-label="Close" style="padding:4px 9px;">✕</button>
+        </div>
+
+        <div style="display:grid;gap:12px;">
+          <label class="field">
+            <span class="field-label">Title</span>
+            <input class="field-input" id="incEditTitle" maxlength="120" value="${esc(item.title || '')}" />
+          </label>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <label class="field">
+              <span class="field-label">Votes shown</span>
+              <input class="field-input" id="incEditVotes" type="number" min="0" max="1000000000" step="1" value="${Number(item.votes || 0)}" />
+            </label>
+            <label class="field">
+              <span class="field-label">Vote goal</span>
+              <input class="field-input" id="incEditLimit" type="number" min="1" max="1000000000" step="1" value="${Number(item.vote_limit || 5)}" />
+            </label>
+          </div>
+          <p style="margin:-4px 0 0;color:var(--dim);font-size:0.78rem;">Votes are an absolute number. Set this to whatever the card should display.</p>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <label class="field">
+              <span class="field-label">Platform</span>
+              <select class="field-input" id="incEditOs">
+                <option value="windows"${item.os === 'windows' ? ' selected' : ''}>Windows</option>
+                <option value="macos"${item.os === 'macos' ? ' selected' : ''}>macOS</option>
+                <option value="both"${item.os === 'both' ? ' selected' : ''}>Windows &amp; macOS</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field-label">Category</span>
+              <input class="field-input" id="incEditCategory" maxlength="60" value="${esc(item.category || '')}" />
+            </label>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <label class="field">
+              <span class="field-label">Size</span>
+              <input class="field-input" id="incEditSize" maxlength="40" value="${esc(item.size || '')}" />
+            </label>
+            <label class="field">
+              <span class="field-label">Creator</span>
+              <input class="field-input" id="incEditCreator" maxlength="60" value="${esc(item.creator || item.by_username || '')}" />
+            </label>
+          </div>
+
+          <label class="field">
+            <span class="field-label">Preview image URL</span>
+            <input class="field-input" id="incEditImage" placeholder="https://…" value="${esc(item.image_url || '')}" />
+          </label>
+          <label class="field">
+            <span class="field-label">Download URL</span>
+            <input class="field-input" id="incEditDownload" placeholder="https://…" value="${esc(item.download_url || '')}" />
+          </label>
+          <label class="field">
+            <span class="field-label">Archive password</span>
+            <input class="field-input" id="incEditPassword" maxlength="60" value="${esc(item.pass || '')}" />
+          </label>
+          <label class="field">
+            <span class="field-label">Description / notes</span>
+            <textarea class="field-input" id="incEditDetails" rows="4" maxlength="1500">${esc(item.details || '')}</textarea>
+          </label>
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
+          <button type="button" class="btn btn-ghost btn-sm" data-inc-close>Cancel</button>
+          <button type="button" class="btn btn-primary btn-sm" id="incEditSave">Save changes</button>
+        </div>
+      </div>`;
+
+    const close = () => overlay.remove();
+    overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
+    overlay.querySelectorAll('[data-inc-close]').forEach(button => button.addEventListener('click', close));
+    const onKey = event => { if (event.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } };
+    document.addEventListener('keydown', onKey);
+
+    const save = overlay.querySelector('#incEditSave');
+    save.addEventListener('click', async () => {
+      const payload = {
+        id: item.id,
+        title: overlay.querySelector('#incEditTitle').value.trim(),
+        votes: Math.max(0, parseInt(overlay.querySelector('#incEditVotes').value, 10) || 0),
+        vote_limit: Math.max(1, parseInt(overlay.querySelector('#incEditLimit').value, 10) || 1),
+        os: overlay.querySelector('#incEditOs').value,
+        category: overlay.querySelector('#incEditCategory').value.trim(),
+        size: overlay.querySelector('#incEditSize').value.trim(),
+        creator: overlay.querySelector('#incEditCreator').value.trim(),
+        image_url: overlay.querySelector('#incEditImage').value.trim(),
+        download_url: overlay.querySelector('#incEditDownload').value.trim(),
+        password: overlay.querySelector('#incEditPassword').value.trim(),
+        details: overlay.querySelector('#incEditDetails').value.trim()
+      };
+      save.disabled = true;
+      try {
+        const res = await fetch(AUTH_WORKER_URL + '/vault/incoming', {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+          body: JSON.stringify(payload),
+          credentials: 'omit'
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          toast({ title: 'Update failed', sub: data.error || 'Server error', icon: ICON.x });
+          return;
+        }
+        close();
+        toast({
+          title: 'Incoming release updated',
+          sub: data.item?.released ? 'Goal reached — published to the Vault!' : `Now showing ${payload.votes} / ${payload.vote_limit} votes.`,
+          icon: ICON.check
+        });
+        await loadIncomingReleases();
+        if (data.item?.released) loadPublicVaultItems();
+      } catch (err) {
+        toast({ title: 'Error', sub: err.message, icon: ICON.x });
+      } finally {
+        save.disabled = false;
+      }
+    });
+  }
+
 
   /* ---------------------- Early Access (owner-managed) -------------------- */
   async function loadEarlyAccess() {
@@ -1252,7 +1443,7 @@
     }
     vaultList.innerHTML = items.map(r => {
       const shot = (r.gallery && r.gallery.length)
-        ? '<img class="vault-shot" src="' + esc(r.gallery[0]) + '" alt="" />'
+        ? '<img class="vault-shot" src="' + esc(r.gallery[0]) + '" alt="" loading="lazy" decoding="async" />'
         : '<canvas></canvas>';
       const meta = [esc(r.version), esc(firstExt(r)).toUpperCase().replace('.', ''), priceLabel(r)]
         .filter(Boolean)
@@ -2946,12 +3137,12 @@
         '<span class="preview-chip mono">LIVE PREVIEW</span>' + badgeRow + '</div>';
     }
     return '<div class="m-stage has-gallery">' +
-      '<img class="m-shot" id="modalShot" src="' + esc(gal[0]) + '" alt="' + esc(r.title) + ' preview" />' +
+      '<img class="m-shot" id="modalShot" src="' + esc(gal[0]) + '" alt="' + esc(r.title) + ' preview" decoding="async" />' +
       '<span class="preview-chip mono">PRODUCT IMAGES</span>' + badgeRow +
       '<div class="m-thumbs">' + gal.map((src, i) =>
         '<button type="button" class="m-thumb' + (i === 0 ? ' is-active' : '') + '" data-shot="' + esc(src) +
         '" aria-pressed="' + (i === 0) + '" aria-label="Show preview ' + (i + 1) + ' of ' + gal.length + '">' +
-        '<img src="' + esc(src) + '" alt="" /></button>').join('') + '</div>' +
+        '<img src="' + esc(src) + '" alt="" loading="lazy" decoding="async" /></button>').join('') + '</div>' +
       '</div>';
   }
 
@@ -3494,22 +3685,29 @@
       const res = await fetch(AUTH_WORKER_URL + '/vault/submissions/manage', {
         method: 'DELETE',
         headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
-        body: JSON.stringify({ id: (r && r.cloud_id) || resourceId }),
+        body: JSON.stringify({ id: (r && r.cloud_id) || resourceId, title, catalogue: !r || !r.cloud_id }),
         credentials: 'omit'
       });
-      if (res.ok) {
-        t.finish('Resource Deleted', `"${title}" has been removed from the website.`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.deleted) {
         if (modalId === resourceId) closeModal();
-        // Remove locally immediately
+        // Hide locally immediately. The worker also stores a tombstone so the
+        // seed catalogue cannot put the card back on the next refresh.
+        hiddenResources.add(String(resourceId).toLowerCase());
+        if (r && r.cloud_id) hiddenResources.add(String(r.cloud_id).toLowerCase());
         resources = resources.filter(x => x.id !== resourceId && (!r || !r.cloud_id || x.cloud_id !== r.cloud_id));
         renderSoftware();
         renderCategoryHead();
         renderBrowse();
-        // Reload fresh from worker
-        loadPublicVaultItems();
+        await loadPublicVaultItems();
+        t.finish(
+          'Resource Deleted',
+          data.catalogue
+            ? `"${title}" has been removed from the website.`
+            : `"${title}" has been removed from the website and Discord.`
+        );
       } else {
-        const err = await res.json().catch(() => ({}));
-        t.finish('Delete failed', err.error || 'Could not delete resource.');
+        t.finish('Delete failed', data.error || (res.ok ? 'That resource was not found.' : 'Could not delete resource.'));
       }
     } catch (err) {
       t.finish('Error', err.message);

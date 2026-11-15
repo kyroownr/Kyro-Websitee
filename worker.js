@@ -909,6 +909,11 @@ async function discord(href, accessToken) {
 /* ----------------------- Vault Submissions (Contributor & Owner) ------------------------ */
 const VAULT_SUBMISSIONS_KEY = 'kyro.vault_submissions.v1';
 const VAULT_PUBLIC_ITEMS_KEY = 'kyro.vault_approved_items.v1';
+/* Catalogue entries live in js/data.js, so deleting one cannot remove a KV
+   record. Tombstones keep them hidden after a refresh instead of letting the
+   seed file put the card straight back. */
+const HIDDEN_RESOURCES_KEY = 'kyro.hidden_resources.v1';
+const INCOMING_PREVIEW_URL = 'https://kyro.new.tg/assets/incoming-preview.png';
 
 async function handleVaultImageUpload(request, url, env, cors) {
   if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
@@ -969,8 +974,45 @@ async function handleVaultImageUpload(request, url, env, cors) {
 
 async function handleVaultPublic(request, url, env, cors) {
   if (request.method !== 'GET') return json({ error: 'Use GET.' }, 405, cors);
-  const doc = (await readDoc(env, VAULT_PUBLIC_ITEMS_KEY, { items: [] })).value;
-  return json({ items: doc.items || [] }, 200, cors);
+  const [doc, hiddenDoc] = await Promise.all([
+    readDoc(env, VAULT_PUBLIC_ITEMS_KEY, { items: [] }),
+    readDoc(env, HIDDEN_RESOURCES_KEY, { ids: [] })
+  ]);
+  const hidden = hiddenTokens(hiddenDoc?.value?.ids);
+  const hiddenSet = new Set(hidden);
+  const items = (Array.isArray(doc?.value?.items) ? doc.value.items : [])
+    .filter(item => !hiddenSet.has(String(item.id || '').toLowerCase()) && !hiddenSet.has(String(item.slug || '').toLowerCase()));
+  return json({ items, hidden }, 200, cors);
+}
+
+function hiddenTokens(input) {
+  const list = Array.isArray(input) ? input : [input];
+  return [...new Set(list.map(value => String(value == null ? '' : value).trim().toLowerCase()).filter(Boolean))];
+}
+
+async function hideVaultResources(env, input) {
+  const tokens = hiddenTokens(input);
+  if (!tokens.length) return [];
+  let added = [];
+  await mutateDoc(env, HIDDEN_RESOURCES_KEY, { ids: [] }, curr => {
+    const ids = hiddenTokens(curr?.ids);
+    const set = new Set(ids);
+    tokens.forEach(token => {
+      if (!set.has(token)) { set.add(token); added.push(token); }
+    });
+    // Keep the list bounded; old tombstones are the least useful.
+    return { ids: [...set].slice(-500) };
+  });
+  return added;
+}
+
+async function restoreVaultResources(env, input) {
+  const tokens = hiddenTokens(input);
+  if (!tokens.length) return;
+  await mutateDoc(env, HIDDEN_RESOURCES_KEY, { ids: [] }, curr => {
+    const remove = new Set(tokens);
+    return { ids: hiddenTokens(curr?.ids).filter(token => !remove.has(token)) };
+  });
 }
 
 async function handleVaultSubmissions(request, url, env, cors) {
@@ -1038,6 +1080,7 @@ async function handleVaultSubmissions(request, url, env, cors) {
       status: isOwner ? 'approved' : 'pending' // Owner submissions auto-approve; Contributor requires owner review
     };
 
+    await restoreVaultResources(env, [slug, submission.id]);
     await mutateDoc(env, VAULT_SUBMISSIONS_KEY, { submissions: [] }, curr => {
       const submissions = Array.isArray(curr?.submissions) ? curr.submissions : [];
       return { submissions: [submission, ...submissions] };
@@ -1326,7 +1369,7 @@ async function handleIncomingReleases(request, url, env, cors) {
             `• **Creator:** \`${creator}\`\n• **Platform:** \`${osLabel}\`\n• **Size:** \`${size}\`\n• **Category:** \`${category}\`\n\n` +
             `🎯 **Goal:** \`0 / ${voteLimit}\` Votes to Push Live!`,
           color: 0x38bdf8,
-          image: imageUrl && /^https?:\/\//.test(imageUrl) ? { url: imageUrl } : undefined,
+          image: imageUrl && /^https?:\/\//i.test(imageUrl) ? { url: imageUrl } : { url: INCOMING_PREVIEW_URL },
           footer: { text: 'Vote on kyro.new.tg to bring this item live!' },
           timestamp: item.created
         };
@@ -1335,7 +1378,8 @@ async function handleIncomingReleases(request, url, env, cors) {
           method: 'POST',
           headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
           body: JSON.stringify({
-            content: `🚀 **New Incoming Resource Waiting for Approval!** — <@&1542127783440818226>`,
+            content: `🚀 **New Incoming Resource Waiting for Approval!** — @everyone`,
+            allowed_mentions: { parse: ['everyone'] },
             embeds: [embed],
             components: [
               {
@@ -1368,6 +1412,81 @@ async function handleIncomingReleases(request, url, env, cors) {
     return json({ ok: true, item }, 201, cors);
   }
 
+  // Owner-only edit of an incoming release: vote count, goal, media and copy.
+  if (request.method === 'PATCH') {
+    const token = bearerToken(request, url);
+    const session = await requireMember(token, env);
+    const isOwner = session.isOwner || session.id === '1052909930073567232' || (session.role || '').toLowerCase() === 'owner';
+    if (!isOwner) throw fail(403, 'forbidden', 'Only the Server Owner can edit incoming releases.');
+
+    const input = await jsonBody(request);
+    const id = String(input.id || '').trim();
+    if (!id) throw fail(400, 'bad_input', 'Incoming release ID is required.');
+
+    let targetItem = null;
+    let reachedGoal = false;
+
+    await mutateDoc(env, INCOMING_RELEASES_KEY, { items: [] }, curr => {
+      const list = Array.isArray(curr?.items) ? curr.items : [];
+      const found = list.find(item => item.id === id);
+      if (!found) return { items: list };
+
+      if (input.title !== undefined) {
+        const nextTitle = cleanText(input.title, 120);
+        if (nextTitle) found.title = nextTitle;
+      }
+      if (input.details !== undefined) found.details = cleanText(input.details, 1500);
+      if (input.kind !== undefined) found.kind = input.kind === 'software' ? 'software' : 'tool';
+      if (input.os !== undefined) found.os = ['windows', 'macos', 'both'].includes(input.os) ? input.os : found.os || 'both';
+      if (input.category !== undefined) found.category = cleanText(input.category, 60) || found.category;
+      if (input.size !== undefined) found.size = cleanText(input.size, 40) || found.size;
+      if (input.creator !== undefined) found.creator = cleanText(input.creator, 60) || found.creator;
+      if (input.image_url !== undefined) {
+        const nextImage = String(input.image_url || '').trim();
+        found.image_url = /^https?:\/\//i.test(nextImage) ? nextImage : '';
+      }
+      if (input.download_url !== undefined) found.download_url = String(input.download_url || '').trim();
+      if (input.password !== undefined || input.pass !== undefined) {
+        found.pass = cleanText(input.password !== undefined ? input.password : input.pass, 60) || undefined;
+      }
+      if (input.vote_limit !== undefined) {
+        found.vote_limit = Math.max(1, Math.min(1000000000, parseInt(input.vote_limit, 10) || 5));
+      }
+      if (input.votes !== undefined) {
+        found.votes = Math.max(0, Math.min(1000000000, parseInt(input.votes, 10) || 0));
+      }
+      if (input.released !== undefined) {
+        found.released = Boolean(input.released);
+        if (found.released) found.released_at = found.released_at || new Date().toISOString();
+        else delete found.released_at;
+      }
+      if (input.votes !== undefined || input.vote_limit !== undefined) {
+        if (!found.released && Number(found.votes || 0) >= Number(found.vote_limit || 5)) {
+          found.released = true;
+          found.released_at = new Date().toISOString();
+          reachedGoal = true;
+        }
+      }
+
+      found.updated_at = new Date().toISOString();
+      targetItem = found;
+      return { items: list };
+    });
+
+    if (!targetItem) throw fail(404, 'not_found', 'Incoming release item not found.');
+
+    if (reachedGoal) await publishIncomingRelease(env, targetItem);
+    else await syncIncomingDiscordEmbed(env, targetItem);
+
+    await logBotAudit(
+      env,
+      'Incoming Release Edited',
+      session,
+      `Owner updated "${targetItem.title}" (${targetItem.votes} / ${targetItem.vote_limit} votes).`
+    );
+    return json({ ok: true, item: targetItem }, 200, cors);
+  }
+
   // Delete an incoming release (Owner only)
   if (request.method === 'DELETE') {
     const token = bearerToken(request, url);
@@ -1394,7 +1513,7 @@ async function handleIncomingReleases(request, url, env, cors) {
     return json({ ok: true, deleted: Boolean(deleted) }, 200, cors);
   }
 
-  return json({ error: 'Use GET, POST, or DELETE.' }, 405, cors);
+  return json({ error: 'Use GET, POST, PATCH, or DELETE.' }, 405, cors);
 }
 
 async function handleIncomingVote(request, url, env, cors) {
@@ -1441,62 +1560,7 @@ async function handleIncomingVote(request, url, env, cors) {
   if (!targetItem) throw fail(404, 'not_found', 'Incoming release item not found.');
 
   // If goal reached, automatically publish resource to Public Vault & Discord!
-  if (reachedGoal) {
-    const vaultItem = {
-      ...targetItem,
-      status: 'approved',
-      created: new Date().toISOString()
-    };
-    await mutateDoc(env, VAULT_PUBLIC_ITEMS_KEY, { items: [] }, curr => {
-      const items = Array.isArray(curr?.items) ? curr.items : [];
-      return { items: [vaultItem, ...items.filter(i => i.slug !== vaultItem.slug)] };
-    });
-    // Publish automatically to announcements & downloads
-    await dispatchKyroDiscordPublish(vaultItem, env);
-
-    // Update the Discord message in #incomming to show "Now Live"
-    if (targetItem.discord_msg_id && env.DISCORD_BOT_TOKEN) {
-      try {
-        const incommingChannel = '1539962334729211934';
-        await fetch(`https://discord.com/api/v10/channels/${incommingChannel}/messages/${targetItem.discord_msg_id}`, {
-          method: 'PATCH',
-          headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
-          body: JSON.stringify({
-            content: `🎉 **COMMUNITY GOAL REACHED — NOW LIVE!** — <@&1542127783440818226>`,
-            embeds: [{
-              author: { name: 'Kyro Incoming Release · Community Approval', icon_url: KYRO_ICON },
-              title: `✅ JUST DROPPED: ${targetItem.title.toUpperCase()}`,
-              url: `https://kyro.new.tg#${targetItem.slug}`,
-              description: `**Status Badge:** \`Now Live / Just Dropped\`\n\n` +
-                `Community vote goal of **${targetItem.vote_limit}** votes reached! This item has been unlocked and published directly to the Kyro Vault!`,
-              color: 0x10b981,
-              footer: { text: 'Available now on kyro.new.tg' },
-              timestamp: new Date().toISOString()
-            }],
-            components: [
-              {
-                type: 1,
-                components: [
-                  { type: 2, style: 5, label: 'Download Now ↗', url: `https://kyro.new.tg#${targetItem.slug}` }
-                ]
-              }
-            ]
-          })
-        });
-      } catch (e) {}
-    }
-
-    // Create notifications for owner and uploader
-    if (targetItem.by) {
-      await createNotification(
-        env,
-        targetItem.by,
-        'Community Goal Reached! 🎉',
-        `Your incoming item "${targetItem.title}" reached ${targetItem.vote_limit} community votes and is now live on Kyro!`,
-        'approved'
-      );
-    }
-  }
+  if (reachedGoal) await publishIncomingRelease(env, targetItem);
 
   return json({
     ok: true,
@@ -1504,6 +1568,93 @@ async function handleIncomingVote(request, url, env, cors) {
     released: targetItem.released,
     userVote: (targetItem.voters || {})[session.id] || 0
   }, 200, cors);
+}
+
+/* Move a released incoming item into the public vault and refresh its Discord
+   announcement. Shared by community votes and owner vote edits. */
+async function publishIncomingRelease(env, item) {
+  const vaultItem = { ...item, status: 'approved', created: new Date().toISOString() };
+  await mutateDoc(env, VAULT_PUBLIC_ITEMS_KEY, { items: [] }, curr => {
+    const items = Array.isArray(curr?.items) ? curr.items : [];
+    return { items: [vaultItem, ...items.filter(i => i.slug !== vaultItem.slug)] };
+  });
+  await restoreVaultResources(env, [vaultItem.slug, vaultItem.id]);
+
+  // Publish automatically to announcements & downloads
+  await dispatchKyroDiscordPublish(vaultItem, env);
+
+  // Update the Discord message in #incomming to show "Now Live"
+  if (item.discord_msg_id && env.DISCORD_BOT_TOKEN) {
+    try {
+      const incommingChannel = '1539962334729211934';
+      await fetch(`https://discord.com/api/v10/channels/${incommingChannel}/messages/${item.discord_msg_id}`, {
+        method: 'PATCH',
+        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          content: `🎉 **COMMUNITY GOAL REACHED — NOW LIVE!** — @everyone`,
+          allowed_mentions: { parse: ['everyone'] },
+          embeds: [{
+            author: { name: 'Kyro Incoming Release · Community Approval', icon_url: KYRO_ICON },
+            title: `✅ JUST DROPPED: ${item.title.toUpperCase()}`,
+            url: `https://kyro.new.tg#${item.slug}`,
+            description: `**Status Badge:** \`Now Live / Just Dropped\`\n\n` +
+              `Community vote goal of **${item.vote_limit}** votes reached! This item has been unlocked and published directly to the Kyro Vault!`,
+            color: 0x10b981,
+            image: item.image_url && /^https?:\/\//i.test(item.image_url) ? { url: item.image_url } : { url: INCOMING_PREVIEW_URL },
+            footer: { text: 'Available now on kyro.new.tg' },
+            timestamp: new Date().toISOString()
+          }],
+          components: [
+            {
+              type: 1,
+              components: [
+                { type: 2, style: 5, label: 'Download Now ↗', url: `https://kyro.new.tg#${item.slug}` }
+              ]
+            }
+          ]
+        })
+      });
+    } catch (e) {}
+  }
+
+  // Create notifications for the uploader
+  if (item.by) {
+    await createNotification(
+      env,
+      item.by,
+      'Community Goal Reached! 🎉',
+      `Your incoming item "${item.title}" reached ${item.vote_limit} community votes and is now live on Kyro!`,
+      'approved'
+    );
+  }
+}
+
+/* Keep the #incomming announcement in step with owner edits without pinging
+   everyone again. */
+async function syncIncomingDiscordEmbed(env, item) {
+  if (!item.discord_msg_id || !env.DISCORD_BOT_TOKEN) return;
+  const osLabel = item.os === 'both' ? 'Windows & macOS' : item.os === 'macos' ? 'macOS' : 'Windows';
+  try {
+    await fetch(`https://discord.com/api/v10/channels/1539962334729211934/messages/${item.discord_msg_id}`, {
+      method: 'PATCH',
+      headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        embeds: [{
+          author: { name: 'Kyro Incoming Release · Community Approval', icon_url: KYRO_ICON },
+          title: `⏳ INCOMING: ${item.title.toUpperCase()}`,
+          url: `https://kyro.new.tg#incoming`,
+          description: `**Section Tagline:** *"Items waiting for community approval. Vote to bring them live."*\n\n` +
+            (item.details ? `${item.details}\n\n` : '') +
+            `• **Creator:** \`${item.creator || item.by_username || 'Kyro'}\`\n• **Platform:** \`${osLabel}\`\n• **Size:** \`${item.size || 'Vault Build'}\`\n• **Category:** \`${item.category || 'Adobe After Effects'}\`\n\n` +
+            `🎯 **Goal:** \`${Number(item.votes || 0)} / ${Number(item.vote_limit || 5)}\` Votes to Push Live!`,
+          color: 0x38bdf8,
+          image: item.image_url && /^https?:\/\//i.test(item.image_url) ? { url: item.image_url } : { url: INCOMING_PREVIEW_URL },
+          footer: { text: 'Vote on kyro.new.tg to bring this item live!' },
+          timestamp: new Date().toISOString()
+        }]
+      })
+    });
+  } catch (e) {}
 }
 
 async function handleVaultSubmissionManage(request, url, env, cors) {
@@ -1514,8 +1665,9 @@ async function handleVaultSubmissionManage(request, url, env, cors) {
 
   if (request.method === 'DELETE') {
     const input = await jsonBody(request);
-    const subId = input.id;
+    const subId = cleanText(input.id, 120);
     if (!subId) throw fail(400, 'bad_input', 'Missing submission ID.');
+    const claimsCatalogue = Boolean(input.catalogue);
 
     let deletedSub = null;
     await mutateDoc(env, VAULT_SUBMISSIONS_KEY, { submissions: [] }, curr => {
@@ -1533,6 +1685,18 @@ async function handleVaultSubmissionManage(request, url, env, cors) {
     });
 
     const targetSub = deletedSub || deletedPublic;
+    // Nothing in KV matched and the caller did not name a built-in catalogue
+    // entry: report the miss without writing a tombstone or an audit line.
+    if (!targetSub && !claimsCatalogue) {
+      return json({ ok: true, deleted: false, catalogue: false, title: cleanText(input.title, 120) || subId }, 200, cors);
+    }
+
+    // Built-in catalogue entries are seeded from js/data.js, so removing them
+    // from KV is not enough. A tombstone keeps them gone on the next load.
+    const tombstones = [subId];
+    if (targetSub) tombstones.push(targetSub.id, targetSub.slug);
+    await hideVaultResources(env, tombstones);
+
     if (targetSub) {
       // If Discord messages were recorded, remove or edit them
       const vaultItemsDoc = (await readDoc(env, VAULT_ITEMS_KEY, { items: {} })).value;
@@ -1550,11 +1714,24 @@ async function handleVaultSubmissionManage(request, url, env, cors) {
             headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
           }).catch(() => {});
         }
+        await mutateDoc(env, VAULT_ITEMS_KEY, { items: {} }, curr => {
+          const items = curr?.items && typeof curr.items === 'object' ? { ...curr.items } : {};
+          delete items[targetSub.slug];
+          return { items };
+        });
       }
     }
 
-    await logBotAudit(env, 'Vault Resource Deleted', session, `Owner deleted submission "${targetSub?.title || subId}".`);
-    return json({ ok: true, deleted: Boolean(targetSub) }, 200, cors);
+    const title = cleanText(input.title, 120) || targetSub?.title || subId;
+    await logBotAudit(
+      env,
+      'Vault Resource Deleted',
+      session,
+      targetSub
+        ? `Owner deleted "${title}" from the Vault and Discord.`
+        : `Owner hid catalogue entry "${title}" from the Vault.`
+    );
+    return json({ ok: true, deleted: true, catalogue: !targetSub, title }, 200, cors);
   }
 
   if (request.method === 'PUT' || request.method === 'PATCH') {

@@ -1,8 +1,14 @@
 /**
- * Kyro Staff Bot — Localhost Command Center & Auto-Publisher
- * Exclusively for Server Owner: sxii123 (1052909930073567232)
+ * Utility Bot — Multi-Server Command Center
+ * A Carl-bot / Sapphire-style local dashboard for any server the bot is in.
  *
- * Runs locally on http://localhost:4000
+ * Runs locally on http://localhost:4000 (loopback only, Host-guarded).
+ * Talks to the Discord REST API with the bot token; a background poller drives
+ * giveaways, reaction roles, automod, welcomes and temp-ban expiry.
+ *
+ * Features: server selector, moderation (ban/kick/timeout/warn/purge/slowmode/
+ * lock), giveaways, reaction roles, automod, welcome messages, logging,
+ * utility lookups and a generic embed sender. No server-specific publishing.
  */
 
 import http from 'http';
@@ -15,8 +21,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 4000);
-// Bot token loaded from environment or local .env (gitignored). Uses the
-// imported fs/path — `require` is undefined in ES modules.
+const OWNER_ID = process.env.DISCORD_OWNER_ID || '1052909930073567232';
+// Administrator (permissions=8) keeps moderation, role and announcement tools
+// working on every server the bot joins without per-feature permission drift.
+const BOT_CLIENT_ID = process.env.DISCORD_CLIENT_ID || '1570702041993711706';
+const BOT_INSTALL_URL = `https://discord.com/oauth2/authorize?client_id=${encodeURIComponent(BOT_CLIENT_ID)}&permissions=8&scope=bot%20applications.commands`;
+
+// Bot token from environment or local .env (gitignored). BOM-safe; `require`
+// is undefined in ES modules so the imported fs/path are used directly.
 const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || (() => {
   try {
     const envPath = path.join(__dirname, '.env');
@@ -28,838 +40,1014 @@ const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || (() => {
   } catch (e) {}
   return '';
 })();
-const GUILD_ID = process.env.DISCORD_GUILD_ID || '1539961184323772498';
-const OWNER_ID = process.env.DISCORD_OWNER_ID || '1052909930073567232';
-const KYRO_ICON = 'https://raw.githubusercontent.com/kyroownr/Kyro-Websitee/main/assets/kyro-icon.png';
 
-// Server Channels
-const CHANNELS = {
-  announcements: '1539961971422658571',
-  downloads_links: '1539961998601756722',
-  showcase_forum: '1541775088901292042'
+// ---------------------------------------------------------------------------
+// Local per-guild state
+// ---------------------------------------------------------------------------
+const DATA_FILE = process.env.DASHBOARD_DATA_FILE || path.join(__dirname, 'dashboard_data.json');
+
+function loadDB() {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+      if (parsed && typeof parsed === 'object') return parsed.guilds ? parsed : { guilds: parsed };
+    }
+  } catch (e) {
+    console.error('[DB] Failed to read state, starting fresh:', e.message);
+  }
+  return { guilds: {} };
+}
+
+function saveDB(db) {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[DB] Failed to save state:', e.message);
+  }
+}
+
+function guildConfig(db, guildId) {
+  if (!db.guilds[guildId]) {
+    db.guilds[guildId] = {
+      automod: { enabled: false, badWords: [], blockInvites: false, maxMentions: 0, maxEmojis: 0, capsPercent: 0, action: 'delete', timeoutSeconds: 300, exemptRoles: [], channels: [], processed: [] },
+      welcome: { enabled: false, channelId: '', message: 'Welcome {user} to **{server}**! You are member #{membercount}.', useEmbed: true, embedColor: '#5865f2', dm: false, dmMessage: 'Welcome to {server}!', knownMembers: [], seeded: false },
+      logging: { enabled: false, channelId: '', events: { moderation: true, giveaways: true, reactionRoles: true, automod: true, welcome: true, joins: true } },
+      reactionRoles: [],
+      giveaways: [],
+      warnings: [],
+      tempbans: [],
+      audit: []
+    };
+  }
+  return db.guilds[guildId];
+}
+
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---------------------------------------------------------------------------
+// Rate-limited Discord REST client (serialised, 429-aware)
+// ---------------------------------------------------------------------------
+let lastRequest = 0;
+let chain = Promise.resolve();
+let botUserId = '';
+
+function discordFetch(endpoint, options = {}) {
+  const task = async () => {
+    if (!BOT_TOKEN) throw new Error('Bot token missing — set DISCORD_BOT_TOKEN in .env');
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const gap = 150 - (Date.now() - lastRequest);
+      if (gap > 0) await sleep(gap);
+      lastRequest = Date.now();
+      let res;
+      try {
+        res = await fetch(`https://discord.com/api/v10${endpoint}`, {
+          ...options,
+          headers: {
+            Authorization: `Bot ${BOT_TOKEN}`,
+            'Content-Type': 'application/json',
+            ...(options.headers || {})
+          }
+        });
+      } catch (netErr) {
+        if (attempt < 4) { await sleep(400); continue; }
+        throw new Error('Network error reaching Discord: ' + netErr.message);
+      }
+      if (res.status === 429) {
+        const d = await res.json().catch(() => ({}));
+        await sleep(Math.ceil((d.retry_after || 1) * 1000) + 150);
+        continue;
+      }
+      if (res.status === 204) return {};
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const err = new Error(data.message || `Discord HTTP ${res.status}`);
+        err.status = res.status;
+        err.code = data.code;
+        throw err;
+      }
+      return data;
+    }
+    throw new Error('Discord rate limit: retries exhausted');
+  };
+  chain = chain.then(task, task);
+  return chain;
+}
+
+async function getBotUserId() {
+  if (botUserId) return botUserId;
+  try {
+    const me = await discordFetch('/users/@me');
+    botUserId = me.id || '';
+  } catch (e) {}
+  return botUserId;
+}
+
+async function getReactionUsers(channelId, messageId, emoji) {
+  const enc = encodeURIComponent(emoji);
+  let users = [];
+  let after = '';
+  for (let page = 0; page < 10; page++) {
+    const qs = `?limit=100${after ? `&after=${after}` : ''}`;
+    const batch = await discordFetch(`/channels/${channelId}/messages/${messageId}/reactions/${enc}${qs}`);
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    users = users.concat(batch);
+    after = batch[batch.length - 1].id;
+    if (batch.length < 100) break;
+  }
+  return users;
+}
+
+// ---------------------------------------------------------------------------
+// Logging helpers
+// ---------------------------------------------------------------------------
+function pushAudit(g, entry) {
+  g.audit.unshift({ id: uid(), created_at: new Date().toISOString(), ...entry });
+  if (g.audit.length > 250) g.audit.length = 250;
+}
+
+async function logEvent(guildId, type, title, description, color) {
+  const db = loadDB();
+  const g = guildConfig(db, guildId);
+  pushAudit(g, { type, title, description });
+  saveDB(db);
+  const log = g.logging;
+  if (!log.enabled || !log.channelId || !log.events[type]) return;
+  try {
+    await discordFetch(`/channels/${log.channelId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        embeds: [{
+          title: title.slice(0, 256),
+          description: (description || '').slice(0, 4000),
+          color: color || 0x5865f2,
+          footer: { text: 'Utility Bot • Logging' },
+          timestamp: new Date().toISOString()
+        }]
+      })
+    });
+  } catch (e) {
+    console.error(`[Logging] ${type} failed:`, e.message);
+  }
+}
+
+const hexToInt = (hex) => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+  return m ? parseInt(m[1], 16) : 0x5865f2;
 };
 
-// Forum tag for software/tools
-const SHOWCASE_TAG_SOFTWARE = '1541775995395379310';
-
-// Upload history database to detect new uploads vs updates
-const DB_FILE = path.join(__dirname, 'published_uploads.json');
-function loadPublished() {
-  try {
-    if (fs.existsSync(DB_FILE)) {
-      return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    }
-  } catch (e) {}
-  return {};
-}
-
-function savePublished(data) {
-  try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf8');
-  } catch (e) {
-    console.error('Failed to save publish history:', e);
+/* Every punishment DMs the member the reason. A ban DM also carries a
+   "Request Unban" button whose interaction is handled by the applications
+   worker, so the appeal keeps working even after the member leaves. */
+async function dmPunished(guildId, userId, action, reason, serverName, withAppeal) {
+  const labels = {
+    timeout: ['⏳ You have been timed out', 'You can no longer speak until the timeout expires.'],
+    kick: ['👢 You have been kicked', 'You can rejoin with a new invite if you follow the rules.'],
+    ban: ['🚫 You have been banned', 'If you believe this was a mistake, use the button below to request an unban.'],
+    unban: ['✅ You have been unbanned', 'Welcome back — please follow the rules this time.'],
+    tempban: ['🚫 You have been temporarily banned', 'The ban expires automatically. If this was a mistake, use the button below.']
+  };
+  const [title, sub] = labels[action] || ['📢 Moderation notice', ''];
+  const payload = {
+    embeds: [{
+      title,
+      description: `**Server:** ${serverName || 'the server'}\n**Reason:** ${reason || 'No reason provided'}\n\n${sub}`,
+      color: action === 'unban' ? 0x10b981 : 0xed4245,
+      timestamp: new Date().toISOString()
+    }]
+  };
+  if (withAppeal) {
+    payload.components = [{ type: 1, components: [{ type: 2, style: 3, label: 'Request Unban', custom_id: `kyro-appeal:request:${guildId}:${userId}` }] }];
   }
+  try {
+    const dm = await discordFetch(`/users/${userId}/channels`, { method: 'POST', body: JSON.stringify({ recipient_id: userId }) });
+    await discordFetch(`/channels/${dm.id}/messages`, { method: 'POST', body: JSON.stringify(payload) });
+    return true;
+  } catch (e) { return false; }
 }
 
-async function discordFetch(endpoint, options = {}) {
-  const res = await fetch(`https://discord.com/api/v10${endpoint}`, {
-    ...options,
-    headers: {
-      Authorization: `Bot ${BOT_TOKEN}`,
-      'Content-Type': 'application/json',
-      ...(options.headers || {})
+// ---------------------------------------------------------------------------
+// Moderation
+// ---------------------------------------------------------------------------
+async function moderate(guildId, body) {
+  const { action, userId, reason } = body;
+  const duration = Number(body.duration) || 0;
+  const reasonHeader = reason ? { 'X-Audit-Log-Reason': String(reason).slice(0, 400) } : {};
+  const db = loadDB();
+  const g = guildConfig(db, guildId);
+  const moderator = body.moderator || 'Dashboard';
+
+  const finish = async (message) => {
+    pushAudit(g, { type: 'moderation', action, userId, reason, moderator });
+    saveDB(db);
+    await logEvent(guildId, 'moderation', `Moderation • ${action}`, `**User:** <@${userId}> (\`${userId}\`)\n**Moderator:** ${moderator}\n**Reason:** ${reason || 'No reason provided'}`, 0xed4245);
+    return { ok: true, message };
+  };
+
+  if (action === 'timeout') {
+    const seconds = duration || 3600;
+    const until = new Date(Date.now() + seconds * 1000).toISOString();
+    await discordFetch(`/guilds/${guildId}/members/${userId}`, { method: 'PATCH', headers: reasonHeader, body: JSON.stringify({ communication_disabled_until: until }) });
+    await dmPunished(guildId, userId, 'timeout', reason, body.serverName);
+    return finish(`Timed out <@${userId}> for ${Math.round(seconds / 60)} minutes.`);
+  }
+  if (action === 'untimeout') {
+    await discordFetch(`/guilds/${guildId}/members/${userId}`, { method: 'PATCH', headers: reasonHeader, body: JSON.stringify({ communication_disabled_until: null }) });
+    return finish(`Removed timeout for <@${userId}>.`);
+  }
+  if (action === 'ban') {
+    await dmPunished(guildId, userId, 'ban', reason, body.serverName, { withAppeal: true }); // DM before the ban so the appeal button survives it
+    await discordFetch(`/guilds/${guildId}/bans/${userId}`, { method: 'PUT', headers: reasonHeader, body: JSON.stringify({ delete_message_seconds: Number(body.deleteDays) || 0 }) });
+    return finish(`Banned <@${userId}>. Their DM includes a Request Unban button.`);
+  }
+  if (action === 'tempban') {
+    const seconds = duration || 3600;
+    await dmPunished(guildId, userId, 'tempban', reason, body.serverName, { withAppeal: true });
+    await discordFetch(`/guilds/${guildId}/bans/${userId}`, { method: 'PUT', headers: reasonHeader, body: JSON.stringify({ delete_message_seconds: 0 }) });
+    g.tempbans = g.tempbans.filter((t) => t.userId !== userId);
+    g.tempbans.push({ userId, unban_at: Date.now() + seconds * 1000 });
+    saveDB(db);
+    return finish(`Temp-banned <@${userId}> for ${Math.round(seconds / 60)} minutes.`);
+  }
+  if (action === 'unban') {
+    await discordFetch(`/guilds/${guildId}/bans/${userId}`, { method: 'DELETE', headers: reasonHeader });
+    g.tempbans = g.tempbans.filter((t) => t.userId !== userId);
+    saveDB(db);
+    await dmPunished(guildId, userId, 'unban', reason, body.serverName);
+    return finish(`Unbanned <@${userId}>.`);
+  }
+  if (action === 'kick') {
+    await dmPunished(guildId, userId, 'kick', reason, body.serverName);
+    await discordFetch(`/guilds/${guildId}/members/${userId}`, { method: 'DELETE', headers: reasonHeader });
+    return finish(`Kicked <@${userId}>.`);
+  }
+  if (action === 'warn') {
+    if (!reason) throw new Error('A reason is required to warn a member.');
+    g.warnings.unshift({ id: uid(), userId, moderator, reason, created_at: new Date().toISOString() });
+    saveDB(db);
+    if (body.dm !== false) {
+      try {
+        const dm = await discordFetch(`/users/${userId}/channels`, { method: 'POST', body: JSON.stringify({ recipient_id: userId }) });
+        await discordFetch(`/channels/${dm.id}/messages`, { method: 'POST', body: JSON.stringify({ content: `You were warned in **${body.serverName || 'the server'}**: ${reason}` }) });
+      } catch (e) {}
     }
+    await logEvent(guildId, 'moderation', 'Moderation • warn', `**User:** <@${userId}>\n**Moderator:** ${moderator}\n**Reason:** ${reason}\n**Total warnings:** ${g.warnings.filter((w) => w.userId === userId).length}`, 0xfee75c);
+    return { ok: true, message: `Warned <@${userId}>. Total warnings: ${g.warnings.filter((w) => w.userId === userId).length}.` };
+  }
+  if (action === 'purge') {
+    const channelId = body.channelId;
+    const amount = Math.min(Math.max(Number(body.amount) || 10, 1), 100);
+    if (!channelId) throw new Error('A channel is required to purge messages.');
+    const msgs = await discordFetch(`/channels/${channelId}/messages?limit=${amount}`);
+    const ids = (Array.isArray(msgs) ? msgs : []).map((m) => m.id);
+    if (ids.length === 0) return { ok: true, message: 'No messages to purge.' };
+    if (ids.length === 1) {
+      await discordFetch(`/channels/${channelId}/messages/${ids[0]}`, { method: 'DELETE', headers: reasonHeader });
+    } else {
+      await discordFetch(`/channels/${channelId}/messages/bulk-delete`, { method: 'POST', headers: reasonHeader, body: JSON.stringify({ messages: ids }) });
+    }
+    pushAudit(g, { type: 'moderation', action: 'purge', channelId, count: ids.length, moderator });
+    saveDB(db);
+    await logEvent(guildId, 'moderation', 'Moderation • purge', `**Channel:** <#${channelId}>\n**Messages deleted:** ${ids.length}\n**Moderator:** ${moderator}`, 0xfee75c);
+    return { ok: true, message: `Purged ${ids.length} messages.` };
+  }
+  if (action === 'slowmode') {
+    const channelId = body.channelId;
+    const seconds = Math.min(Math.max(Number(body.seconds) || 0, 0), 21600);
+    if (!channelId) throw new Error('A channel is required to set slowmode.');
+    await discordFetch(`/channels/${channelId}`, { method: 'PATCH', headers: reasonHeader, body: JSON.stringify({ rate_limit_per_user: seconds }) });
+    return finish(`Slowmode set to ${seconds}s in <#${channelId}>.`);
+  }
+  if (action === 'lock' || action === 'unlock') {
+    const channelId = body.channelId;
+    if (!channelId) throw new Error('A channel is required.');
+    const channel = await discordFetch(`/channels/${channelId}`);
+    const overwrites = Array.isArray(channel.permission_overwrites) ? channel.permission_overwrites.slice() : [];
+    const everyoneId = guildId; // @everyone role id equals the guild id
+    const idx = overwrites.findIndex((o) => o.id === everyoneId);
+    const SEND = 1n << 11n;
+    let deny = BigInt(idx >= 0 ? (overwrites[idx].deny || '0') : '0');
+    if (action === 'lock') deny |= SEND; else deny &= ~SEND;
+    const entry = { id: everyoneId, type: 0, allow: String(idx >= 0 ? (overwrites[idx].allow || '0') : '0'), deny: deny.toString() };
+    if (idx >= 0) overwrites[idx] = entry; else overwrites.push(entry);
+    await discordFetch(`/channels/${channelId}`, { method: 'PATCH', headers: reasonHeader, body: JSON.stringify({ permission_overwrites: overwrites }) });
+    return finish(`${action === 'lock' ? 'Locked' : 'Unlocked'} <#${channelId}>.`);
+  }
+  if (action === 'addrole' || action === 'removerole') {
+    const roleId = body.roleId;
+    if (!roleId || !userId) throw new Error('User and role are required.');
+    await discordFetch(`/guilds/${guildId}/members/${userId}/roles/${roleId}`, { method: action === 'addrole' ? 'PUT' : 'DELETE', headers: reasonHeader });
+    return finish(`${action === 'addrole' ? 'Added' : 'Removed'} role <@&${roleId}> ${action === 'addrole' ? 'to' : 'from'} <@${userId}>.`);
+  }
+  throw new Error('Invalid moderation action.');
+}
+
+// ---------------------------------------------------------------------------
+// Giveaways
+// ---------------------------------------------------------------------------
+function giveawayEmbed(gv, ended, winnerIds) {
+  const endsUnix = Math.floor(gv.ends_at / 1000);
+  const desc = [
+    gv.description || '',
+    '',
+    `**Winners:** ${gv.winners}`,
+    ended
+      ? (winnerIds && winnerIds.length ? `**Winner(s):** ${winnerIds.map((id) => `<@${id}>`).join(', ')}` : '**No valid entries.**')
+      : `**Ends:** <t:${endsUnix}:R> (<t:${endsUnix}:f>)`,
+    '',
+    ended ? 'This giveaway has ended.' : 'React with 🎉 to enter!'
+  ].filter((x) => x !== null).join('\n');
+  return {
+    title: `🎉 ${gv.prize}`.slice(0, 256),
+    description: desc.slice(0, 4000),
+    color: ended ? 0x95a5a6 : 0x57f287,
+    footer: { text: `${gv.entrants ? gv.entrants.length : 0} entries • Utility Bot Giveaways` },
+    timestamp: new Date(gv.ends_at).toISOString()
+  };
+}
+
+async function createGiveaway(guildId, body) {
+  const prize = String(body.prize || '').trim();
+  const channelId = body.channelId;
+  const winners = Math.min(Math.max(Number(body.winners) || 1, 1), 20);
+  const minutes = Math.min(Math.max(Number(body.minutes) || 60, 1), 60 * 24 * 30);
+  if (!prize) throw new Error('A prize is required.');
+  if (!channelId) throw new Error('A channel is required.');
+  const gv = {
+    id: uid(), channel: channelId, message_id: '', prize,
+    description: String(body.description || '').trim().slice(0, 1000),
+    winners, ends_at: Date.now() + minutes * 60000, ended: false,
+    entrants: [], winnerIds: [], created_at: new Date().toISOString()
+  };
+  const msg = await discordFetch(`/channels/${channelId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ content: '🎉 **GIVEAWAY** 🎉', embeds: [giveawayEmbed(gv, false)] })
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(data.message || `Discord HTTP ${res.status}`);
-  }
-  return data;
+  gv.message_id = msg.id;
+  try { await discordFetch(`/channels/${channelId}/messages/${msg.id}/reactions/${encodeURIComponent('🎉')}/@me`, { method: 'PUT' }); } catch (e) {}
+  const db = loadDB();
+  const g = guildConfig(db, guildId);
+  g.giveaways.unshift(gv);
+  saveDB(db);
+  await logEvent(guildId, 'giveaways', 'Giveaway created', `**Prize:** ${prize}\n**Channel:** <#${channelId}>\n**Winners:** ${winners}\n**Ends:** <t:${Math.floor(gv.ends_at / 1000)}:R>`, 0x57f287);
+  return gv;
 }
 
-/**
- * Builds a Kyro-branded card embed with buttons
- */
-function buildKyroCard(item, isUpdate, pageUrl) {
-  const os = (item.os || 'windows').toLowerCase();
-  const osLabel = os === 'both' ? 'Windows & macOS' : os === 'macos' ? 'macOS' : 'Windows';
-  const category = item.category || 'Adobe After Effects';
-  const creator = item.creator || 'Kyro Vault';
-  const size = item.size || 'Vault Build';
-  const resourceId = item.id_code || ('#' + Math.floor(100000 + Math.random() * 900000));
-  const tier = item.tier || 'Free';
-
-  const embed = {
-    author: {
-      name: item.author_tag || 'Kyro Vault',
-      icon_url: item.author_icon || KYRO_ICON
-    },
-    title: (isUpdate ? '🔄 UPDATE: ' : '') + item.name.toUpperCase(),
-    url: pageUrl,
-    description: (item.details || `${item.name} is now available in the Kyro Vault. Free resources, plugins and presets for verified editors.`) +
-      `\n\n**Website Link:** ${pageUrl}`,
-    color: 0x1f232b,
-    fields: [
-      {
-        name: 'Information',
-        value: `• **Creator:** \`${creator}\`\n• **ID:** \`${resourceId}\`\n• **Size:** \`${size}\`\n• **Category:** \`${category}\`\n• **Platform:** \`${osLabel}\``,
-        inline: true
-      },
-      {
-        name: 'Membership',
-        value: `• **Tier:** \`${tier}\`\n• **Status:** \`${isUpdate ? 'Updated' : 'Verified'}\``,
-        inline: true
-      }
-    ],
-    footer: {
-      text: 'Kyro™ Website | Resource Monitor',
-      icon_url: KYRO_ICON
-    },
-    timestamp: new Date().toISOString()
-  };
-
-  if (item.image_url && /^https?:\/\//.test(item.image_url)) {
-    embed.image = { url: item.image_url };
+function pickWinners(entrants, count) {
+  const pool = entrants.slice();
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
   }
+  return pool.slice(0, Math.min(count, pool.length));
+}
 
-  const components = [
-    {
-      type: 1,
-      components: [
-        {
-          type: 2,
-          style: 5,
-          label: 'View Resource ↗',
-          url: pageUrl
-        },
-        {
-          type: 2,
-          style: 5,
-          label: 'Browse Vault ↗',
-          url: 'https://kyro.new.tg'
+async function finishGiveaway(guildId, gv, reroll) {
+  const botId = await getBotUserId();
+  try {
+    const users = await getReactionUsers(gv.channel, gv.message_id, '🎉');
+    gv.entrants = users.filter((u) => u.id !== botId).map((u) => u.id);
+  } catch (e) {}
+  const winners = pickWinners(gv.entrants, gv.winners);
+  gv.winnerIds = winners;
+  gv.ended = true;
+  try {
+    await discordFetch(`/channels/${gv.channel}/messages/${gv.message_id}`, { method: 'PATCH', body: JSON.stringify({ embeds: [giveawayEmbed(gv, true, winners)] }) });
+  } catch (e) {}
+  const content = winners.length
+    ? `🎉 ${reroll ? 'New winner(s)' : 'Congratulations'} ${winners.map((id) => `<@${id}>`).join(', ')}! You won **${gv.prize}**!"`
+    : `The giveaway for **${gv.prize}** ended with no valid entries.`;
+  try {
+    await discordFetch(`/channels/${gv.channel}/messages`, { method: 'POST', body: JSON.stringify({ content: content.slice(0, 2000), allowed_mentions: { parse: ['users'] } }) });
+  } catch (e) {}
+  const db = loadDB();
+  saveDB(db);
+  await logEvent(guildId, 'giveaways', reroll ? 'Giveaway rerolled' : 'Giveaway ended', `**Prize:** ${gv.prize}\n**Entries:** ${gv.entrants.length}\n**Winner(s):** ${winners.length ? winners.map((id) => `<@${id}>`).join(', ') : 'none'}`, 0x57f287);
+  return gv;
+}
+
+// ---------------------------------------------------------------------------
+// Reaction roles
+// ---------------------------------------------------------------------------
+async function createReactionRole(guildId, body) {
+  const channelId = body.channelId;
+  const mappings = Array.isArray(body.mappings) ? body.mappings.filter((m) => m.emoji && m.roleId) : [];
+  if (!channelId) throw new Error('A channel is required.');
+  if (mappings.length === 0) throw new Error('At least one emoji → role mapping is required.');
+  const mode = body.mode === 'unique' ? 'unique' : 'normal';
+  const title = String(body.title || 'Reaction Roles').trim().slice(0, 256);
+  const description = String(body.description || mappings.map((m) => `${m.emoji} → <@&${m.roleId}>`).join('\n')).trim().slice(0, 4000);
+  const msg = await discordFetch(`/channels/${channelId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ embeds: [{ title, description, color: hexToInt(body.color), footer: { text: 'React to claim your roles • Utility Bot' } }] })
+  });
+  for (const m of mappings) {
+    try { await discordFetch(`/channels/${channelId}/messages/${msg.id}/reactions/${encodeURIComponent(m.emoji)}/@me`, { method: 'PUT' }); } catch (e) {}
+  }
+  const rr = { id: uid(), channel: channelId, message_id: msg.id, mode, title, mappings, state: {}, created_at: new Date().toISOString() };
+  const db = loadDB();
+  const g = guildConfig(db, guildId);
+  g.reactionRoles.unshift(rr);
+  saveDB(db);
+  await logEvent(guildId, 'reactionRoles', 'Reaction roles created', `**Channel:** <#${channelId}>\n**Mappings:** ${mappings.length}\n**Mode:** ${mode}`, 0x5865f2);
+  return rr;
+}
+
+async function syncReactionRole(guildId, rr) {
+  const botId = await getBotUserId();
+  const current = {};
+  for (const m of rr.mappings) {
+    let users = [];
+    try { users = await getReactionUsers(rr.channel, rr.message_id, m.emoji); } catch (e) { continue; }
+    for (const u of users) {
+      if (u.id === botId) continue;
+      (current[u.id] = current[u.id] || []).push(m.emoji);
+    }
+  }
+  const prev = rr.state || {};
+  const allUsers = new Set([...Object.keys(current), ...Object.keys(prev)]);
+  const roleIds = rr.mappings.map((m) => m.roleId);
+  for (const userId of allUsers) {
+    const nowEmojis = current[userId] || [];
+    const prevEmojis = prev[userId] || [];
+    for (const emoji of nowEmojis) {
+      if (prevEmojis.includes(emoji)) continue;
+      const mapping = rr.mappings.find((m) => m.emoji === emoji);
+      if (!mapping) continue;
+      if (rr.mode === 'unique') {
+        for (const rid of roleIds) {
+          if (rid === mapping.roleId) continue;
+          try { await discordFetch(`/guilds/${guildId}/members/${userId}/roles/${rid}`, { method: 'DELETE', headers: { 'X-Audit-Log-Reason': 'Reaction roles (unique)' } }); } catch (e) {}
         }
-      ]
-    }
-  ];
-
-  return { embed, components };
-}
-
-/**
- * Publishes an upload across announcements, download links, and showcase forum
- */
-async function publishUpload(item) {
-  const published = loadPublished();
-  const slug = item.slug.toLowerCase().trim().replace(/^\/+|\/+$/g, '');
-  const os = (item.os || 'windows').toLowerCase();
-  const isUpdate = Boolean(published[slug]);
-  const pageUrl = `https://kyro.new.tg/${os}/${slug}/`;
-
-  console.log(`[Auto-Publisher] Kyro format dispatch: ${item.name} (${isUpdate ? 'UPDATE' : 'NEW'}) -> ${pageUrl}`);
-
-  const results = {
-    announcements: false,
-    downloads_links: false,
-    showcase: false,
-    isUpdate,
-    pageUrl
-  };
-
-  const { embed, components } = buildKyroCard(item, isUpdate, pageUrl);
-
-  // 1. Post to #announcements
-  try {
-    await discordFetch(`/channels/${CHANNELS.announcements}/messages`, {
-      method: 'POST',
-      body: JSON.stringify({
-        content: isUpdate ? `📢 **Vault Update Alert** — <@&1542127783440818226>` : `🚀 **New Vault Resource Released** — <@&1542127783440818226>`,
-        embeds: [embed],
-        components
-      })
-    });
-    results.announcements = true;
-  } catch (err) {
-    console.error('Failed to post announcement:', err.message);
-  }
-
-  // 2. Post to #downloads-links
-  try {
-    await discordFetch(`/channels/${CHANNELS.downloads_links}/messages`, {
-      method: 'POST',
-      body: JSON.stringify({
-        embeds: [embed],
-        components
-      })
-    });
-    results.downloads_links = true;
-  } catch (err) {
-    console.error('Failed to post download link:', err.message);
-  }
-
-  // 3. Showcase Forum Post
-  if (isUpdate && published[slug]?.thread_id) {
-    try {
-      await discordFetch(`/channels/${published[slug].thread_id}/messages`, {
-        method: 'POST',
-        body: JSON.stringify({
-          content: `🔄 **New Update Released** for **${item.name}**!`,
-          embeds: [embed],
-          components
-        })
-      });
-      results.showcase = true;
-    } catch (thErr) {
-      console.warn('Existing thread reply failed, creating new forum post:', thErr.message);
-      results.showcase = false;
-    }
-  }
-
-  if (!results.showcase) {
-    try {
-      const threadRes = await discordFetch(`/channels/${CHANNELS.showcase_forum}/threads`, {
-        method: 'POST',
-        body: JSON.stringify({
-          name: (isUpdate ? '[UPDATE] ' : '') + item.name,
-          applied_tags: [SHOWCASE_TAG_SOFTWARE],
-          message: {
-            embeds: [embed],
-            components
-          }
-        })
-      });
-      if (threadRes && threadRes.id) {
-        published[slug] = {
-          name: item.name,
-          slug,
-          os,
-          thread_id: threadRes.id,
-          last_updated: new Date().toISOString(),
-          version: item.version || '1.0'
-        };
-        savePublished(published);
-        results.showcase = true;
       }
-    } catch (fErr) {
-      console.error('Failed to create showcase forum thread:', fErr.message);
+      try { await discordFetch(`/guilds/${guildId}/members/${userId}/roles/${mapping.roleId}`, { method: 'PUT', headers: { 'X-Audit-Log-Reason': 'Reaction roles' } }); } catch (e) {}
     }
-  } else if (isUpdate) {
-    published[slug].last_updated = new Date().toISOString();
-    published[slug].version = item.version || published[slug].version;
-    savePublished(published);
+    for (const emoji of prevEmojis) {
+      if (nowEmojis.includes(emoji)) continue;
+      const mapping = rr.mappings.find((m) => m.emoji === emoji);
+      if (!mapping) continue;
+      try { await discordFetch(`/guilds/${guildId}/members/${userId}/roles/${mapping.roleId}`, { method: 'DELETE', headers: { 'X-Audit-Log-Reason': 'Reaction roles' } }); } catch (e) {}
+    }
   }
-
-  return results;
+  rr.state = current;
 }
 
-// Function to open browser on localhost
+// ---------------------------------------------------------------------------
+// AutoMod
+// ---------------------------------------------------------------------------
+const INVITE_RE = /(discord\.gg\/|discord\.com\/invite\/|discordapp\.com\/invite\/)/i;
+const EMOJI_RE = /<a?:\w+:\d+>|[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu;
+/* Classic nitro-steam-robux scams and fake-gift spoofs get caught even without
+   the invite filter, and the repeat-offender ban escalates them. */
+const SCAM_RE = /free\s*(nitro|robux|vbucks|skins|gift)|steamcommun[il1]ty|discor[d|l]s?-?(gift|nitro|app)\b|nitro\s*(giveaway|gift)|\.gift\/\S+/i;
+
+function checkAutomod(msg, am) {
+  const content = String(msg.content || '');
+  const lower = content.toLowerCase();
+  if (SCAM_RE.test(lower)) return 'scam / phishing message';
+  if (am.badWords && am.badWords.length) {
+    for (const w of am.badWords) {
+      if (w && lower.includes(String(w).toLowerCase())) return `blocked word "${w}"`;
+    }
+  }
+  if (am.blockInvites && INVITE_RE.test(content)) return 'invite link';
+  if (am.maxMentions > 0) {
+    const mentions = (msg.mentions ? msg.mentions.length : 0) + (msg.mention_roles ? msg.mention_roles.length : 0);
+    if (mentions > am.maxMentions) return `mention spam (${mentions})`;
+  }
+  if (am.maxEmojis > 0) {
+    const count = (content.match(EMOJI_RE) || []).length;
+    if (count > am.maxEmojis) return `emoji spam (${count})`;
+  }
+  if (am.capsPercent > 0 && content.length >= 8) {
+    const letters = content.replace(/[^a-zA-Z]/g, '');
+    if (letters.length >= 8) {
+      const upper = letters.replace(/[^A-Z]/g, '').length;
+      if ((upper / letters.length) * 100 >= am.capsPercent) return 'excessive caps';
+    }
+  }
+  return null;
+}
+
+async function runAutomodGuild(guildId, g) {
+  const am = g.automod;
+  if (!am.enabled || !am.channels || am.channels.length === 0) return;
+  am.processed = am.processed || [];
+  const processed = new Set(am.processed);
+  const botId = await getBotUserId();
+  for (const channelId of am.channels) {
+    let msgs = [];
+    try { msgs = await discordFetch(`/channels/${channelId}/messages?limit=15`); } catch (e) { continue; }
+    if (!Array.isArray(msgs)) continue;
+    for (const msg of msgs) {
+      if (!msg.id || processed.has(msg.id)) continue;
+      processed.add(msg.id);
+      if (msg.author && (msg.author.bot || msg.author.id === botId)) continue;
+      const memberRoles = (msg.member && msg.member.roles) || [];
+      if (am.exemptRoles && am.exemptRoles.some((r) => memberRoles.includes(r))) continue;
+      const violation = checkAutomod(msg, am);
+      if (!violation) continue;
+      try { await discordFetch(`/channels/${channelId}/messages/${msg.id}`, { method: 'DELETE', headers: { 'X-Audit-Log-Reason': 'AutoMod: ' + violation } }); } catch (e) {}
+      // Repeat offenders (3 violations in 10 minutes) get banned — spammers,
+      // hackers and spoofers don't get to ride timeouts forever.
+      const now = Date.now();
+      am.hits = am.hits || {};
+      const hits = (am.hits[msg.author.id] || []).filter(ts => now - ts < 10 * 60 * 1000);
+      hits.push(now);
+      am.hits[msg.author.id] = hits;
+      const escalate = hits.length >= 3;
+      if (msg.author && (am.action === 'ban' || escalate)) {
+        try {
+          await dmPunished(guildId, msg.author.id, 'ban', `AutoMod: ${violation}${escalate ? ' (repeated violations)' : ''}`, g.serverName, { withAppeal: true });
+        } catch (e) {}
+        try {
+          await discordFetch(`/guilds/${guildId}/bans/${msg.author.id}`, {
+            method: 'PUT',
+            headers: { 'X-Audit-Log-Reason': 'AutoMod: ' + violation },
+            body: JSON.stringify({ delete_message_seconds: 86400 })
+          });
+        } catch (e) {}
+        am.hits[msg.author.id] = [];
+        await logEvent(guildId, 'automod', 'AutoMod banned a member', `**User:** <@${msg.author.id}>\n**Violations:** ${hits.length} in 10 minutes\n**Latest:** ${violation}\nTheir DM includes an unban-request button.`, 0x7f1d1d);
+        continue;
+      }
+      if (am.action === 'timeout' && msg.author) {
+        const until = new Date(Date.now() + (Number(am.timeoutSeconds) || 300) * 1000).toISOString();
+        try { await discordFetch(`/guilds/${guildId}/members/${msg.author.id}`, { method: 'PATCH', headers: { 'X-Audit-Log-Reason': 'AutoMod: ' + violation }, body: JSON.stringify({ communication_disabled_until: until }) }); } catch (e) {}
+        try { await dmPunished(guildId, msg.author.id, 'timeout', `AutoMod: ${violation}`, g.serverName); } catch (e) {}
+      }
+      await logEvent(guildId, 'automod', 'AutoMod action', `**User:** <@${msg.author ? msg.author.id : '?'}>\n**Channel:** <#${channelId}>\n**Violation:** ${violation}\n**Action:** ${am.action}\n**Strikes (10 min):** ${hits.length}/3`, 0xed4245);
+    }
+  }
+  am.processed = [...processed].slice(-500);
+}
+
+// ---------------------------------------------------------------------------
+// Welcome
+// ---------------------------------------------------------------------------
+function formatWelcome(template, member, guildName, memberCount) {
+  const user = member && member.user ? member.user : { id: '0', username: 'new member' };
+  return String(template || '')
+    .replace(/\{user\}/g, `<@${user.id}>`)
+    .replace(/\{username\}/g, user.username || 'member')
+    .replace(/\{mention\}/g, `<@${user.id}>`)
+    .replace(/\{server\}/g, guildName || 'the server')
+    .replace(/\{membercount\}/g, String(memberCount || 0));
+}
+
+async function sendWelcome(guildId, w, member, guildName, memberCount) {
+  const text = formatWelcome(w.message, member, guildName, memberCount);
+  if (w.channelId) {
+    const payload = w.useEmbed
+      ? { embeds: [{ description: text.slice(0, 4000), color: hexToInt(w.embedColor), footer: { text: `Member #${memberCount || '?'}` }, timestamp: new Date().toISOString() }] }
+      : { content: text.slice(0, 2000) };
+    try { await discordFetch(`/channels/${w.channelId}/messages`, { method: 'POST', body: JSON.stringify(payload) }); } catch (e) {}
+  }
+  if (w.dm && member && member.user) {
+    try {
+      const dm = await discordFetch(`/users/${member.user.id}/channels`, { method: 'POST', body: JSON.stringify({ recipient_id: member.user.id }) });
+      await discordFetch(`/channels/${dm.id}/messages`, { method: 'POST', body: JSON.stringify({ content: formatWelcome(w.dmMessage, member, guildName, memberCount).slice(0, 2000) }) });
+    } catch (e) {}
+  }
+}
+
+async function runWelcomeGuild(guildId, g) {
+  const w = g.welcome;
+  if (!w.enabled || !w.channelId) return;
+  let guild, members;
+  try {
+    guild = await discordFetch(`/guilds/${guildId}?with_counts=true`);
+    members = await discordFetch(`/guilds/${guildId}/members?limit=1000`);
+  } catch (e) {
+    // Requires the privileged Server Members intent; degrade quietly if absent.
+    return;
+  }
+  if (!Array.isArray(members)) return;
+  const botId = await getBotUserId();
+  const ids = members.filter((m) => m.user && m.user.id !== botId).map((m) => m.user.id);
+  if (!w.seeded) {
+    w.knownMembers = ids;
+    w.seeded = true;
+    return;
+  }
+  const known = new Set(w.knownMembers || []);
+  const fresh = ids.filter((id) => !known.has(id));
+  for (const userId of fresh) {
+    const member = members.find((m) => m.user && m.user.id === userId);
+    await sendWelcome(guildId, w, member, guild.name, guild.approximate_member_count || ids.length);
+    await logEvent(guildId, 'joins', 'Member joined', `**User:** <@${userId}> (${member && member.user ? member.user.username : userId})\n**Member count:** ${guild.approximate_member_count || ids.length}`, 0x57f287);
+  }
+  w.knownMembers = ids;
+}
+
+// ---------------------------------------------------------------------------
+// Background poller
+// ---------------------------------------------------------------------------
+const lastRun = { giveaways: 0, reactionRoles: 0, automod: 0, welcome: 0, tempbans: 0 };
+let polling = false;
+
+async function pollTick() {
+  if (polling || !BOT_TOKEN) return;
+  polling = true;
+  try {
+    const now = Date.now();
+    const db = loadDB();
+    let changed = false;
+    const guildIds = Object.keys(db.guilds);
+
+    if (now - lastRun.tempbans > 15000) {
+      lastRun.tempbans = now;
+      for (const guildId of guildIds) {
+        const g = guildConfig(db, guildId);
+        const due = (g.tempbans || []).filter((t) => t.unban_at <= now);
+        for (const t of due) {
+          try { await discordFetch(`/guilds/${guildId}/bans/${t.userId}`, { method: 'DELETE', headers: { 'X-Audit-Log-Reason': 'Temp-ban expired' } }); } catch (e) {}
+          await logEvent(guildId, 'moderation', 'Temp-ban expired', `**User:** <@${t.userId}>`, 0x95a5a6);
+        }
+        if (due.length) { g.tempbans = (g.tempbans || []).filter((t) => t.unban_at > now); changed = true; }
+      }
+    }
+
+    if (now - lastRun.giveaways > 20000) {
+      lastRun.giveaways = now;
+      for (const guildId of guildIds) {
+        const g = guildConfig(db, guildId);
+        for (const gv of g.giveaways || []) {
+          if (gv.ended) continue;
+          try {
+            const botId = await getBotUserId();
+            const users = await getReactionUsers(gv.channel, gv.message_id, '🎉');
+            gv.entrants = users.filter((u) => u.id !== botId).map((u) => u.id);
+            changed = true;
+            if (now >= gv.ends_at) { await finishGiveaway(guildId, gv, false); changed = true; }
+            else {
+              try { await discordFetch(`/channels/${gv.channel}/messages/${gv.message_id}`, { method: 'PATCH', body: JSON.stringify({ embeds: [giveawayEmbed(gv, false)] }) }); } catch (e) {}
+            }
+          } catch (e) {}
+        }
+      }
+    }
+
+    if (now - lastRun.reactionRoles > 15000) {
+      lastRun.reactionRoles = now;
+      for (const guildId of guildIds) {
+        const g = guildConfig(db, guildId);
+        for (const rr of g.reactionRoles || []) {
+          try { await syncReactionRole(guildId, rr); changed = true; } catch (e) {}
+        }
+      }
+    }
+
+    if (now - lastRun.automod > 10000) {
+      lastRun.automod = now;
+      for (const guildId of guildIds) {
+        const g = guildConfig(db, guildId);
+        try { await runAutomodGuild(guildId, g); changed = true; } catch (e) {}
+      }
+    }
+
+    if (now - lastRun.welcome > 30000) {
+      lastRun.welcome = now;
+      for (const guildId of guildIds) {
+        const g = guildConfig(db, guildId);
+        try { await runWelcomeGuild(guildId, g); changed = true; } catch (e) {}
+      }
+    }
+
+    if (changed) saveDB(db);
+  } catch (e) {
+    console.error('[Poller] tick error:', e.message);
+  } finally {
+    polling = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// HTTP server
+// ---------------------------------------------------------------------------
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > 1_000_000) { reject(new Error('Payload too large')); req.destroy(); return; }
+      body += chunk;
+    });
+    req.on('end', () => {
+      if (!body) return resolve({});
+      try { resolve(JSON.parse(body)); } catch (e) { reject(new Error('Invalid JSON body')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+function sendJSON(res, status, obj) {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(obj));
+}
+
 function openLocalDashboard() {
   const url = `http://localhost:${PORT}`;
   const startCmd = process.platform === 'win32' ? `start ${url}` : process.platform === 'darwin' ? `open ${url}` : `xdg-open ${url}`;
-  exec(startCmd, (err) => {
-    if (err) console.error('Failed to auto-open browser:', err);
-    else console.log(`[Dashboard] Opened browser to ${url}`);
-  });
+  exec(startCmd, (err) => { if (err) console.error('Failed to auto-open browser:', err.message); });
 }
 
-// Dashboard HTML interface
-const DASHBOARD_HTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Kyro Staff Bot — Owner Command Center</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-  <style>
-    :root {
-      --bg: #0b0d13;
-      --card: rgba(255,255,255,0.035);
-      --border: rgba(255,255,255,0.08);
-      --accent: #5865f2;
-      --text: #f8fafc;
-      --dim: #94a3b8;
-      --green: #10b981;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
-      padding: 40px 20px;
-      display: flex;
-      justify-content: center;
-    }
-    .container {
-      width: 100%;
-      max-width: 860px;
-      display: flex;
-      flex-direction: column;
-      gap: 24px;
-    }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding-bottom: 20px;
-      border-bottom: 1px solid var(--border);
-    }
-    .title { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background: rgba(16,185,129,0.12);
-      border: 1px solid rgba(16,185,129,0.3);
-      color: var(--green);
-      padding: 4px 10px;
-      border-radius: 999px;
-      font-size: 0.75rem;
-      font-weight: 600;
-      font-family: 'JetBrains Mono', monospace;
-    }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 24px;
-      backdrop-filter: blur(20px);
-    }
-    .card-title {
-      font-size: 1.15rem;
-      font-weight: 600;
-      margin-bottom: 6px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .card-desc {
-      font-size: 0.88rem;
-      color: var(--dim);
-      margin-bottom: 20px;
-      line-height: 1.5;
-    }
-    .form-group {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      margin-bottom: 16px;
-    }
-    label { font-size: 0.85rem; font-weight: 600; color: #cbd5e1; }
-    input, textarea, select {
-      background: rgba(255,255,255,0.05);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 10px 14px;
-      color: #fff;
-      font-family: inherit;
-      font-size: 0.9rem;
-      outline: none;
-      transition: border 0.15s;
-    }
-    input:focus, textarea:focus, select:focus {
-      border-color: var(--accent);
-    }
-    .btn {
-      background: var(--accent);
-      color: #fff;
-      border: none;
-      padding: 12px 20px;
-      border-radius: 10px;
-      font-weight: 600;
-      font-size: 0.92rem;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-    }
-    .btn:hover { opacity: 0.92; }
-    .grid-2 {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-    }
-    .grid-3 {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap: 16px;
-    }
-    .status-msg {
-      padding: 12px 16px;
-      border-radius: 10px;
-      font-size: 0.88rem;
-      display: none;
-      margin-top: 14px;
-    }
-    .status-msg.success {
-      background: rgba(16,185,129,0.12);
-      border: 1px solid rgba(16,185,129,0.3);
-      color: #34d399;
-    }
-    .status-msg.error {
-      background: rgba(239,68,68,0.12);
-      border: 1px solid rgba(239,68,68,0.3);
-      color: #f87171;
-    }
-    /* Kyro preview card */
-    .preview-box {
-      background: #1f232b;
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 12px;
-      padding: 18px;
-      margin-top: 20px;
-      color: #fff;
-    }
-    .preview-author { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: #cbd5e1; margin-bottom: 8px; }
-    .preview-title { font-size: 1.1rem; font-weight: 700; color: #38bdf8; margin-bottom: 8px; }
-    .preview-desc { font-size: 0.85rem; color: #cbd5e1; line-height: 1.5; margin-bottom: 12px; }
-    .preview-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; background: rgba(0,0,0,0.25); padding: 12px; border-radius: 8px; font-size: 0.8rem; margin-bottom: 14px; }
-    .preview-buttons { display: flex; gap: 10px; }
-    .preview-btn {
-      background: #2b313e;
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 6px;
-      padding: 8px 16px;
-      font-size: 0.82rem;
-      font-weight: 600;
-      color: #fff;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <div>
-        <h1 class="title">Kyro Staff Bot · Resource Publisher &amp; Bot Controls</h1>
-        <p style="color:var(--dim);font-size:0.85rem;margin-top:4px;">Localhost Interface (Triggered by <code>/start-kyro</code>)</p>
-      </div>
-      <span class="badge">● LOCALHOST ONLINE</span>
-    </div>
-
-    <div class="card">
-      <div class="card-title">✨ Publish Kyro Vault Announcement</div>
-      <p class="card-desc">Publishes rich resource cards across <b>#announcements</b>, <b>#downloads-links</b>, and <b>#showcase</b> forum. Automatically detects if the resource is an <b>UPDATE</b> and routes downloads to the website page (<code>https://kyro.new.tg/windows/slug/</code>).</p>
-      
-      <form id="uploadForm">
-        <div class="grid-2">
-          <div class="form-group">
-            <label>Resource Title</label>
-            <input type="text" id="name" placeholder="e.g. Qwix Plugin or 2000SLEGEND EDIT PACK" required>
-          </div>
-          <div class="form-group">
-            <label>Website Slug</label>
-            <input type="text" id="slug" placeholder="e.g. qwix-plugin" required>
-          </div>
-        </div>
-
-        <div class="grid-3">
-          <div class="form-group">
-            <label>Platform / OS</label>
-            <select id="os">
-              <option value="windows">Windows</option>
-              <option value="macos">macOS</option>
-              <option value="both">Windows & macOS</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Creator / Author</label>
-            <input type="text" id="creator" placeholder="e.g. packsffx">
-          </div>
-          <div class="form-group">
-            <label>Size</label>
-            <input type="text" id="size" placeholder="e.g. 1.49 MB">
-          </div>
-        </div>
-
-        <div class="grid-2">
-          <div class="form-group">
-            <label>Category</label>
-            <input type="text" id="category" placeholder="e.g. Adobe After Effects">
-          </div>
-          <div class="form-group">
-            <label>Membership Tier</label>
-            <input type="text" id="tier" value="Free">
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label>Poster / Banner Image URL</label>
-          <input type="url" id="image_url" placeholder="https://... (screenshot / artwork)">
-        </div>
-
-        <div class="form-group">
-          <label>Description / Effects Included</label>
-          <textarea id="details" rows="3" placeholder="Features, effects, changelog or presets included..."></textarea>
-        </div>
-
-        <button type="submit" class="btn" id="btnPublish">🚀 Publish Kyro Announcement &amp; Forum Post</button>
-        <div id="publishStatus" class="status-msg"></div>
-      </form>
-    </div>
-
-    <!-- Live Preview Card -->
-    <div class="card">
-      <div class="card-title">👁️ Kyro Live Preview</div>
-      <div class="preview-box">
-        <div class="preview-author"><img src="${KYRO_ICON}" width="16" height="16" style="border-radius:50%;"> Anonymous / Kyro Vault</div>
-        <div class="preview-title" id="prevTitle">QWIX PLUGIN</div>
-        <div class="preview-desc" id="prevDesc">Effects, transitions, presets and overlays included for editors...</div>
-        <div class="preview-fields">
-          <div>
-            <strong>Information</strong><br>
-            • Creator: <span id="prevCreator">packsffx</span><br>
-            • ID: <span id="prevId">#198099</span><br>
-            • Size: <span id="prevSize">1.49 MB</span><br>
-            • Category: <span id="prevCat">Adobe After Effects</span>
-          </div>
-          <div>
-            <strong>Membership</strong><br>
-            • Tier: <span id="prevTier">Free</span><br>
-            • Access: <span id="prevAccess">Kyro Vault</span>
-          </div>
-        </div>
-        <div class="preview-buttons">
-          <div class="preview-btn">View Resource ↗</div>
-          <div class="preview-btn">Find Resources ↗</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Moderation Controls Card -->
-    <div class="card">
-      <div class="card-title">🛡️ Discord Moderation &amp; Enforcement</div>
-      <p class="card-desc">Execute instant moderation actions in the Kyro server directly through the bot API.</p>
-
-      <form id="modForm">
-        <div class="grid-3">
-          <div class="form-group">
-            <label>Action</label>
-            <select id="modAction">
-              <option value="timeout">Timeout / Temp Mute</option>
-              <option value="untimeout">Remove Timeout (Untimeout)</option>
-              <option value="tempban">Temp Ban</option>
-              <option value="ban">Ban User</option>
-              <option value="unban">Unban User (Not Ban)</option>
-              <option value="kick">Kick User</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>User ID</label>
-            <input type="text" id="modUserId" placeholder="e.g. 1052909930073567232" required>
-          </div>
-          <div class="form-group" id="modDurationGroup">
-            <label>Duration</label>
-            <select id="modDuration">
-              <option value="300">5 Minutes</option>
-              <option value="3600" selected>1 Hour</option>
-              <option value="86400">1 Day</option>
-              <option value="604800">1 Week</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label>Reason</label>
-          <input type="text" id="modReason" placeholder="e.g. Violating community guidelines or advertising">
-        </div>
-
-        <button type="submit" class="btn" id="btnMod" style="background:#ef4444;">⚡ Execute Moderation Action</button>
-        <div id="modStatus" class="status-msg"></div>
-      </form>
-    </div>
-  </div>
-
-  <script>
-    const form = document.getElementById('uploadForm');
-    const statusMsg = document.getElementById('publishStatus');
-    const btnPublish = document.getElementById('btnPublish');
-
-    // Moderation wiring
-    const modForm = document.getElementById('modForm');
-    const modAction = document.getElementById('modAction');
-    const modDurationGroup = document.getElementById('modDurationGroup');
-    const modStatus = document.getElementById('modStatus');
-    const btnMod = document.getElementById('btnMod');
-
-    modAction.addEventListener('change', () => {
-      const needsDuration = modAction.value === 'timeout' || modAction.value === 'tempban';
-      modDurationGroup.style.display = needsDuration ? 'block' : 'none';
-      
-      if (modAction.value === 'ban' || modAction.value === 'tempban') {
-        btnMod.style.background = '#dc2626';
-        btnMod.textContent = modAction.value === 'tempban' ? '⏳ Temp Ban User from Kyro' : '🔨 Ban User from Kyro';
-      } else if (modAction.value === 'unban') {
-        btnMod.style.background = '#10b981';
-        btnMod.textContent = '🕊️ Unban User (Remove Ban)';
-      } else if (modAction.value === 'untimeout') {
-        btnMod.style.background = '#10b981';
-        btnMod.textContent = '⏱️ Remove Timeout (Untimeout)';
-      } else if (modAction.value === 'kick') {
-        btnMod.style.background = '#d97706';
-        btnMod.textContent = '👢 Kick User from Kyro';
-      } else {
-        btnMod.style.background = '#ef4444';
-        btnMod.textContent = '⚡ Timeout User';
-      }
-    });
-
-    modForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      btnMod.disabled = true;
-      modStatus.style.display = 'none';
-
-      const payload = {
-        action: modAction.value,
-        userId: document.getElementById('modUserId').value.trim(),
-        duration: parseInt(document.getElementById('modDuration').value, 10),
-        reason: document.getElementById('modReason').value.trim()
-      };
-
-      try {
-        const res = await fetch('/api/moderate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (res.ok) {
-          modStatus.className = 'status-msg success';
-          modStatus.textContent = '✅ ' + (data.message || 'Action executed successfully!');
-          modStatus.style.display = 'block';
-        } else {
-          modStatus.className = 'status-msg error';
-          modStatus.textContent = '❌ Action failed: ' + (data.error || 'Server error');
-          modStatus.style.display = 'block';
-        }
-      } catch (err) {
-        modStatus.className = 'status-msg error';
-        modStatus.textContent = '❌ Network error: ' + err.message;
-        modStatus.style.display = 'block';
-      } finally {
-        btnMod.disabled = false;
-      }
-    });
-
-    // Update live preview
-    const updatePreview = () => {
-      document.getElementById('prevTitle').textContent = (document.getElementById('name').value.trim() || 'QWIX PLUGIN').toUpperCase();
-      document.getElementById('prevDesc').textContent = document.getElementById('details').value.trim() || 'Effects, transitions, presets and overlays included for editors...';
-      document.getElementById('prevCreator').textContent = document.getElementById('creator').value.trim() || 'packsffx';
-      document.getElementById('prevSize').textContent = document.getElementById('size').value.trim() || '1.49 MB';
-      document.getElementById('prevCat').textContent = document.getElementById('category').value.trim() || 'Adobe After Effects';
-      document.getElementById('prevTier').textContent = document.getElementById('tier').value.trim() || 'Free';
-    };
-
-    ['name', 'details', 'creator', 'size', 'category', 'tier'].forEach(id => {
-      document.getElementById(id).addEventListener('input', updatePreview);
-    });
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      btnPublish.disabled = true;
-      btnPublish.textContent = 'Publishing…';
-      statusMsg.style.display = 'none';
-
-      const payload = {
-        name: document.getElementById('name').value.trim(),
-        slug: document.getElementById('slug').value.trim(),
-        os: document.getElementById('os').value,
-        creator: document.getElementById('creator').value.trim(),
-        size: document.getElementById('size').value.trim(),
-        category: document.getElementById('category').value.trim(),
-        tier: document.getElementById('tier').value.trim(),
-        image_url: document.getElementById('image_url').value.trim(),
-        details: document.getElementById('details').value.trim()
-      };
-
-      try {
-        const res = await fetch('/api/publish', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (res.ok) {
-          statusMsg.className = 'status-msg success';
-          statusMsg.textContent = '✅ ' + (data.isUpdate ? 'Update' : 'New upload') + ' successfully published with Kyro branding to #announcements, #downloads-links, and #showcase forum! Website link: ' + data.pageUrl;
-          statusMsg.style.display = 'block';
-        } else {
-          statusMsg.className = 'status-msg error';
-          statusMsg.textContent = '❌ Failed: ' + (data.error || 'Server error');
-          statusMsg.style.display = 'block';
-        }
-      } catch (err) {
-        statusMsg.className = 'status-msg error';
-        statusMsg.textContent = '❌ Error: ' + err.message;
-        statusMsg.style.display = 'block';
-      } finally {
-        btnPublish.disabled = false;
-        btnPublish.textContent = '🚀 Publish Kyro Announcement & Forum Post';
-      }
-    });
-  </script>
-</body>
-</html>
-`;
-
 const server = http.createServer(async (req, res) => {
-  // Loopback admin tool: reject any Host that isn't localhost so a malicious
-  // website cannot reach it via DNS rebinding (attacker domain -> 127.0.0.1).
+  // Loopback admin tool: reject any Host that isn't localhost (DNS-rebinding guard).
   const host = (req.headers.host || '').toLowerCase();
   if (host !== `localhost:${PORT}` && host !== `127.0.0.1:${PORT}` && host !== `[::1]:${PORT}`) {
-    res.writeHead(403, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Forbidden host.' }));
-    return;
+    return sendJSON(res, 403, { error: 'Forbidden host.' });
   }
   const url = new URL(req.url, `http://${req.headers.host}`);
+  const p = url.pathname;
+  const guildId = url.searchParams.get('guild') || '';
 
-  if (req.method === 'GET' && url.pathname === '/') {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(DASHBOARD_HTML);
-    return;
-  }
+  try {
+    if (req.method === 'GET' && p === '/') {
+      const html = fs.readFileSync(path.join(__dirname, 'dashboard.html'), 'utf8');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      return res.end(html);
+    }
 
-  // Triggered by /start-kyro in Discord
-  if (req.method === 'POST' && url.pathname === '/api/launch') {
-    openLocalDashboard();
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true }));
-    return;
-  }
+    if (req.method === 'GET' && p === '/api/status') {
+      return sendJSON(res, 200, { ok: true, tokenLoaded: Boolean(BOT_TOKEN), ownerId: OWNER_ID, poller: !process.env.DASHBOARD_DISABLE_POLLER, installUrl: BOT_INSTALL_URL });
+    }
 
-  if (req.method === 'POST' && url.pathname === '/api/publish') {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', async () => {
+    if (req.method === 'POST' && p === '/api/launch') {
+      openLocalDashboard();
+      return sendJSON(res, 200, { ok: true });
+    }
+
+    // Multi-server selector
+    if (req.method === 'GET' && p === '/api/guilds') {
+      const guilds = await discordFetch('/users/@me/guilds?with_counts=true');
+      const list = (Array.isArray(guilds) ? guilds : []).map((g) => ({
+        id: g.id, name: g.name, icon: g.icon, owner: g.owner,
+        member_count: g.approximate_member_count || null,
+        permissions: g.permissions
+      }));
+      return sendJSON(res, 200, { guilds: list });
+    }
+
+    if (req.method === 'GET' && p === '/api/guild') {
+      if (!guildId) return sendJSON(res, 400, { error: 'guild is required' });
+      const [guild, channels, roles] = await Promise.all([
+        discordFetch(`/guilds/${guildId}?with_counts=true`),
+        discordFetch(`/guilds/${guildId}/channels`),
+        discordFetch(`/guilds/${guildId}/roles`)
+      ]);
+      return sendJSON(res, 200, {
+        guild: {
+          id: guild.id, name: guild.name, icon: guild.icon, owner_id: guild.owner_id,
+          member_count: guild.approximate_member_count || null,
+          presence_count: guild.approximate_presence_count || null,
+          verification_level: guild.verification_level, premium_tier: guild.premium_tier
+        },
+        channels: (Array.isArray(channels) ? channels : []).map((c) => ({ id: c.id, name: c.name, type: c.type, parent_id: c.parent_id })).sort((a, b) => (a.position || 0) - (b.position || 0)),
+        roles: (Array.isArray(roles) ? roles : []).map((r) => ({ id: r.id, name: r.name, color: r.color, managed: r.managed, position: r.position })).sort((a, b) => b.position - a.position)
+      });
+    }
+
+    if (req.method === 'GET' && p === '/api/config') {
+      if (!guildId) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, guildId);
+      saveDB(db);
+      return sendJSON(res, 200, {
+        automod: g.automod, welcome: g.welcome, logging: g.logging,
+        reactionRoles: g.reactionRoles, giveaways: g.giveaways,
+        warnings: g.warnings, audit: g.audit, tempbans: g.tempbans
+      });
+    }
+
+    if (req.method === 'POST' && p === '/api/moderate') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      if (!body.userId && !['purge', 'slowmode', 'lock', 'unlock'].includes(body.action)) return sendJSON(res, 400, { error: 'userId is required' });
+      const out = await moderate(gid, body);
+      return sendJSON(res, 200, out);
+    }
+
+    if (req.method === 'POST' && p === '/api/giveaway/create') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const gv = await createGiveaway(gid, body);
+      return sendJSON(res, 200, { ok: true, giveaway: gv });
+    }
+    if (req.method === 'POST' && p === '/api/giveaway/end') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      const gv = g.giveaways.find((x) => x.id === body.id);
+      if (!gv) return sendJSON(res, 404, { error: 'Giveaway not found' });
+      await finishGiveaway(gid, gv, false);
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true, giveaway: gv });
+    }
+    if (req.method === 'POST' && p === '/api/giveaway/reroll') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      const gv = g.giveaways.find((x) => x.id === body.id);
+      if (!gv) return sendJSON(res, 404, { error: 'Giveaway not found' });
+      await finishGiveaway(gid, gv, true);
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true, giveaway: gv });
+    }
+    if (req.method === 'POST' && p === '/api/giveaway/delete') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      const gv = g.giveaways.find((x) => x.id === body.id);
+      if (gv) { try { await discordFetch(`/channels/${gv.channel}/messages/${gv.message_id}`, { method: 'DELETE' }); } catch (e) {} }
+      g.giveaways = g.giveaways.filter((x) => x.id !== body.id);
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true });
+    }
+
+    if (req.method === 'POST' && p === '/api/reactionroles/create') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const rr = await createReactionRole(gid, body);
+      return sendJSON(res, 200, { ok: true, reactionRole: rr });
+    }
+    if (req.method === 'POST' && p === '/api/reactionroles/delete') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      const rr = g.reactionRoles.find((x) => x.id === body.id);
+      if (rr) { try { await discordFetch(`/channels/${rr.channel}/messages/${rr.message_id}`, { method: 'DELETE' }); } catch (e) {} }
+      g.reactionRoles = g.reactionRoles.filter((x) => x.id !== body.id);
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true });
+    }
+
+    if (req.method === 'POST' && p === '/api/automod') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      g.automod = {
+        enabled: Boolean(body.enabled),
+        badWords: Array.isArray(body.badWords) ? body.badWords.map((w) => String(w).trim()).filter(Boolean).slice(0, 100) : [],
+        blockInvites: Boolean(body.blockInvites),
+        maxMentions: Number(body.maxMentions) || 0,
+        maxEmojis: Number(body.maxEmojis) || 0,
+        capsPercent: Number(body.capsPercent) || 0,
+        action: body.action === 'timeout' ? 'timeout' : 'delete',
+        timeoutSeconds: Number(body.timeoutSeconds) || 300,
+        exemptRoles: Array.isArray(body.exemptRoles) ? body.exemptRoles : [],
+        channels: Array.isArray(body.channels) ? body.channels : [],
+        processed: g.automod.processed || []
+      };
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true, automod: g.automod });
+    }
+
+    if (req.method === 'POST' && p === '/api/welcome') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      g.welcome = {
+        ...g.welcome,
+        enabled: Boolean(body.enabled),
+        channelId: String(body.channelId || ''),
+        message: String(body.message || '').slice(0, 1500),
+        useEmbed: Boolean(body.useEmbed),
+        embedColor: String(body.embedColor || '#5865f2'),
+        dm: Boolean(body.dm),
+        dmMessage: String(body.dmMessage || '').slice(0, 1500)
+      };
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true, welcome: g.welcome });
+    }
+    if (req.method === 'POST' && p === '/api/welcome/test') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      let guild = { name: 'the server' };
+      try { guild = await discordFetch(`/guilds/${gid}?with_counts=true`); } catch (e) {}
+      const member = { user: { id: OWNER_ID, username: body.username || 'Test Member' } };
+      await sendWelcome(gid, g.welcome, member, guild.name, guild.approximate_member_count || 1);
+      return sendJSON(res, 200, { ok: true, message: 'Test welcome sent.' });
+    }
+
+    if (req.method === 'POST' && p === '/api/logging') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      g.logging = {
+        enabled: Boolean(body.enabled),
+        channelId: String(body.channelId || ''),
+        events: {
+          moderation: body.events ? Boolean(body.events.moderation) : true,
+          giveaways: body.events ? Boolean(body.events.giveaways) : true,
+          reactionRoles: body.events ? Boolean(body.events.reactionRoles) : true,
+          automod: body.events ? Boolean(body.events.automod) : true,
+          welcome: body.events ? Boolean(body.events.welcome) : true,
+          joins: body.events ? Boolean(body.events.joins) : true
+        }
+      };
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true, logging: g.logging });
+    }
+
+    if (req.method === 'GET' && p === '/api/userinfo') {
+      const userId = url.searchParams.get('user') || '';
+      if (!guildId || !userId) return sendJSON(res, 400, { error: 'guild and user are required' });
+      const user = await discordFetch(`/users/${userId}`);
+      let member = null;
+      try { member = await discordFetch(`/guilds/${guildId}/members/${userId}`); } catch (e) {}
+      return sendJSON(res, 200, {
+        user: { id: user.id, username: user.username, global_name: user.global_name, avatar: user.avatar, discriminator: user.discriminator, bot: user.bot, created_at: user.id ? new Date(Number((BigInt(user.id) >> 22n) + 1420070400000n)).toISOString() : null },
+        member: member ? { nick: member.nick, roles: member.roles, joined_at: member.joined_at, premium_since: member.premium_since, communication_disabled_until: member.communication_disabled_until } : null
+      });
+    }
+
+    if (req.method === 'GET' && p === '/api/members') {
+      if (!guildId) return sendJSON(res, 400, { error: 'guild is required' });
+      const q = url.searchParams.get('q') || '';
+      let members = [];
       try {
-        const item = JSON.parse(body);
-        if (!item.name || !item.slug) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Name and slug are required.' }));
-          return;
-        }
-        const outcome = await publishUpload(item);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(outcome));
-      } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
+        members = q
+          ? await discordFetch(`/guilds/${guildId}/members/search?query=${encodeURIComponent(q)}&limit=25`)
+          : await discordFetch(`/guilds/${guildId}/members?limit=50`);
+      } catch (e) { return sendJSON(res, 200, { members: [], note: 'Server Members intent may be required.' }); }
+      return sendJSON(res, 200, {
+        members: (Array.isArray(members) ? members : []).map((m) => ({ id: m.user.id, username: m.user.username, global_name: m.user.global_name, avatar: m.user.avatar, nick: m.nick, bot: m.user.bot, roles: m.roles }))
+      });
+    }
+
+    if (req.method === 'GET' && p === '/api/warnings') {
+      if (!guildId) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, guildId);
+      const userId = url.searchParams.get('user') || '';
+      const list = userId ? g.warnings.filter((w) => w.userId === userId) : g.warnings;
+      return sendJSON(res, 200, { warnings: list });
+    }
+    if (req.method === 'POST' && p === '/api/warnings/clear') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      g.warnings = body.userId ? g.warnings.filter((w) => w.userId !== body.userId) : [];
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true });
+    }
+
+    if (req.method === 'POST' && p === '/api/embed') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      const channelId = body.channelId;
+      if (!gid || !channelId) return sendJSON(res, 400, { error: 'guild and channelId are required' });
+      const embed = {
+        title: String(body.title || '').slice(0, 256) || undefined,
+        description: String(body.description || '').slice(0, 4000) || undefined,
+        color: hexToInt(body.color),
+        url: /^https?:\/\//.test(body.url || '') ? body.url : undefined,
+        author: body.author ? { name: String(body.author).slice(0, 256), icon_url: /^https?:\/\//.test(body.authorIcon || '') ? body.authorIcon : undefined } : undefined,
+        footer: body.footer ? { text: String(body.footer).slice(0, 2048), icon_url: /^https?:\/\//.test(body.footerIcon || '') ? body.footerIcon : undefined } : undefined,
+        image: /^https?:\/\//.test(body.image || '') ? { url: body.image } : undefined,
+        thumbnail: /^https?:\/\//.test(body.thumbnail || '') ? { url: body.thumbnail } : undefined,
+        timestamp: body.timestamp ? new Date().toISOString() : undefined
+      };
+      if (Array.isArray(body.fields)) {
+        embed.fields = body.fields.filter((f) => f && f.name && f.value).slice(0, 25).map((f) => ({ name: String(f.name).slice(0, 256), value: String(f.value).slice(0, 1024), inline: Boolean(f.inline) }));
       }
-    });
-    return;
+      if (!embed.title && !embed.description) return sendJSON(res, 400, { error: 'An embed title or description is required.' });
+      const msg = await discordFetch(`/channels/${channelId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ content: String(body.content || '').slice(0, 2000) || undefined, embeds: [embed] })
+      });
+      await logEvent(gid, 'moderation', 'Embed sent', `**Channel:** <#${channelId}>\n**Title:** ${embed.title || '(no title)'}`, 0x5865f2);
+      return sendJSON(res, 200, { ok: true, message_id: msg.id });
+    }
+
+    return sendJSON(res, 404, { error: 'Not found' });
+  } catch (err) {
+    const status = err.status && err.status >= 400 && err.status < 600 ? err.status : 500;
+    return sendJSON(res, status, { error: err.message || 'Server error' });
   }
-
-  if (req.method === 'POST' && url.pathname === '/api/moderate') {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', async () => {
-      try {
-        const { action, userId, duration, reason } = JSON.parse(body);
-        if (!userId) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'User ID is required.' }));
-          return;
-        }
-
-        const reasonHeader = reason ? { 'X-Audit-Log-Reason': reason } : {};
-
-        if (action === 'timeout') {
-          const seconds = duration || 3600;
-          const until = new Date(Date.now() + seconds * 1000).toISOString();
-          await discordFetch(`/guilds/${GUILD_ID}/members/${userId}`, {
-            method: 'PATCH',
-            headers: reasonHeader,
-            body: JSON.stringify({ communication_disabled_until: until })
-          });
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, message: `User <@${userId}> timed out for ${Math.round(seconds / 60)} minutes.` }));
-          return;
-        }
-
-        if (action === 'untimeout') {
-          await discordFetch(`/guilds/${GUILD_ID}/members/${userId}`, {
-            method: 'PATCH',
-            headers: reasonHeader,
-            body: JSON.stringify({ communication_disabled_until: null })
-          });
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, message: `Timeout removed for <@${userId}>.` }));
-          return;
-        }
-
-        if (action === 'ban') {
-          await discordFetch(`/guilds/${GUILD_ID}/bans/${userId}`, {
-            method: 'PUT',
-            headers: reasonHeader,
-            body: JSON.stringify({ delete_message_seconds: 0 })
-          });
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, message: `User <@${userId}> banned successfully.` }));
-          return;
-        }
-
-        if (action === 'tempban') {
-          const seconds = duration || 3600;
-          await discordFetch(`/guilds/${GUILD_ID}/bans/${userId}`, {
-            method: 'PUT',
-            headers: reasonHeader,
-            body: JSON.stringify({ delete_message_seconds: 0 })
-          });
-          setTimeout(async () => {
-            try {
-              await discordFetch(`/guilds/${GUILD_ID}/bans/${userId}`, {
-                method: 'DELETE',
-                headers: { 'X-Audit-Log-Reason': 'Temp-ban expired' }
-              });
-              console.log(`[TempBan] Lifted temp-ban for user ${userId}`);
-            } catch (e) {
-              console.error(`[TempBan] Failed to unban ${userId}:`, e.message);
-            }
-          }, seconds * 1000);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, message: `User <@${userId}> temp-banned for ${Math.round(seconds / 60)} minutes.` }));
-          return;
-        }
-
-        if (action === 'unban') {
-          await discordFetch(`/guilds/${GUILD_ID}/bans/${userId}`, {
-            method: 'DELETE',
-            headers: reasonHeader
-          });
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, message: `User <@${userId}> unbanned successfully.` }));
-          return;
-        }
-
-        if (action === 'kick') {
-          await discordFetch(`/guilds/${GUILD_ID}/members/${userId}`, {
-            method: 'DELETE',
-            headers: reasonHeader
-          });
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, message: `User <@${userId}> kicked successfully.` }));
-          return;
-        }
-
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Invalid moderation action.' }));
-      } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
-      }
-    });
-    return;
-  }
-
-  res.writeHead(404, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: 'Not found' }));
 });
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    console.error(`[Dashboard] Port ${PORT} is already in use. Another dashboard instance may be running — open http://localhost:${PORT}`);
+    console.error(`[Dashboard] Port ${PORT} is already in use. Open http://localhost:${PORT}`);
   } else {
     console.error('[Dashboard] Server error:', err.message);
   }
@@ -867,10 +1055,17 @@ server.on('error', (err) => {
 });
 
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`=======================================================`);
-  console.log(`🚀 Kyro Staff Bot Local Dashboard running on:`);
-  console.log(`👉 http://localhost:${PORT}`);
-  console.log(`🔑 Bot token: ${BOT_TOKEN ? 'loaded' : 'MISSING — set DISCORD_BOT_TOKEN in .env (publish/moderation disabled)'}`);
-  console.log(`Command /start-kyro in Discord will trigger auto-open!`);
-  console.log(`=======================================================`);
+  console.log('=======================================================');
+  console.log('  Utility Bot — Multi-Server Command Center');
+  console.log(`  http://localhost:${PORT}`);
+  console.log(`  Bot token: ${BOT_TOKEN ? 'loaded' : 'MISSING — set DISCORD_BOT_TOKEN in .env'}`);
+  console.log('  Features: moderation, giveaways, reaction roles,');
+  console.log('            automod, welcome, logging, utility, embeds');
+  console.log('=======================================================');
+  if (!process.env.DASHBOARD_DISABLE_POLLER) {
+    setInterval(pollTick, 5000);
+    console.log('  Background poller active (giveaways / roles / automod / welcome).');
+  }
 });
+
+export { server };

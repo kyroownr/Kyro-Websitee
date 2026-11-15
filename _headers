@@ -1,0 +1,15 @@
+# Cloudflare Pages cache hints. Assets keep their filenames, so use a shorter
+# TTL for them and a long one for the versioned JS/CSS bundles.
+/assets/*
+  Cache-Control: public, max-age=604800
+/js/*
+  Cache-Control: public, max-age=604800
+/css/*
+  Cache-Control: public, max-age=604800
+
+/*.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin

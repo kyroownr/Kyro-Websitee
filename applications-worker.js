@@ -147,11 +147,11 @@ export async function handleApplications(request, env, cors, session) {
   return response(await stored.json(), stored.status, cors);
 }
 
-async function botCall(env, route, method = 'GET', body) {
+async function botCall(env, route, method = 'GET', body, extraHeaders) {
   let result;
   try {
     result = await fetch(DISCORD_API + route, {
-      method, headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
+      method, headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json', ...(extraHeaders || {}) },
       ...(body ? { body: JSON.stringify(body) } : {}), redirect: 'manual', signal: AbortSignal.timeout(8000)
     });
   } catch { throw Object.assign(error(502, 'discord_uncertain', 'Discord delivery needs staff attention.'), { uncertain: true }); }
@@ -163,6 +163,216 @@ async function botCall(env, route, method = 'GET', body) {
   if (!result.ok) throw Object.assign(error(502, 'discord_' + result.status, 'Discord delivery needs staff attention.'), { ...(result.status >= 500 ? { retryAfter: 5000, uncertain: method === 'POST' } : {}) });
   return data;
 }
+
+/* ---------------- Kyro staff moderation (/mod, /whois, unban appeals) ---------------- */
+/* Mods get timeout / untimeout / kick / slowmode / purge. Ban, unban and lockdown
+   stay owner/admin only. Every punishment DMs the member with the reason, and a
+   ban DM carries a "Request Unban" button that opens a private owner ticket. */
+const MOD_ACTIONS = ['timeout', 'untimeout', 'kick', 'ban', 'unban', 'purge', 'slowmode', 'lockdown'];
+const OWNER_ONLY_MOD_ACTIONS = ['ban', 'unban', 'lockdown'];
+const VIEW_OR_SEND = '68608'; // 1024 view + 2048 send + 65536 read history
+const KYRO_ICON_URL = ICON;
+
+function dmPayload(env, guildName, action, reason, moderator, appeal) {
+  const labels = {
+    timeout: ['⏳ You have been timed out', 'You can no longer speak until the timeout expires.'],
+    kick: ['👢 You have been kicked', 'You can rejoin with a new invite if you follow the rules.'],
+    ban: ['🚫 You have been banned', 'If you believe this was a mistake, use the button below to request an unban.'],
+    unban: ['✅ You have been unbanned', 'Welcome back — please follow the rules this time.'],
+    warn: ['⚠️ You have been warned', 'Further violations may lead to a timeout or ban.']
+  };
+  const [title, sub] = labels[action] || ['📢 Moderation notice', ''];
+  const data = {
+    embeds: [{
+      author: { name: 'Kyro Moderation', icon_url: KYRO_ICON_URL },
+      title,
+      description: `**Server:** ${guildName}\n**Reason:** ${reason || 'No reason provided'}\n**Moderator:** ${moderator || 'Kyro Staff'}\n\n${sub}`,
+      color: action === 'unban' ? 0x10b981 : 0xed4245,
+      timestamp: new Date().toISOString()
+    }]
+  };
+  if (appeal) {
+    data.components = [{
+      type: 1,
+      components: [{ type: 2, style: 3, label: 'Request Unban', custom_id: `kyro-appeal:request:${appeal.guildId}:${appeal.userId}` }]
+    }];
+  }
+  return data;
+}
+
+async function dmMember(env, userId, payload) {
+  const dm = await botCall(env, `/users/${userId}/channels`, 'POST', { recipient_id: userId });
+  return botCall(env, `/channels/${dm.id}/messages`, 'POST', payload);
+}
+
+async function highestRolePosition(env, guildId, userId, positions) {
+  const member = await botCall(env, `/guilds/${guildId}/members/${userId}`);
+  let top = -1;
+  (member.roles || []).forEach(id => { top = Math.max(top, positions.get(id) ?? -1); });
+  return { top, member };
+}
+
+/* Block punishing someone at or above the invoker unless the invoker owns the guild. */
+async function assertTargetBelow(env, guildId, invokerId, targetId, isGuildOwner) {
+  if (isGuildOwner || invokerId === targetId) return;
+  const positions = new Map((await botCall(env, `/guilds/${guildId}/roles`)).map(r => [r.id, r.position]));
+  const invoker = await highestRolePosition(env, guildId, invokerId, positions);
+  const target = await highestRolePosition(env, guildId, targetId, positions);
+  if (target.top >= invoker.top) throw new Error('That member has an equal or higher role than you.');
+}
+
+async function runModAction(env, guildId, guildName, action, targetUserId, opts) {
+  const reasonHeader = opts.reason ? { 'X-Audit-Log-Reason': String(opts.reason).slice(0, 400) } : {};
+  const audit = opts.moderator ? { 'X-Audit-Log-Reason': `By ${opts.moderator}: ${opts.reason || 'no reason'}`.slice(0, 400) } : reasonHeader;
+
+  if (action === 'timeout') {
+    const seconds = Math.min(Math.max(Number(opts.minutes) || 60, 1), 2419200) * 60;
+    await botCall(env, `/guilds/${guildId}/members/${targetUserId}`, 'PATCH', { communication_disabled_until: new Date(Date.now() + seconds * 1000).toISOString() }, reasonHeader);
+    try { await dmMember(env, targetUserId, dmPayload(env, guildName, 'timeout', opts.reason, opts.moderator)); } catch {}
+    return `⏳ Timed out <@${targetUserId}> for ${Math.round(seconds / 60)} minutes. They have been DM'd the reason.`;
+  }
+  if (action === 'untimeout') {
+    await botCall(env, `/guilds/${guildId}/members/${targetUserId}`, 'PATCH', { communication_disabled_until: null }, reasonHeader);
+    return `✅ Removed timeout for <@${targetUserId}>.`;
+  }
+  if (action === 'kick') {
+    try { await dmMember(env, targetUserId, dmPayload(env, guildName, 'kick', opts.reason, opts.moderator)); } catch {}
+    await botCall(env, `/guilds/${guildId}/members/${targetUserId}`, 'DELETE', undefined, audit);
+    return `👢 Kicked <@${targetUserId}>. They have been DM'd the reason.`;
+  }
+  if (action === 'ban') {
+    // DM arrives before the ban so the appeal button keeps working afterwards.
+    try { await dmMember(env, targetUserId, dmPayload(env, guildName, 'ban', opts.reason, opts.moderator, { guildId, userId: targetUserId })); } catch {}
+    await botCall(env, `/guilds/${guildId}/bans/${targetUserId}`, 'PUT', { delete_message_seconds: Math.min(Math.max(Number(opts.deleteDays) || 0, 0), 7) * 86400 }, audit);
+    return `🚫 Banned <@${targetUserId}>. Their DM includes a **Request Unban** button that opens a ticket with you.`;
+  }
+  if (action === 'unban') {
+    await botCall(env, `/guilds/${guildId}/bans/${targetUserId}`, 'DELETE', undefined, audit);
+    try { await dmMember(env, targetUserId, dmPayload(env, guildName, 'unban', opts.reason, opts.moderator)); } catch {}
+    return `✅ Unbanned <@${targetUserId}>.`;
+  }
+  if (action === 'purge') {
+    const amount = Math.min(Math.max(Number(opts.amount) || 10, 1), 100);
+    const msgs = await botCall(env, `/channels/${opts.channelId}/messages?limit=${amount}`);
+    const ids = (Array.isArray(msgs) ? msgs : []).map(m => m.id);
+    if (!ids.length) return 'Nothing to purge — the channel is already clean.';
+    if (ids.length === 1) await botCall(env, `/channels/${opts.channelId}/messages/${ids[0]}`, 'DELETE', undefined, audit);
+    else await botCall(env, `/channels/${opts.channelId}/messages/bulk-delete`, 'POST', { messages: ids }, audit);
+    return `🧹 Purged ${ids.length} messages from <#${opts.channelId}>.`;
+  }
+  if (action === 'slowmode') {
+    const seconds = Math.min(Math.max(Number(opts.seconds) || 0, 0), 21600);
+    await botCall(env, `/channels/${opts.channelId}`, 'PATCH', { rate_limit_per_user: seconds }, reasonHeader);
+    return seconds ? `🐢 Slowmode set to ${seconds}s in <#${opts.channelId}>.` : `⚡ Slowmode removed in <#${opts.channelId}>.`;
+  }
+  if (action === 'lockdown') {
+    const channel = await botCall(env, `/channels/${opts.channelId}`);
+    const overwrites = Array.isArray(channel.permission_overwrites) ? channel.permission_overwrites.slice() : [];
+    const everyone = { id: guildId, type: 0 };
+    const idx = overwrites.findIndex(o => o.id === guildId && o.type === 0);
+    const deny = BigInt(idx >= 0 ? (overwrites[idx].deny || '0') : '0');
+    const nextDeny = opts.lockdownOn ? (deny | 2048n) : (deny & ~2048n);
+    const entry = { ...everyone, allow: String(idx >= 0 ? (overwrites[idx].allow || '0') : '0'), deny: nextDeny.toString() };
+    if (idx >= 0) overwrites[idx] = entry; else overwrites.push(entry);
+    await botCall(env, `/channels/${opts.channelId}`, 'PATCH', { permission_overwrites: overwrites }, reasonHeader);
+    return opts.lockdownOn ? `🔒 Locked <#${opts.channelId}> — @everyone can no longer send messages.` : `🔓 Unlocked <#${opts.channelId}>.`;
+  }
+  throw new Error('Unknown moderation action.');
+}
+
+/* /whois — profile picture and info by user pick or username search. */
+async function whoisEmbed(env, guildId, targetUserId, query) {
+  let user = null, member = null;
+  if (targetUserId) {
+    user = await botCall(env, `/users/${targetUserId}`);
+    try { member = await botCall(env, `/guilds/${guildId}/members/${targetUserId}`); } catch {}
+  } else {
+    const found = await botCall(env, `/guilds/${guildId}/members/search?query=${encodeURIComponent(query || '')}&limit=5`);
+    if (!Array.isArray(found) || !found.length) throw new Error(`No member matching "${query}".`);
+    if (found.length > 1) {
+      const list = found.map(m => `• <@${m.user.id}> — \`${m.user.username}\``).join('\n');
+      return { ambiguity: `Multiple matches for "${query}":\n${list}\nPick one or paste their ID instead.` };
+    }
+    member = found[0];
+    user = member.user;
+  }
+  const avatar = user.avatar
+    ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=512`
+    : `https://cdn.discordapp.com/embed/avatars/${(Number(user.discriminator) || 0) % 5}.png`;
+  const created = new Date(Number(BigInt(user.id) >> 22n) + 1420070400000).toISOString().slice(0, 10);
+  const roles = member && Array.isArray(member.roles) && member.roles.length
+    ? member.roles.map(r => `<@&${r}>`).join(' ')
+    : 'None';
+  const fields = [
+    { name: 'Discord ID', value: `\`${user.id}\``, inline: true },
+    { name: 'Account created', value: created, inline: true },
+    { name: 'Bot', value: user.bot ? 'Yes' : 'No', inline: true }
+  ];
+  if (member) {
+    fields.push({ name: 'Roles', value: roles.slice(0, 1024), inline: false });
+    if (member.joined_at) fields.push({ name: 'Joined server', value: member.joined_at.slice(0, 10), inline: true });
+  }
+  return {
+    embed: {
+      author: { name: `${user.username} — profile lookup`, icon_url: avatar },
+      title: user.username,
+      thumbnail: { url: avatar },
+      image: { url: avatar },
+      color: 0x38bdf8,
+      fields,
+      footer: { text: 'Kyro™ Website | Resource Monitor', icon_url: KYRO_ICON_URL },
+      timestamp: new Date().toISOString()
+    }
+  };
+}
+
+/* Appeal button in the ban DM opens a private ticket only the owner can decide on. */
+async function openAppealTicket(env, guildId, requesterId, applicationId) {
+  const guild = await botCall(env, `/guilds/${guildId}`);
+  let banInfo = {};
+  try { banInfo = await botCall(env, `/guilds/${guildId}/bans/${requesterId}`); } catch { return { alreadyUnbanned: true }; }
+  const requester = await botCall(env, `/users/${requesterId}`);
+  const channel = await botCall(env, `/guilds/${guildId}/channels`, 'POST', {
+    name: ('unban-appeal-' + (requester.username || 'member').toLowerCase().replace(/[^a-z0-9]+/g, '-')).slice(0, 90),
+    type: 0,
+    permission_overwrites: [
+      { id: guildId, type: 0, deny: '1024', allow: '0' },
+      { id: guild.owner_id, type: 1, allow: VIEW_OR_SEND, deny: '0' },
+      { id: applicationId, type: 1, allow: VIEW_OR_SEND, deny: '0' },
+      { id: requesterId, type: 1, allow: VIEW_OR_SEND, deny: '0' }
+    ]
+  });
+  const message = await botCall(env, `/channels/${channel.id}/messages`, 'POST', {
+    content: `<@${guild.owner_id}> — unban request from <@${requesterId}>`,
+    allowed_mentions: { parse: ['users'] },
+    embeds: [{
+      author: { name: 'Kyro Unban Appeal', icon_url: KYRO_ICON_URL },
+      title: `Request from ${requester.username}`,
+      description: `**User:** <@${requesterId}> (\`${requesterId}\`)\n**Ban reason:** ${banInfo.reason || 'No reason recorded'}`,
+      color: 0xf59e0b,
+      timestamp: new Date().toISOString()
+    }],
+    components: [{
+      type: 1,
+      components: [
+        { type: 2, style: 3, label: 'Approve Unban', custom_id: `kyro-appeal:accept:${guildId}:${requesterId}` },
+        { type: 2, style: 4, label: 'Keep Banned', custom_id: `kyro-appeal:deny:${guildId}:${requesterId}` }
+      ]
+    }]
+  });
+  return { channelId: channel.id, messageId: message.id, ownerId: guild.owner_id, guildName: guild.name };
+}
+
+function disableAppealButtons(guildId, userId) {
+  return [{
+    type: 1,
+    components: [
+      { type: 2, style: 3, label: 'Approve Unban', custom_id: `kyro-appeal:accept:${guildId}:${userId}`, disabled: true },
+      { type: 2, style: 4, label: 'Keep Banned', custom_id: `kyro-appeal:deny:${guildId}:${userId}`, disabled: true }
+    ]
+  }];
+}
+
 
 function applicationMessage(row) {
   const role = ROLES.find(item => item.id === row.role);
@@ -605,7 +815,9 @@ export async function handleApplicationInteractions(request, env, ctx) {
             reply = '❌ Unknown sub-command.';
           }
         } catch (err) {
-          reply = `❌ Failed to update role: ${err.message || 'Discord permission or hierarchy error'}. Ensure the Kyro Bot role is positioned above the target role.`;
+          reply = `❌ Failed to update role: ${err.message || 'Discord permission or hierarchy error'}.\n` +
+            `• Drag the **Kyro** role above <@&${targetRoleId}> in Server Settings → Roles.\n` +
+            `• If permissions are missing, re-grant Administrator: <https://discord.com/oauth2/authorize?client_id=1570702041993711706&permissions=8&scope=bot%20applications.commands>`;
         }
 
         try {
@@ -621,6 +833,85 @@ export async function handleApplicationInteractions(request, env, ctx) {
       })());
 
       return response({ type: 5, data: { flags: 64 } });
+    }
+
+    if (cmdName === 'mod') {
+      const isOwnerAdmin = isKyroOwner || hasAdminPerm;
+      if (!isModOrOwner) {
+        return response({ type: 4, data: { content: '❌ Mods and Server Owners only.', flags: 64 } });
+      }
+      const sub = interaction.data?.options?.[0]?.name;
+      const opts = interaction.data?.options?.[0]?.options || [];
+      const value = name => opts.find(o => o.name === name)?.value;
+      const targetUserId = value('user');
+      const reason = value('reason') || '';
+      if (OWNER_ONLY_MOD_ACTIONS.includes(sub) && !isOwnerAdmin) {
+        return response({ type: 4, data: { content: `❌ \`${sub}\` is owner/administrator only. Mods can use timeout, untimeout, kick, slowmode and purge.`, flags: 64 } });
+      }
+      if (MOD_ACTIONS.includes(sub) && ['timeout', 'untimeout', 'kick', 'ban', 'unban'].includes(sub) && !targetUserId) {
+        return response({ type: 4, data: { content: '❌ A member is required.', flags: 64 } });
+      }
+
+      ctx.waitUntil((async () => {
+        let reply = '';
+        try {
+          if (!String(env.DISCORD_BOT_TOKEN || '')) throw new Error('Bot token missing on the worker.');
+          const guild = await botCall(env, `/guilds/${guildId}`);
+          const guildName = guild.name || 'the server';
+          if (['timeout', 'untimeout', 'kick'].includes(sub)) {
+            await assertTargetBelow(env, guildId, interaction.member.user.id, targetUserId, Boolean(guild.owner_id === interaction.member.user.id));
+          }
+          reply = await runModAction(env, guildId, guildName, sub, targetUserId, {
+            reason,
+            minutes: value('minutes'),
+            deleteDays: value('delete_days'),
+            amount: value('amount'),
+            channelId: value('channel') || interaction.channel_id,
+            seconds: value('seconds'),
+            lockdownOn: value('state') !== 'off',
+            moderator: interaction.member.user.username
+          });
+        } catch (err) {
+          reply = '❌ ' + (err.message || 'Moderation action failed.') +
+            (String(err.message).includes('permission') || String(err.message).includes('Missing') ? `\n• Re-grant Administrator: <https://discord.com/oauth2/authorize?client_id=${interaction.application_id}&permissions=8&scope=bot%20applications.commands>` : '');
+        }
+        try {
+          await fetch(DISCORD_API + '/webhooks/' + interaction.application_id + '/' + interaction.token + '/messages/@original', {
+            method: 'PATCH', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ content: reply, allowed_mentions: { parse: [] } }), redirect: 'manual', signal: AbortSignal.timeout(8000)
+          });
+        } catch (postErr) { console.warn('[kyro-bot] mod followup failed:', postErr); }
+      })());
+
+      return response({ type: 5, data: { flags: 64 } });
+    }
+
+    if (cmdName === 'whois') {
+      if (!isModOrOwner) {
+        return response({ type: 4, data: { content: '❌ Mods and Server Owners only.', flags: 64 } });
+      }
+      const opts = interaction.data?.options?.[0]?.options || [];
+      const targetUserId = opts.find(o => o.name === 'user')?.value;
+      const query = String(opts.find(o => o.name === 'query')?.value || '');
+      if (!targetUserId && !query) {
+        return response({ type: 4, data: { content: '❌ Pick a user or type a username.', flags: 64 } });
+      }
+      ctx.waitUntil((async () => {
+        let payload;
+        try {
+          const out = await whoisEmbed(env, guildId, targetUserId, query);
+          payload = out.ambiguity ? { content: out.ambiguity, allowed_mentions: { parse: [] } } : { embeds: [out.embed], allowed_mentions: { parse: [] } };
+        } catch (err) {
+          payload = { content: '❌ ' + (err.message || 'Lookup failed.'), allowed_mentions: { parse: [] } };
+        }
+        try {
+          await fetch(DISCORD_API + '/webhooks/' + interaction.application_id + '/' + interaction.token + '/messages/@original', {
+            method: 'PATCH', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload), redirect: 'manual', signal: AbortSignal.timeout(8000)
+          });
+        } catch (postErr) { console.warn('[kyro-bot] whois followup failed:', postErr); }
+      })());
+      return response({ type: 5 });
     }
 
     return response({ type: 4, data: { content: 'Unknown command.', flags: 64 } });
@@ -678,6 +969,69 @@ export async function handleApplicationInteractions(request, env, ctx) {
       } catch (err) { console.warn('[kyro-applications] Failed to save role selection:', err); }
     })());
     return response({ type: 4, data: { content: selectedRole === 'none' ? 'Set to: Do not assign role on approval.' : `Set role to assign on approval: <@&${selectedRole}>`, flags: 64 } });
+  }
+
+  // "Request Unban" button inside the punishment DM (works in DMs — no guild member record).
+  const appealRequestMatch = /^kyro-appeal:request:(\d{17,20}):(\d{17,20})$/.exec(interaction.data?.custom_id || '');
+  if (interaction.type === 3 && appealRequestMatch) {
+    const [, appealGuildId, appealUserId] = appealRequestMatch;
+    if (!snowflake(interaction.user?.id) || interaction.user.id !== appealUserId) {
+      return response({ type: 4, data: { content: 'Only the banned member can use this button.', flags: 64 } });
+    }
+    ctx.waitUntil((async () => {
+      let ack;
+      try {
+        const ticket = await openAppealTicket(env, appealGuildId, appealUserId, interaction.application_id);
+        ack = ticket.alreadyUnbanned
+          ? '✅ This ban is no longer active — you are not banned.'
+          : `📨 Your unban request was sent to the server owner${ticket.guildName ? ' of **' + ticket.guildName + '**' : ''}. They will reply in the private ticket that opens.`;
+      } catch (err) {
+        console.warn('[kyro-appeal] request failed:', err);
+        ack = '❌ Could not deliver your request. Try again later or contact the server owner directly.';
+      }
+      try {
+        await fetch(DISCORD_API + '/webhooks/' + interaction.application_id + '/' + interaction.token + '/messages/@original', {
+          method: 'PATCH', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: ack }), redirect: 'manual', signal: AbortSignal.timeout(8000)
+        });
+      } catch {}
+    })());
+    return response({ type: 5, data: { flags: 64 } });
+  }
+
+  // Owner decision buttons inside the appeal ticket channel.
+  const appealDecisionMatch = /^kyro-appeal:(accept|deny):(\d{17,20}):(\d{17,20})$/.exec(interaction.data?.custom_id || '');
+  if (interaction.type === 3 && appealDecisionMatch) {
+    const [, decision, appealGuildId, appealUserId] = appealDecisionMatch;
+    ctx.waitUntil((async () => {
+      let ack;
+      try {
+        const guild = await botCall(env, `/guilds/${appealGuildId}`);
+        const perms = BigInt(interaction.member?.permissions || '0');
+        const canDecide = interaction.member?.user?.id === guild.owner_id || (perms & BigInt(0x8)) === BigInt(0x8) || interaction.member?.user?.id === '1052909930073567232';
+        if (!canDecide) {
+          ack = '❌ Only the Server Owner can decide unban requests.';
+        } else if (decision === 'accept') {
+          await botCall(env, `/guilds/${appealGuildId}/bans/${appealUserId}`, 'DELETE');
+          try { await dmMember(env, appealUserId, dmPayload(env, guild.name, 'unban', 'Your unban request was approved by the server owner.', 'Server Owner')); } catch {}
+          ack = `✅ Unbanned <@${appealUserId}>. They have been notified.`;
+          try { await botCall(env, `/channels/${interaction.channel_id}/messages/${interaction.message.id}`, 'PATCH', { components: disableAppealButtons(appealGuildId, appealUserId) }); } catch {}
+        } else {
+          try { await dmMember(env, appealUserId, { content: `Your unban request for **${guild.name}** was reviewed and denied. The ban stays in place.` }); } catch {}
+          ack = `🚫 <@${appealUserId}> stays banned. The request was denied.`;
+          try { await botCall(env, `/channels/${interaction.channel_id}/messages/${interaction.message.id}`, 'PATCH', { components: disableAppealButtons(appealGuildId, appealUserId) }); } catch {}
+        }
+      } catch (err) {
+        ack = '❌ ' + (err.message || 'Appeal decision failed.');
+      }
+      try {
+        await fetch(DISCORD_API + '/webhooks/' + interaction.application_id + '/' + interaction.token + '/messages/@original', {
+          method: 'PATCH', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: ack, allowed_mentions: { parse: [] } }), redirect: 'manual', signal: AbortSignal.timeout(8000)
+        });
+      } catch {}
+    })());
+    return response({ type: 5, data: { flags: 64 } });
   }
 
   const actionMatch = /^kyro-app:(approved|declined|claim|close):(\d{17,20}):([a-f\d-]{36})$/.exec(interaction.data?.custom_id || '');

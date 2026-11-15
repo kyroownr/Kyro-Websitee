@@ -1,0 +1,252 @@
+/* Multi-server dashboard API tests.
+   Mocks the Discord REST API, boots bot_dashboard.js on a test port with the
+   poller disabled, and exercises the local HTTP endpoints end to end.
+   Run: node tools/dashboard.test.cjs */
+'use strict';
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const http = require('http');
+const { pathToFileURL } = require('url');
+
+const PORT = 4199;
+const BASE = `http://127.0.0.1:${PORT}`;
+const TMP_DATA = path.join(os.tmpdir(), `kyro-dashboard-test-${Date.now()}.json`);
+
+process.env.PORT = String(PORT);
+process.env.DASHBOARD_DISABLE_POLLER = '1';
+process.env.DISCORD_BOT_TOKEN = 'test-bot-token';
+process.env.DISCORD_OWNER_ID = '1052909930073567232';
+process.env.DASHBOARD_DATA_FILE = TMP_DATA;
+
+const realFetch = global.fetch;
+const calls = [];
+const BOT_ID = 'bot0000000000000001';
+
+function jsonRes(obj, status) {
+  const s = status || 200;
+  if (s === 204 || s === 205 || s === 304) return Promise.resolve(new Response(null, { status: s }));
+  return Promise.resolve(new Response(JSON.stringify(obj), { status: s, headers: { 'content-type': 'application/json' } }));
+}
+
+// Discord REST mock router.
+global.fetch = async (url, opts) => {
+  const u = String(url);
+  if (!u.startsWith('https://discord.com/api/v10')) return realFetch(url, opts);
+  const method = (opts && opts.method) || 'GET';
+  const p = u.replace('https://discord.com/api/v10', '').split('?')[0];
+  let body = null;
+  try { body = opts && opts.body ? JSON.parse(opts.body) : null; } catch (e) {}
+  calls.push({ method, path: p, body });
+
+  if (p === '/users/@me') return jsonRes({ id: BOT_ID, username: 'UtilityBot' });
+  if (p === '/users/@me/guilds') return jsonRes([
+    { id: 'guild1', name: 'Test Server', icon: null, owner: true, approximate_member_count: 100, permissions: '8' },
+    { id: 'guild2', name: 'Second Server', icon: null, owner: false, approximate_member_count: 42, permissions: '8' }
+  ]);
+  if (/^\/guilds\/guild1$/.test(p)) return jsonRes({ id: 'guild1', name: 'Test Server', icon: null, owner_id: '1052909930073567232', approximate_member_count: 100, approximate_presence_count: 20, verification_level: 2, premium_tier: 1 });
+  if (p === '/guilds/guild1/channels') return jsonRes([
+    { id: 'chan1', name: 'general', type: 0, position: 1, permission_overwrites: [] },
+    { id: 'chan2', name: 'giveaways', type: 0, position: 2 }
+  ]);
+  if (p === '/guilds/guild1/roles') return jsonRes([
+    { id: 'guild1', name: '@everyone', color: 0, position: 0, managed: false },
+    { id: 'role1', name: 'Member', color: 5793266, position: 1, managed: false },
+    { id: 'role2', name: 'VIP', color: 15844367, position: 2, managed: false }
+  ]);
+  if (p === '/guilds/guild1/members') return jsonRes([
+    { user: { id: '200000000000000003', username: 'alice', global_name: 'Alice', avatar: null, bot: false }, nick: null, roles: ['role1'], joined_at: '2026-01-01T00:00:00.000Z' }
+  ]);
+  if (p === '/guilds/guild1/members/search') return jsonRes([
+    { user: { id: '200000000000000003', username: 'alice', global_name: 'Alice', avatar: null, bot: false }, nick: null, roles: ['role1'] }
+  ]);
+  if (p === '/guilds/guild1/members/200000000000000003') return jsonRes({ user: { id: '200000000000000003', username: 'alice' }, nick: 'Ally', roles: ['role1'], joined_at: '2026-01-01T00:00:00.000Z', communication_disabled_until: null });
+  if (/^\/guilds\/guild1\/members\/200000000000000003\/roles\/role1$/.test(p)) return jsonRes({}, 204);
+  if (/^\/guilds\/guild1\/members\/[^/]+$/.test(p)) return jsonRes({}, 204); // PATCH timeout / DELETE kick
+  if (/^\/guilds\/guild1\/bans\/[^/]+$/.test(p)) return jsonRes({}, 204); // PUT ban / DELETE unban
+  if (p === '/users/200000000000000003') return jsonRes({ id: '200000000000000003', username: 'alice', global_name: 'Alice', avatar: null, discriminator: '0', bot: false });
+  if (p === '/users/200000000000000003/channels') return jsonRes({ id: 'dm1' });
+  if (p === '/channels/chan1' && method === 'GET') return jsonRes({ id: 'chan1', permission_overwrites: [] });
+  if (p === '/channels/chan1' && method === 'PATCH') return jsonRes({ id: 'chan1' });
+  if (p === '/channels/chan1/messages' && method === 'GET') return jsonRes([
+    { id: 'm1', content: 'hello world', author: { id: '200000000000000003', bot: false }, mentions: [], member: { roles: [] } }
+  ]);
+  if (p === '/channels/chan1/messages' && method === 'POST') return jsonRes({ id: 'msg1' });
+  if (p === '/channels/chan1/messages/bulk-delete') return jsonRes({}, 204);
+  if (/^\/channels\/chan1\/messages\/msg1$/.test(p)) return jsonRes({ id: 'msg1' }); // PATCH edit / DELETE
+  if (/^\/channels\/chan1\/messages\/m1$/.test(p)) return jsonRes({}, 204);
+  if (/^\/channels\/chan1\/messages\/msg1\/reactions\/.+\/@me$/.test(p)) return jsonRes({}, 204);
+  if (/^\/channels\/chan1\/messages\/msg1\/reactions\/.+$/.test(p)) return jsonRes([
+    { id: '200000000000000003', username: 'alice' }, { id: '200000000000000004', username: 'bob' }, { id: BOT_ID, username: 'UtilityBot' }
+  ]);
+  if (p === '/channels/dm1/messages') return jsonRes({ id: 'dmsg1' });
+  return jsonRes({}, 200);
+};
+
+let passed = 0;
+let serverHandle = null;
+function ok(cond, label) {
+  if (!cond) throw new Error('FAIL: ' + label);
+  passed++;
+}
+function shutdown(code) {
+  try { if (serverHandle) { serverHandle.closeAllConnections(); serverHandle.close(); } } catch (e) {}
+  try { fs.unlinkSync(TMP_DATA); } catch (e) {}
+  setTimeout(() => process.exit(code), 50);
+}
+function rawHostRequest(hostHeader) {
+  return new Promise((resolve) => {
+    const r = http.request({ host: '127.0.0.1', port: PORT, path: '/api/status', method: 'GET', headers: { Host: hostHeader } }, (res) => {
+      res.resume();
+      resolve(res.statusCode);
+    });
+    r.on('error', () => resolve(0));
+    r.end();
+  });
+}
+async function req(method, p, body) {
+  const res = await realFetch(BASE + p, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const data = await res.json().catch(() => ({}));
+  return { status: res.status, data };
+}
+function lastCall(pred) { for (let i = calls.length - 1; i >= 0; i--) if (pred(calls[i])) return calls[i]; return null; }
+
+async function waitForServer() {
+  for (let i = 0; i < 50; i++) {
+    try { const r = await realFetch(BASE + '/api/status'); if (r.ok) return; } catch (e) {}
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error('Dashboard server did not start');
+}
+
+(async () => {
+  const mod = await import(pathToFileURL(path.join(__dirname, '..', 'bot_dashboard.js')).href);
+  serverHandle = mod.server;
+  await waitForServer();
+
+  // Status + HTML
+  const status = await req('GET', '/api/status');
+  ok(status.status === 200 && status.data.tokenLoaded === true, 'status reports token loaded');
+  const html = await realFetch(BASE + '/');
+  const htmlText = await html.text();
+  ok(html.status === 200 && /Utility Bot/.test(htmlText) && /Giveaways/.test(htmlText), 'serves dashboard HTML');
+  ok(!/Publish Kyro Vault/.test(htmlText) && !/Kyro Live Preview/.test(htmlText), 'no Kyro publisher/preview in UI');
+
+  // Host guard (raw http so the Host header is honoured)
+  const rebindingStatus = await rawHostRequest('evil.example.com');
+  ok(rebindingStatus === 403, 'DNS-rebinding Host rejected');
+  const loopbackStatus = await rawHostRequest(`127.0.0.1:${PORT}`);
+  ok(loopbackStatus === 200, 'loopback Host allowed');
+
+  // Multi-server selector
+  const guilds = await req('GET', '/api/guilds');
+  ok(guilds.status === 200 && guilds.data.guilds.length === 2, 'lists bot guilds (multi-server)');
+  ok(guilds.data.guilds[0].member_count === 100, 'guild member counts present');
+
+  // Guild detail
+  const guild = await req('GET', '/api/guild?guild=guild1');
+  ok(guild.status === 200 && guild.data.guild.name === 'Test Server', 'guild detail loads');
+  ok(guild.data.channels.length === 2 && guild.data.roles.length === 3, 'channels and roles load');
+
+  // Config defaults
+  const config = await req('GET', '/api/config?guild=guild1');
+  ok(config.status === 200 && config.data.automod && config.data.welcome && config.data.logging, 'per-guild config defaults');
+
+  // Moderation: ban targets the selected guild
+  const ban = await req('POST', '/api/moderate', { guild: 'guild1', action: 'ban', userId: '200000000000000003', reason: 'spam' });
+  ok(ban.status === 200 && ban.data.ok, 'ban succeeds');
+  ok(lastCall((c) => c.method === 'PUT' && c.path === '/guilds/guild1/bans/200000000000000003'), 'ban PUT to correct guild');
+
+  // Timeout
+  const timeout = await req('POST', '/api/moderate', { guild: 'guild1', action: 'timeout', userId: '200000000000000003', duration: 300, reason: 'cool off' });
+  ok(timeout.status === 200, 'timeout succeeds');
+  ok(lastCall((c) => c.method === 'PATCH' && c.path === '/guilds/guild1/members/200000000000000003' && c.body.communication_disabled_until), 'timeout PATCH sets until');
+
+  // Warn stores locally + DMs
+  const warn = await req('POST', '/api/moderate', { guild: 'guild1', action: 'warn', userId: '200000000000000003', reason: 'be nice', serverName: 'Test Server' });
+  ok(warn.status === 200 && /Total warnings: 1/.test(warn.data.message), 'warn records count');
+  ok(lastCall((c) => c.path === '/channels/dm1/messages'), 'warn DMs the member');
+  const warns = await req('GET', '/api/warnings?guild=guild1');
+  ok(warns.data.warnings.length === 1, 'warnings listed');
+
+  // Purge
+  const purge = await req('POST', '/api/moderate', { guild: 'guild1', action: 'purge', channelId: 'chan1', amount: 5 });
+  ok(purge.status === 200 && /Purged 1/.test(purge.data.message), 'purge deletes messages');
+
+  // Slowmode + lock
+  const slow = await req('POST', '/api/moderate', { guild: 'guild1', action: 'slowmode', channelId: 'chan1', seconds: 10 });
+  ok(slow.status === 200 && lastCall((c) => c.method === 'PATCH' && c.path === '/channels/chan1' && c.body.rate_limit_per_user === 10), 'slowmode patches channel');
+  const lock = await req('POST', '/api/moderate', { guild: 'guild1', action: 'lock', channelId: 'chan1' });
+  ok(lock.status === 200 && lastCall((c) => c.method === 'PATCH' && c.path === '/channels/chan1' && Array.isArray(c.body.permission_overwrites)), 'lock sets overwrites');
+
+  // Role add
+  const addrole = await req('POST', '/api/moderate', { guild: 'guild1', action: 'addrole', userId: '200000000000000003', roleId: 'role2' });
+  ok(addrole.status === 200 && lastCall((c) => c.method === 'PUT' && c.path === '/guilds/guild1/members/200000000000000003/roles/role2'), 'addrole PUT');
+
+  // Giveaway create -> posts message + reaction, stores
+  const gv = await req('POST', '/api/giveaway/create', { guild: 'guild1', prize: 'Nitro', channelId: 'chan1', winners: 1, minutes: 60 });
+  ok(gv.status === 200 && gv.data.giveaway.message_id === 'msg1', 'giveaway created with message');
+  ok(lastCall((c) => c.method === 'PUT' && /reactions\/.+\/@me/.test(c.path)), 'giveaway seeds 🎉 reaction');
+  const gvList = await req('GET', '/api/config?guild=guild1');
+  ok(gvList.data.giveaways.length === 1 && gvList.data.giveaways[0].prize === 'Nitro', 'giveaway stored');
+
+  // Giveaway end -> collects entrants (excludes bot), picks winner, announces
+  const ended = await req('POST', '/api/giveaway/end', { guild: 'guild1', id: gv.data.giveaway.id });
+  ok(ended.status === 200 && ended.data.giveaway.ended === true, 'giveaway ended');
+  ok(ended.data.giveaway.entrants.length === 2 && !ended.data.giveaway.entrants.includes(BOT_ID), 'entrants exclude bot');
+  ok(ended.data.giveaway.winnerIds.length === 1, 'one winner picked');
+  ok(lastCall((c) => c.method === 'POST' && c.path === '/channels/chan1/messages' && /Congratulations/.test(c.body.content)), 'winner announced');
+
+  // Reroll
+  const reroll = await req('POST', '/api/giveaway/reroll', { guild: 'guild1', id: gv.data.giveaway.id });
+  ok(reroll.status === 200 && /New winner/.test(lastCall((c) => c.method === 'POST' && c.path === '/channels/chan1/messages').body.content), 'reroll announces new winner');
+
+  // Reaction roles create -> posts + seeds reactions
+  const rr = await req('POST', '/api/reactionroles/create', { guild: 'guild1', channelId: 'chan1', mode: 'unique', title: 'Roles', mappings: [{ emoji: '🎮', roleId: 'role1' }, { emoji: '🎬', roleId: 'role2' }] });
+  ok(rr.status === 200 && rr.data.reactionRole.mappings.length === 2, 'reaction roles created');
+  ok(calls.filter((c) => c.method === 'PUT' && /reactions\/.+\/@me/.test(c.path)).length >= 3, 'reaction roles seed emojis');
+
+  // AutoMod config
+  const am = await req('POST', '/api/automod', { guild: 'guild1', enabled: true, badWords: ['badword'], blockInvites: true, maxMentions: 5, action: 'timeout', timeoutSeconds: 600, channels: ['chan1'], exemptRoles: ['role2'] });
+  ok(am.status === 200 && am.data.automod.enabled && am.data.automod.badWords[0] === 'badword', 'automod config saved');
+
+  // Welcome config + test
+  const w = await req('POST', '/api/welcome', { guild: 'guild1', enabled: true, channelId: 'chan1', message: 'Hi {user} welcome to {server}!', useEmbed: true, embedColor: '#3ba55d', dm: false });
+  ok(w.status === 200 && w.data.welcome.enabled, 'welcome config saved');
+  const wt = await req('POST', '/api/welcome/test', { guild: 'guild1', username: 'Tester' });
+  ok(wt.status === 200, 'welcome test sends');
+
+  // Logging config
+  const lg = await req('POST', '/api/logging', { guild: 'guild1', enabled: true, channelId: 'chan1', events: { moderation: true, giveaways: true, reactionRoles: false, automod: true, welcome: true, joins: true } });
+  ok(lg.status === 200 && lg.data.logging.events.reactionRoles === false, 'logging config saved');
+
+  // Utility userinfo
+  const ui = await req('GET', '/api/userinfo?guild=guild1&user=200000000000000003');
+  ok(ui.status === 200 && ui.data.user.username === 'alice' && ui.data.member.nick === 'Ally', 'userinfo returns user + member');
+  ok(ui.data.user.created_at, 'userinfo computes account creation');
+
+  // Member search
+  const ms = await req('GET', '/api/members?guild=guild1&q=ali');
+  ok(ms.status === 200 && ms.data.members.length === 1, 'member search works');
+
+  // Embed sender
+  const em = await req('POST', '/api/embed', { guild: 'guild1', channelId: 'chan1', title: 'Hello', description: 'World', color: '#ff0000', fields: [{ name: 'F', value: 'V', inline: true }] });
+  ok(em.status === 200 && em.data.message_id === 'msg1', 'embed sent');
+  const emCall = calls.find((c) => c.method === 'POST' && c.path === '/channels/chan1/messages' && c.body.embeds && c.body.embeds[0].title === 'Hello');
+  ok(emCall && emCall.body.embeds[0].color === 0xff0000 && emCall.body.embeds[0].fields.length === 1, 'embed payload correct');
+
+  // Embed validation
+  const emBad = await req('POST', '/api/embed', { guild: 'guild1', channelId: 'chan1' });
+  ok(emBad.status === 400, 'embed requires title or description');
+
+  // Second guild isolation
+  const g2cfg = await req('GET', '/api/config?guild=guild2');
+  ok(g2cfg.status === 200 && g2cfg.data.giveaways.length === 0, 'second guild config isolated');
+
+  // Cleanup warnings
+  const cw = await req('POST', '/api/warnings/clear', { guild: 'guild1' });
+  ok(cw.status === 200, 'warnings cleared');
+
+  console.log(JSON.stringify({ checks: passed, multiServer: 'guild selector + per-guild isolation', features: 'moderation, giveaways, reaction roles, automod, welcome, logging, utility, embed', discord: 'mocked REST', result: 'passed' }));
+  shutdown(0);
+})().catch((err) => { console.error('TEST ERROR:', err.message || err); shutdown(1); });

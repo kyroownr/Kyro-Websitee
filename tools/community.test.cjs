@@ -129,6 +129,32 @@ async function main() {
     const imA2 = await call('/vault/incoming', undefined, 'memberA');
     expect(imA2.data.earlyAccess === false && imA2.data.incoming.find(i => i.id === pendingId).download_url === undefined, 'A is gated again after revoke');
 
+    /* ---------------- owner vote editing + release ---------------- */
+    const edit = await call('/vault/incoming', { id: pendingId, votes: 100, vote_limit: 150 }, 'owner', 'PATCH');
+    expect(edit.status === 200 && edit.data.item.votes === 100 && edit.data.item.vote_limit === 150, 'owner can set the displayed vote count');
+    const memberEdit = await call('/vault/incoming', { id: pendingId, votes: 999 }, 'memberA', 'PATCH');
+    expect(memberEdit.status === 403, 'members cannot edit incoming votes');
+    const imEdited = await call('/vault/incoming', undefined, 'owner');
+    expect(imEdited.data.incoming.find(i => i.id === pendingId).votes === 100, 'edited vote count is persisted');
+    const released = await call('/vault/incoming', { id: pendingId, votes: 150 }, 'owner', 'PATCH');
+    expect(released.status === 200 && released.data.item.released === true, 'owner edit can push an item live');
+    const publicAfterRelease = await call('/vault/public');
+    expect(publicAfterRelease.data.items.some(i => i.slug === 'pending-build'), 'released incoming item reaches the public vault');
+
+    /* ---------------- deletion really deletes + catalog tombstones ---------------- */
+    const del = await call('/vault/submissions/manage', { id: pendingId, title: 'Pending Build' }, 'owner', 'DELETE');
+    expect(del.status === 200 && del.data.deleted === true, 'owner deletes a published resource');
+    const publicAfterDelete = await call('/vault/public');
+    expect(!publicAfterDelete.data.items.some(i => i.slug === 'pending-build'), 'deleted resource is gone from the public vault');
+    const memberDelete = await call('/vault/submissions/manage', { id: pendingId }, 'memberA', 'DELETE');
+    expect(memberDelete.status === 403, 'members cannot delete vault resources');
+    const catalogDelete = await call('/vault/submissions/manage', { id: 'catalog-test', title: 'Catalog Test', catalogue: true }, 'owner', 'DELETE');
+    expect(catalogDelete.status === 200 && catalogDelete.data.catalogue === true, 'deleting a built-in catalogue entry records a tombstone');
+    const missDelete = await call('/vault/submissions/manage', { id: 'not-a-real-card', title: 'Ghost' }, 'owner', 'DELETE');
+    expect(missDelete.status === 200 && missDelete.data.deleted === false, 'deleting an unknown id does not fake a deletion');
+    const publicAfterCatalog = await call('/vault/public');
+    expect(publicAfterCatalog.data.hidden.includes('catalog-test'), 'tombstone is returned so the seed card stays hidden');
+
     console.log(JSON.stringify({ checks, perUserRequests: 'member scoped, admin/owner full, public showcase intact', perUserFeedback: 'author scoped, admin full', earlyAccess: 'owner grant/revoke, waitlist bypass, link gating', result: 'passed' }));
   } finally { await mf.dispose(); }
 }

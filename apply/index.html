@@ -28,9 +28,13 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="preconnect" href="https://kyro-auth.kyro-ownr.workers.dev" crossorigin />
+  <link rel="dns-prefetch" href="https://discord.com" />
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
+  <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
 
-  <link rel="stylesheet" href="/css/styles.css" />
+  <link rel="stylesheet" href="/css/styles.css?v=3.2" />
 </head>
 <body data-page="apply">
 
@@ -662,9 +666,9 @@
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <!-- Modular scripts: data → preview engine → app wiring -->
-  <script src="/js/data.js?v=2.2"></script>
-  <script src="/js/preview.js?v=2.2"></script>
-  <script src="/js/app.js?v=2.2"></script>
-  <script src="/js/applications.js?v=2.2"></script>
+  <script defer src="/js/data.js?v=2.3"></script>
+  <script defer src="/js/preview.js?v=2.3"></script>
+  <script defer src="/js/app.js?v=2.3"></script>
+  <script defer src="/js/applications.js?v=2.3"></script>
 </body>
 </html>

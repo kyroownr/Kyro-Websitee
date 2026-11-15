@@ -14,23 +14,27 @@
   <meta property="og:url" content="https://kyro.new.tg/incoming" />
   <meta property="og:title" content="Ready to Release — Community Approval — Kyro" />
   <meta property="og:description" content="Vote on incoming builds and releases before they go live on Kyro. Community approval directly determines what lands in the Vault." />
-  <meta property="og:image" content="https://kyro.new.tg/assets/kyro-preview.png" />
+  <meta property="og:image" content="https://kyro.new.tg/assets/incoming-preview.png" />
   <meta property="og:image:type" content="image/png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="Kyro — free tools and resources for editors" />
+  <meta property="og:image:alt" content="Kyro — coming to the Vault" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Ready to Release — Community Approval — Kyro" />
   <meta name="twitter:description" content="Vote on incoming builds and releases before they go live on Kyro. Community approval directly determines what lands in the Vault." />
-  <meta name="twitter:image" content="https://kyro.new.tg/assets/kyro-preview.png" />
+  <meta name="twitter:image" content="https://kyro.new.tg/assets/incoming-preview.png" />
 
   <link rel="icon" type="image/png" href="/assets/kyro-icon.png" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="preconnect" href="https://kyro-auth.kyro-ownr.workers.dev" crossorigin />
+  <link rel="dns-prefetch" href="https://discord.com" />
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
+  <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
 
-  <link rel="stylesheet" href="/css/styles.css" />
+  <link rel="stylesheet" href="/css/styles.css?v=3.2" />
 </head>
 <body data-page="incoming">
 
@@ -684,9 +688,9 @@
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <!-- Modular scripts: data → preview engine → app wiring -->
-  <script src="/js/data.js?v=2.2"></script>
-  <script src="/js/preview.js?v=2.2"></script>
-  <script src="/js/app.js?v=2.2"></script>
-  <script src="/js/applications.js?v=2.2"></script>
+  <script defer src="/js/data.js?v=2.3"></script>
+  <script defer src="/js/preview.js?v=2.3"></script>
+  <script defer src="/js/app.js?v=2.3"></script>
+  <script defer src="/js/applications.js?v=2.3"></script>
 </body>
 </html>
