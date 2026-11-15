@@ -519,6 +519,27 @@
           <div class="status" id="apStatus"></div>
           <div class="list" id="apResult"></div>
         </div>
+        <div class="card" style="border-left:3px solid #f59e0b">
+          <div class="card-title">🧹 Role cleanup</div>
+          <div class="card-desc">Deletes dead roles in bulk. <b>@everyone</b>, owner / admin / moderator / staff roles, bot and integration roles, roles above the bot, and every role the bot's automations rely on are always protected. Pick how many roles to keep — the busiest ones stay and the unused ones go.</div>
+          <div class="grid g2">
+            <div class="field"><label>Roles to keep</label><input id="rcKeep" type="number" min="0" max="200" value="12"></div>
+            <div class="field"><label>&nbsp;</label><button class="btn ghost" id="rcPreview">Preview cleanup</button></div>
+          </div>
+          <div class="status" id="rcStatus"></div>
+          <div class="list" id="rcResult"></div>
+          <label class="check"><input type="checkbox" id="rcConfirm"> I understand the previewed roles are permanently deleted</label>
+          <div class="btn-row"><button class="btn" id="rcApply" disabled>Delete previewed roles</button></div>
+        </div>
+        <div class="card">
+          <div class="card-title">👁️ Channel access repair</div>
+          <div class="card-desc">Fixes “You do not have permission to view the message history of #channel”. Re-adds the <b>@everyone</b> view + read-history overwrite and makes sure the bot can post, embed and manage its own messages. Other overwrites in the channel are left alone.</div>
+          <div class="grid g2">
+            <div class="field"><label>Channel</label><select id="crChannel"></select></div>
+            <div class="field"><label>&nbsp;</label><button class="btn" id="crRun">Repair access</button></div>
+          </div>
+          <div class="status" id="crStatus"></div>
+        </div>
         <div class="card">
           <div class="card-title">🎭 Role packs</div>
           <div class="card-desc">Installs a ready-made role hierarchy for a server type — gaming, community, support, creator, music, art, developers, education, business, roleplay or 18+. Existing roles are reused, so it is safe to re-run.</div>
@@ -1071,7 +1092,7 @@
   }
   function populateSelectors(){
     const cfg = state.config || {};
-    ['#chanSelect','#gvChannel','#rrChannel','#wChannel','#logChannel','#emChannel','#vfChannel','#tkChannel','#egSbChannel','#egBpChannel','#egStChannel','#lvChannel','#bdChannel','#sgChannel','#scChannel','#plChannel'].forEach(sel=>{
+    ['#chanSelect','#gvChannel','#rrChannel','#wChannel','#logChannel','#emChannel','#vfChannel','#tkChannel','#crChannel','#egSbChannel','#egBpChannel','#egStChannel','#lvChannel','#bdChannel','#sgChannel','#scChannel','#plChannel'].forEach(sel=>{
       const el = $(sel); if(!el) return;
       const cur = el.value;
       el.innerHTML = '<option value="">Select channel…</option>' + chanOptions(cur);
@@ -1588,6 +1609,59 @@
   if($('#egBpSave')) $('#egBpSave').addEventListener('click', (()=>saveEngagement('boosts',{enabled:$('#egBpEnabled').checked,channelId:$('#egBpChannel').value},'#egBpStatus')));
   if($('#egAfkSave')) $('#egAfkSave').addEventListener('click', (()=>saveEngagement('afk',{enabled:$('#egAfkEnabled').checked,userId:$('#egAfkUser').value.trim(),reason:$('#egAfkReason').value.trim()},'#egAfkStatus')));
   if($('#egStSave')) $('#egStSave').addEventListener('click', (()=>saveEngagement('sticky',{enabled:$('#egStEnabled').checked,channelId:$('#egStChannel').value,content:$('#egStContent').value},'#egStStatus')));
+
+  // ---- Role cleanup ----
+  let rcPlan = null;
+  function rcReset(){
+    rcPlan = null;
+    if($('#rcApply')) $('#rcApply').disabled = true;
+    if($('#rcConfirm')) $('#rcConfirm').checked = false;
+  }
+  if($('#rcPreview')) $('#rcPreview').addEventListener('click', async ()=>{
+    clearStatus($('#rcStatus')); rcReset(); $('#rcResult').innerHTML='';
+    const keep = Math.max(0, Math.min(200, Number($('#rcKeep').value)||0));
+    $('#rcPreview').disabled = true;
+    try{
+      const plan = await api('/api/roles/cleanup/preview'+gquery()+'&keep='+keep);
+      rcPlan = plan;
+      const rows = [];
+      rows.push(`<div class="list-item"><div class="li-main"><div class="li-title">Keep ${plan.kept.length} + ${plan.protectedRoles.length} protected</div><div class="hint">${plan.total} roles in the server · ${plan.delete.length} can go${plan.overflowing?` · ${plan.overflowing} more stay for now`:''}${plan.usageKnown?'':' · member counts unavailable (enable Server Members Intent to rank by usage)'}</div></div></div>`);
+      if(plan.delete.length) rows.push(`<div class="list-item"><div class="li-main"><div class="li-title">Will delete (${plan.delete.length})</div><div class="hint">${plan.delete.map(r=>esc(r.name)+(r.members?` · ${r.members} member${r.members===1?'':'s'}`:' · unused')).join(' · ')}</div></div><span class="tag red">delete</span></div>`);
+      rows.push(`<div class="list-item"><div class="li-main"><div class="li-title">Always kept (${plan.protectedRoles.length})</div><div class="hint">${plan.protectedRoles.map(r=>esc(r.name)+' — '+esc(r.reason)).join(' · ')}</div></div><span class="tag green">protected</span></div>`);
+      $('#rcResult').innerHTML = rows.join('');
+      setStatus($('#rcStatus'), plan.delete.length ? `${plan.delete.length} role(s) ready to delete.` : 'Nothing to clean up.', plan.delete.length?'':'success');
+      $('#rcApply').disabled = !plan.delete.length;
+    }catch(err){ setStatus($('#rcStatus'), err.message, 'error'); }
+    finally{ $('#rcPreview').disabled = false; }
+  });
+  if($('#rcKeep')) $('#rcKeep').addEventListener('input', rcReset);
+  if($('#rcApply')) $('#rcApply').addEventListener('click', async ()=>{
+    clearStatus($('#rcStatus'));
+    if(!rcPlan || !rcPlan.delete.length) return;
+    if(!$('#rcConfirm').checked){ setStatus($('#rcStatus'),'Tick the confirmation box first.','error'); return; }
+    $('#rcApply').disabled = true;
+    try{
+      const r = await post('/api/roles/cleanup/apply',{ guild: state.guild.id, keep: rcPlan.keep, ids: rcPlan.delete.map(x=>x.id), confirm: true });
+      setStatus($('#rcStatus'), `${r.deleted.length} role(s) deleted${r.failed.length?` · ${r.failed.length} failed`:''}.`, r.failed.length?'error':'success');
+      toast('Role cleanup: '+r.deleted.length+' deleted','success');
+      rcReset(); $('#rcResult').innerHTML=''; refreshGuild();
+    }catch(err){ setStatus($('#rcStatus'), err.message,'error'); $('#rcApply').disabled=false; }
+  });
+
+  // ---- Channel access repair ----
+  if($('#crRun')) $('#crRun').addEventListener('click', async ()=>{
+    clearStatus($('#crStatus'));
+    const channelId = $('#crChannel').value;
+    if(!channelId){ setStatus($('#crStatus'),'Pick a channel first.','error'); return; }
+    $('#crRun').disabled = true;
+    try{
+      const r = await post('/api/channels/repair',{ guild: state.guild.id, channelId });
+      setStatus($('#crStatus'), `#${r.channel} is readable again.`, 'success');
+      toast('Access repaired in #'+r.channel,'success');
+      refreshGuild();
+    }catch(err){ setStatus($('#crStatus'), err.message,'error'); }
+    finally{ $('#crRun').disabled = false; }
+  });
 
   // ---- Levels ----
   function renderLevels(){

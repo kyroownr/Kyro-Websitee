@@ -35,7 +35,6 @@ const publicPaths = [
   'index.html',
   '404.html',
   'CNAME',
-  'dashboard.html',
   'js/app.js',
   'css/style.css',
   'assets/kyro-icon.png',
@@ -53,6 +52,7 @@ expect(!fs.existsSync(path.join(outDir, 'worker.js')), 'worker.js is not publish
 expect(!fs.existsSync(path.join(outDir, 'bot_dashboard.js')), 'bot_dashboard.js is not published');
 expect(!fs.existsSync(path.join(outDir, 'package.json')), 'package.json is not published');
 expect(!fs.existsSync(path.join(outDir, 'tools')), 'tools/ is not published');
+expect(!fs.existsSync(path.join(outDir, 'dashboard.html')), 'the staff dashboard is not published');
 expect(!result.files.some((file) => /\.(cjs|ts|map|log)$/i.test(file)), 'no code or log artifacts in the output');
 
 console.log(JSON.stringify({ checks, publishedFiles: result.files.length, backendBlocked: backend.length, result: 'passed' }));

@@ -23,12 +23,13 @@ const path = require('path');
 const root = path.join(__dirname, '..');
 const out = path.join(root, 'docs');
 
-/* Everything a browser legitimately needs. Anything else stays private. */
+/* Everything a browser legitimately needs. dashboard.html is the staff bot UI
+   served by bot_dashboard.js on localhost — it has no business on the public
+   site, where its API calls could only 404. */
 const PUBLIC_FILES = [
   'index.html',
   '404.html',
   'CNAME',
-  'dashboard.html',
   'robots.txt'
 ];
 const PUBLIC_DIRS = [

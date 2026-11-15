@@ -606,6 +606,202 @@ async function createRolePack(guildId, packId) {
   return { pack: pack.label, created, skipped };
 }
 
+/* ---------------------------- role cleanup ------------------------------
+   Bulk-deletes dead roles. The owner picks how many roles to keep; the busiest
+   ones stay and the rest go. These are never deleted, whatever the number:
+     - @everyone, managed/integration roles and bot roles
+     - roles at or above the bot's own highest role (Discord refuses anyway)
+     - roles carrying staff-level permissions or staff-looking names
+     - every role the bot's automations depend on (auto-role, voice role,
+       verification, level rewards, reaction roles, giveaways)
+   Nothing is deleted until the owner previews and confirms the exact plan. */
+const ROLE_PROTECT_PERMS =
+  0x8n |   // Administrator
+  0x2n |   // Kick Members
+  0x4n |   // Ban Members
+  0x10n |  // Manage Channels
+  0x20n |  // Manage Guild
+  0x2000n | // Manage Messages
+  0x10000000n | // Manage Roles
+  0x100000000n; // Moderate Members
+const ROLE_PROTECT_NAME = /(owner|admin|moderator|\bmod\b|staff|founder|manager|support|helpdesk|contributor|verified|\bmember\b|muted|jail|bot\b|system|kyro)/i;
+const ROLE_CLEANUP_MAX = 200;
+const PERM_MANAGE_ROLES = 0x10000000n;
+const PERM_MANAGE_CHANNELS = 0x10n;
+
+/* A destructive action needs the exact permission Discord enforces, not just a
+   friendly message: Administrator, or the specific bit (Manage Roles for the
+   cleanup, Manage Channels for access repair). */
+async function requireBotPermission(guildId, bit, label, action) {
+  const access = await botAccess(guildId);
+  if (access.isAdmin) return access;
+  if ((BigInt(access.permissions || '0') & BigInt(bit)) === 0n) {
+    throw Object.assign(new Error(
+      `Kyro Bot needs the **${label}** permission in this server to run ${action}. ` +
+      `Server Settings → Roles → Kyro Bot → enable ${label}, or re-add the bot with Administrator.`
+    ), { status: 403, needsAdmin: true, inviteUrl: BOT_INSTALL_URL, missing: [label] });
+  }
+  return access;
+}
+
+function configuredRoleIds(cfg) {
+  const ids = new Set();
+  const add = (value) => { if (value && /^\d{17,20}$/.test(String(value))) ids.add(String(value)); };
+  add(cfg.verification && cfg.verification.roleId);
+  const eng = cfg.engagement || {};
+  add(eng.autoRole && eng.autoRole.roleId);
+  add(eng.voiceRole && eng.voiceRole.roleId);
+  for (const reward of (cfg.levels && cfg.levels.rewards) || []) add(reward && reward.roleId);
+  for (const rr of cfg.reactionRoles || []) for (const map of rr.mappings || []) add(map.roleId);
+  for (const giveaway of cfg.giveaways || []) add(giveaway && giveaway.roleId);
+  return ids;
+}
+
+async function roleMemberCounts(guildId) {
+  const counts = new Map();
+  let after = '';
+  // Bounded scan: 10 pages is 10k members, enough to rank roles sensibly.
+  for (let page = 0; page < 10; page++) {
+    const batch = await discordFetch(`/guilds/${guildId}/members?limit=1000${after ? '&after=' + encodeURIComponent(after) : ''}`);
+    if (!Array.isArray(batch) || !batch.length) break;
+    for (const member of batch) for (const id of member.roles || []) counts.set(id, (counts.get(id) || 0) + 1);
+    if (batch.length < 1000) break;
+    after = (batch[batch.length - 1].user && batch[batch.length - 1].user.id) || '';
+    if (!after) break;
+  }
+  return counts;
+}
+
+async function botTopPosition(guildId, roles) {
+  let top = -1;
+  try {
+    const me = await discordFetch(`/guilds/${guildId}/members/${await getBotUserId()}`);
+    for (const id of me.roles || []) {
+      const role = roles.find((r) => r.id === id);
+      if (role) top = Math.max(top, role.position);
+    }
+  } catch (e) {}
+  return top;
+}
+
+async function roleCleanupPlan(guildId, keepRaw) {
+  await requireBotPermission(guildId, PERM_MANAGE_ROLES, 'Manage Roles', 'role cleanup');
+  const keep = Math.max(0, Math.min(ROLE_CLEANUP_MAX, Math.trunc(Number(keepRaw)) || 0));
+  const db = loadDB();
+  const cfg = guildConfig(db, guildId);
+  const autoRoles = configuredRoleIds(cfg);
+
+  const roles = await discordFetch(`/guilds/${guildId}/roles`);
+  if (!Array.isArray(roles)) throw new Error('Discord did not return the role list.');
+  // Member listing needs the privileged Server Members intent. When it is off we
+  // still produce a safe plan, ranked by role position instead of usage.
+  let usageKnown = true;
+  let counts = new Map();
+  try { counts = await roleMemberCounts(guildId); } catch { usageKnown = false; }
+  const botTop = await botTopPosition(guildId, roles);
+
+  const protectedRoles = [];
+  const candidates = [];
+  for (const role of roles) {
+    const name = String(role.name || '');
+    const members = counts.get(role.id) || 0;
+    const perms = BigInt(role.permissions || '0');
+    let reason = '';
+    if (role.id === guildId || name === '@everyone') reason = '@everyone — always kept';
+    else if (role.managed) reason = 'managed by Discord or an integration';
+    else if (role.id === (role.tags && role.tags.bot_id)) reason = 'bot role';
+    else if (role.position >= botTop) reason = 'at or above the Kyro Bot role';
+    else if (autoRoles.has(role.id)) reason = 'used by a Kyro automation';
+    else if ((perms & ROLE_PROTECT_PERMS) !== 0n) reason = 'has staff-level permissions';
+    else if (ROLE_PROTECT_NAME.test(name)) reason = 'staff/bot/system role name';
+
+    if (reason) protectedRoles.push({ id: role.id, name, position: role.position, members, reason });
+    else candidates.push({ id: role.id, name, position: role.position, members });
+  }
+
+  candidates.sort((a, b) => (b.members - a.members) || (b.position - a.position) || a.name.localeCompare(b.name));
+  const kept = candidates.slice(0, keep);
+  const remove = candidates.slice(keep).sort((a, b) => (a.members - b.members) || (a.position - b.position));
+
+  return {
+    keep,
+    usageKnown,
+    total: roles.length,
+    protectedRoles,
+    kept,
+    delete: remove.slice(0, ROLE_CLEANUP_MAX),
+    overflowing: Math.max(0, remove.length - ROLE_CLEANUP_MAX)
+  };
+}
+
+async function applyRoleCleanup(guildId, keepRaw, ids) {
+  const plan = await roleCleanupPlan(guildId, keepRaw);
+  const allowed = new Map(plan.delete.map((role) => [role.id, role]));
+  const targets = (Array.isArray(ids) ? ids : [])
+    .map((id) => String(id))
+    .filter((id) => allowed.has(id))
+    .slice(0, ROLE_CLEANUP_MAX);
+  if (!targets.length) throw new Error('Nothing left to delete — run the preview again.');
+
+  const deleted = [];
+  const failed = [];
+  for (const id of targets) {
+    const role = allowed.get(id);
+    try {
+      await discordFetch(`/guilds/${guildId}/roles/${id}`, {
+        method: 'DELETE', headers: { 'X-Audit-Log-Reason': 'Kyro role cleanup' }
+      });
+      deleted.push(role.name);
+    } catch (err) {
+      failed.push(`${role.name} — ${err.message}`);
+    }
+    await sleep(220);
+  }
+  await logEvent(guildId, 'security', 'Role cleanup',
+    `**Deleted:** ${deleted.length}\n**Kept:** ${plan.kept.length + plan.protectedRoles.length}${failed.length ? `\n**Failed:** ${failed.join(', ')}` : ''}`,
+    deleted.length ? 0xf59e0b : 0x2997ff);
+  return { deleted, failed, kept: plan.kept.length + plan.protectedRoles.length };
+}
+
+/* ------------------------- channel access repair -------------------------
+   The bot posts into channels that sometimes end up unreadable — a member or
+   even the owner sees "You do not have permission to view the message history".
+   This merges the one overwrite that matters back in: @everyone may view and
+   read history, and the bot keeps send/embed/manage so it can maintain its own
+   announcements. Nothing else in the channel is touched. */
+const PERM_VIEW_CHANNEL = 1024;
+const PERM_READ_HISTORY = 65536;
+const PERM_SEND_MESSAGES = 2048;
+const PERM_EMBED_LINKS = 16384;
+const PERM_MANAGE_MESSAGES = 8192;
+
+async function repairChannelAccess(guildId, channelId) {
+  if (!channelId) throw new Error('Pick a channel first.');
+  await requireBotPermission(guildId, PERM_MANAGE_CHANNELS, 'Manage Channels', 'channel access repair');
+  const channel = await discordFetch(`/channels/${channelId}`);
+  const botId = await getBotUserId();
+  const overwrites = Array.isArray(channel.permission_overwrites) ? channel.permission_overwrites.slice() : [];
+
+  const merge = (id, type, allow, deny) => {
+    const existing = overwrites.find((o) => String(o.id) === String(id));
+    const allowBits = BigInt(existing ? existing.allow : '0') | BigInt(allow);
+    const denyBits = BigInt(existing ? existing.deny : '0') & ~BigInt(deny);
+    if (existing) { existing.allow = String(allowBits); existing.deny = String(denyBits); }
+    else overwrites.push({ id: String(id), type, allow: String(allowBits), deny: String(denyBits) });
+  };
+
+  merge(guildId, 0, PERM_VIEW_CHANNEL | PERM_READ_HISTORY, 0);
+  merge(botId, 1, PERM_VIEW_CHANNEL | PERM_READ_HISTORY | PERM_SEND_MESSAGES | PERM_EMBED_LINKS | PERM_MANAGE_MESSAGES, 0);
+
+  await discordFetch(`/channels/${channelId}`, {
+    method: 'PATCH', headers: { 'X-Audit-Log-Reason': 'Kyro channel access repair' },
+    body: JSON.stringify({ permission_overwrites: overwrites })
+  });
+  await logEvent(guildId, 'security', 'Channel access repaired',
+    `**Channel:** #${channel.name}\n@everyone can now view and read history; the bot can post and manage its messages.`, 0x2997ff);
+  return { channel: channel.name, repaired: true };
+}
+
 async function ensureChannel(guildId, wantedName, options = {}) {
   const clean = wantedName.toLowerCase();
   const channels = await discordFetch(`/guilds/${guildId}/channels`);
@@ -2043,6 +2239,22 @@ const server = http.createServer(async (req, res) => {
   if (host !== `localhost:${PORT}` && host !== `127.0.0.1:${PORT}` && host !== `[::1]:${PORT}`) {
     return sendJSON(res, 403, { error: 'Forbidden host.' });
   }
+  // CSRF guard: this admin API is unauthenticated by design (loopback only), so
+  // a page the owner visits must not be able to POST to it. A cross-site form
+  // or fetch cannot set JSON content type without a CORS preflight, and the
+  // Origin/Sec-Fetch-Site check rejects the rest.
+  const localOrigins = [`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`, `http://[::1]:${PORT}`];
+  const origin = req.headers.origin || '';
+  if (origin && !localOrigins.includes(origin)) return sendJSON(res, 403, { error: 'Cross-site request blocked.' });
+  const fetchSite = String(req.headers['sec-fetch-site'] || '');
+  if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') return sendJSON(res, 403, { error: 'Cross-site request blocked.' });
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    const contentType = String(req.headers['content-type'] || '');
+    if (!/^application\/json\b/i.test(contentType)) {
+      return sendJSON(res, 415, { error: 'Send JSON with Content-Type: application/json.' });
+    }
+  }
+
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
   const guildId = url.searchParams.get('guild') || '';
@@ -2172,6 +2384,35 @@ const server = http.createServer(async (req, res) => {
       if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
       const out = await createRolePack(gid, body.packId);
       return sendJSON(res, 200, out);
+    }
+
+    // ---- Role cleanup (preview is mandatory, apply uses that exact plan) ----
+    if (req.method === 'GET' && p === '/api/roles/cleanup/preview') {
+      if (!guildId) return sendJSON(res, 400, { error: 'guild is required' });
+      const plan = await roleCleanupPlan(guildId, url.searchParams.get('keep'));
+      return sendJSON(res, 200, plan);
+    }
+
+    if (req.method === 'POST' && p === '/api/roles/cleanup/apply') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      if (body.confirm !== true) return sendJSON(res, 400, { error: 'Preview the cleanup first and confirm the deletion.' });
+      if (!Array.isArray(body.ids) || !body.ids.length) return sendJSON(res, 400, { error: 'No roles were selected for deletion.' });
+      const result = await applyRoleCleanup(gid, body.keep, body.ids);
+      return sendJSON(res, 200, result);
+    }
+
+    // ---- Channel access repair (the "cannot view history" fix) ----
+    if (req.method === 'POST' && p === '/api/channels/repair') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      // Discord ids are snowflakes; the looser pattern keeps local test ids
+      // working while still refusing anything that could escape the URL path.
+      if (!/^[A-Za-z0-9_-]{3,32}$/.test(String(body.channelId || ''))) return sendJSON(res, 400, { error: 'Pick a valid channel.' });
+      const result = await repairChannelAccess(gid, String(body.channelId));
+      return sendJSON(res, 200, result);
     }
 
     // ---- Engagement suite ----
@@ -2729,7 +2970,11 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, { stats: modStats(guildId) });
     }
 
-    return sendJSON(res, 404, { error: 'Not found' });
+    console.warn(`[Dashboard] No route for ${req.method} ${p} — restart the dashboard if the UI was updated.`);
+    return sendJSON(res, 404, {
+      error: 'Not found', path: p, method: req.method,
+      hint: 'The dashboard server is older than dashboard.html. Restart it with start-dashboard.cmd.'
+    });
   } catch (err) {
     const status = err.status && err.status >= 400 && err.status < 600 ? err.status : 500;
     const payload = { error: err.message || 'Server error' };

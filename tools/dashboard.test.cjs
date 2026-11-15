@@ -36,6 +36,18 @@ function jsonRes(obj, status) {
 
 // Discord REST mock router.
 const mockOverwrites = { chan1: [], chan2: [] };
+// Mutable so the role-cleanup test can add unused/staff roles after the earlier
+// assertions have already expected the original five-role fixture.
+let guild1Roles = [
+  { id: 'guild1', name: '@everyone', color: 0, position: 0, managed: false },
+  { id: 'role1', name: 'Member', color: 5793266, position: 1, managed: false },
+  { id: 'role2', name: 'VIP', color: 15844367, position: 2, managed: false },
+  { id: 'role3', name: 'Owner', color: 0, position: 20, managed: false },
+  { id: 'role_bot', name: 'Kyro Bot', color: 0, position: 10, managed: false }
+];
+let guild1Members = [
+  { user: { id: '200000000000000003', username: 'alice', global_name: 'Alice', avatar: null, bot: false }, nick: null, roles: ['role1'], joined_at: '2026-01-01T00:00:00.000Z' }
+];
 global.fetch = async (url, opts) => {
   const u = String(url);
   if (!u.startsWith('https://discord.com/api/v10')) return realFetch(url, opts);
@@ -68,19 +80,12 @@ global.fetch = async (url, opts) => {
       if (failRoleCreation) return jsonRes({ message: 'Missing Permissions' }, 403);
       return jsonRes({ id: 'role_new_' + String(body && body.name || 'x').replace(/[^a-z0-9]/g, ''), name: body && body.name, managed: false, position: 5 });
     }
-    return jsonRes([
-      { id: 'guild1', name: '@everyone', color: 0, position: 0, managed: false },
-      { id: 'role1', name: 'Member', color: 5793266, position: 1, managed: false },
-      { id: 'role2', name: 'VIP', color: 15844367, position: 2, managed: false },
-      { id: 'role3', name: 'Owner', color: 0, position: 20, managed: false },
-      { id: 'role_bot', name: 'Kyro Bot', color: 0, position: 10, managed: false }
-    ]);
+    return jsonRes(guild1Roles);
   }
+  if (/^\/guilds\/guild1\/roles\/[^/]+$/.test(p) && method === 'DELETE') return jsonRes({}, 204);
   if (p === '/guilds/guild1/members/bot0000000000000001') return jsonRes({ user: { id: BOT_ID, username: 'UtilityBot' }, roles: ['role_bot'] });
   if (/^\/guilds\/guild1\/roles\/[^/]+$/.test(p) && method === 'PATCH') return jsonRes({ id: p.split('/').pop(), permissions: body && body.permissions });
-  if (p === '/guilds/guild1/members') return jsonRes([
-    { user: { id: '200000000000000003', username: 'alice', global_name: 'Alice', avatar: null, bot: false }, nick: null, roles: ['role1'], joined_at: '2026-01-01T00:00:00.000Z' }
-  ]);
+  if (p === '/guilds/guild1/members') return jsonRes(guild1Members);
   if (p === '/guilds/guild1/members/search') return jsonRes([
     { user: { id: '200000000000000003', username: 'alice', global_name: 'Alice', avatar: null, bot: false }, nick: null, roles: ['role1'] }
   ]);
@@ -90,7 +95,7 @@ global.fetch = async (url, opts) => {
   if (/^\/guilds\/guild1\/bans\/[^/]+$/.test(p)) return jsonRes({}, 204); // PUT ban / DELETE unban
   if (p === '/users/200000000000000003') return jsonRes({ id: '200000000000000003', username: 'alice', global_name: 'Alice', avatar: null, discriminator: '0', bot: false });
   if (p === '/users/200000000000000003/channels') return jsonRes({ id: 'dm1' });
-  if (p === '/channels/chan1' && method === 'GET') return jsonRes({ id: 'chan1', permission_overwrites: mockOverwrites.chan1 });
+  if (p === '/channels/chan1' && method === 'GET') return jsonRes({ id: 'chan1', name: 'general', permission_overwrites: mockOverwrites.chan1 });
   if (p === '/channels/chan1/messages' && method === 'GET') return jsonRes([
     { id: 'm1', content: 'hello world', author: { id: '200000000000000003', bot: false }, mentions: [], member: { roles: [] } }
   ]);
@@ -456,6 +461,59 @@ async function waitForServer() {
   ok(ac.status === 200 && ac.data.autoResponses.length === 1, 'auto-responses saved and filtered');
   const acCfg = await req('GET', '/api/config?guild=guild1');
   ok(acCfg.data.autoResponses[0].trigger === 'ping' && acCfg.data.rolePacks.length >= 12, 'config exposes new modules');
+
+  // ---- CSRF guard: a random site must not be able to drive this admin API ----
+  const csrf = await realFetch(BASE + '/api/roles/cleanup/apply', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' }, body: '{"confirm":true}'
+  });
+  ok(csrf.status === 403, 'cross-site POST is blocked');
+  const plainPost = await realFetch(BASE + '/api/engagement', {
+    method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: '{"guild":"guild1"}'
+  });
+  ok(plainPost.status === 415, 'non-JSON content type is refused');
+
+  // ---- Role cleanup: preview, protection, confirm gate, exact deletion ----
+  guild1Roles = guild1Roles.concat([
+    { id: 'role_unused_a', name: 'Old Event', color: 0, position: 3, managed: false, permissions: '0' },
+    { id: 'role_unused_b', name: 'Color Blue', color: 0, position: 4, managed: false, permissions: '0' },
+    { id: 'role_helper', name: 'Helper', color: 0, position: 6, managed: false, permissions: '0' },
+    { id: 'role_admin2', name: 'Ops Team', color: 0, position: 8, managed: false, permissions: '8' },
+    { id: 'role_managed', name: 'YouTube', color: 0, position: 7, managed: true, permissions: '0' }
+  ]);
+  guild1Members = [
+    { user: { id: '200000000000000003' }, roles: ['role1', 'role_helper'] },
+    { user: { id: '200000000000000004' }, roles: ['role_helper'] },
+    { user: { id: '200000000000000006' }, roles: [] }
+  ];
+  const rcPreview = await req('GET', '/api/roles/cleanup/preview?guild=guild1&keep=1');
+  ok(rcPreview.status === 200, 'role cleanup preview responds');
+  const deleteIds = rcPreview.data.delete.map((r) => r.id);
+  ok(deleteIds.includes('role_unused_a') && deleteIds.includes('role_unused_b'), 'unused roles queued for deletion');
+  ok(!deleteIds.includes('role_admin2') && rcPreview.data.protectedRoles.some((r) => r.id === 'role_admin2' && /staff-level/.test(r.reason)), 'admin role protected by its permissions');
+  ok(!deleteIds.includes('role_managed') && rcPreview.data.protectedRoles.some((r) => r.id === 'role_managed'), 'managed integration role protected');
+  ok(!deleteIds.includes('role_bot') && rcPreview.data.protectedRoles.some((r) => r.id === 'role_bot'), 'bot role protected');
+  ok(!deleteIds.includes('guild1') && rcPreview.data.protectedRoles.some((r) => r.id === 'guild1'), '@everyone protected');
+  ok(!deleteIds.includes('role3'), 'owner role above the bot protected');
+  ok(!deleteIds.includes('role1'), 'member role protected by name');
+  ok(!deleteIds.includes('role_helper'), 'the busiest role survives the keep count');
+  const rcNoConfirm = await req('POST', '/api/roles/cleanup/apply', { guild: 'guild1', keep: 1, ids: deleteIds });
+  ok(rcNoConfirm.status === 400, 'apply refuses without confirmation');
+  const rcApply = await req('POST', '/api/roles/cleanup/apply', { guild: 'guild1', keep: 1, ids: deleteIds.concat(['role_admin2', 'role3']), confirm: true });
+  ok(rcApply.status === 200 && rcApply.data.deleted.length === deleteIds.length, 'apply deletes exactly the previewed roles');
+  ok(!calls.some((c) => c.method === 'DELETE' && (c.path === '/guilds/guild1/roles/role_admin2' || c.path === '/guilds/guild1/roles/role3')), 'protected roles are never requested for deletion');
+
+  // ---- Channel access repair (the "cannot view history" symptom) ----
+  mockOverwrites.chan1 = [{ id: 'someone', type: 0, allow: '1024', deny: '0' }];
+  const rep = await req('POST', '/api/channels/repair', { guild: 'guild1', channelId: 'chan1' });
+  ok(rep.status === 200 && rep.data.channel === 'general', 'channel access repaired');
+  const patched = lastCall((c) => c.method === 'PATCH' && c.path === '/channels/chan1' && c.body && c.body.permission_overwrites);
+  const everyoneOw = patched.body.permission_overwrites.find((o) => o.id === 'guild1');
+  ok((BigInt(everyoneOw.allow) & 65536n) !== 0n, '@everyone can read message history');
+  const botOw = patched.body.permission_overwrites.find((o) => o.id === BOT_ID);
+  ok((BigInt(botOw.allow) & 2048n) !== 0n, 'the bot can post in the channel');
+  ok(patched.body.permission_overwrites.some((o) => o.id === 'someone'), 'unrelated overwrites are preserved');
+  const repBad = await req('POST', '/api/channels/repair', { guild: 'guild1', channelId: '../etc' });
+  ok(repBad.status === 400, 'invalid channel id rejected');
 
   console.log(JSON.stringify({ checks: passed, multiServer: 'guild selector + per-guild isolation', features: 'moderation, giveaways, reaction roles, automod, welcome, logging, setup, security, utility, embed, engagement, levels, birthdays, suggestions, polls, scheduler, stat channels, role packs, admin gate', discord: 'mocked REST', result: 'passed' }));
   shutdown(0);
