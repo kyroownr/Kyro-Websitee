@@ -501,7 +501,11 @@ export async function handleApplicationInteractions(request, env, ctx) {
     const guildId = interaction.guild_id;
     const member = interaction.member;
     const memberRoles = member?.roles || [];
-    const isModOrOwner = memberRoles.includes(String(env.DISCORD_MOD_ROLE_ID)) || member?.user?.id === '1052909930073567232';
+    // Dynamic permission check: Administrator (0x8) or Manage Server (0x20)
+    const permissions = BigInt(member?.permissions || '0');
+    const hasAdminPerm = (permissions & BigInt(0x8)) === BigInt(0x8) || (permissions & BigInt(0x20)) === BigInt(0x20);
+    const isKyroOwner = member?.user?.id === '1052909930073567232' || memberRoles.includes('1539968441094512710');
+    const isModOrOwner = isKyroOwner || hasAdminPerm || memberRoles.includes(String(env.DISCORD_MOD_ROLE_ID));
 
     if (cmdName === 'invite') {
       return response({
@@ -534,11 +538,11 @@ export async function handleApplicationInteractions(request, env, ctx) {
     }
 
     if (cmdName === 'start-kyro') {
-      const isOwner = member?.user?.id === '1052909930073567232' || memberRoles.includes('1539968441094512710');
-      if (!isOwner) {
+      const canLaunch = isKyroOwner || hasAdminPerm;
+      if (!canLaunch) {
         return response({
           type: 4,
-          data: { content: '❌ Only the Kyro Server Owner can launch the Staff Bot Control Center.', flags: 64 }
+          data: { content: '❌ Only Server Owners or Administrators can launch the Bot Control Center.', flags: 64 }
         });
       }
 
