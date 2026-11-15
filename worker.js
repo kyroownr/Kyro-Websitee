@@ -818,6 +818,19 @@ function redirectUri(request, env) {
 }
 
 async function readSession(accessToken, env) {
+  if (!accessToken) throw fail(401, 'missing_token', 'No access token provided.');
+
+  // Check KV session cache (5-minute TTL) to eliminate redundant Discord API calls and prevent 429 rate limits
+  const cacheKey = 'kyro.session_cache.' + (await sha256(accessToken)).slice(0, 32);
+  if (env.KYRO_DATA) {
+    try {
+      const cached = await env.KYRO_DATA.get(cacheKey, 'json');
+      if (cached && cached.id && cached.username) {
+        return cached;
+      }
+    } catch {}
+  }
+
   const user = await discord('https://discord.com/api/users/@me', accessToken);
   const guilds = await discord('https://discord.com/api/users/@me/guilds', accessToken);
   const guildId = String(env.KYRO_GUILD_ID || '');
@@ -850,7 +863,7 @@ async function readSession(accessToken, env) {
     }
   }
 
-  return {
+  const session = {
     username: user.username,
     tag: user.discriminator && user.discriminator !== '0' ? user.username + '#' + user.discriminator : user.username,
     id: String(user.id),
@@ -859,17 +872,43 @@ async function readSession(accessToken, env) {
     isOwner,
     role: roleName
   };
+
+  // Cache session for 5 minutes (300 seconds)
+  if (env.KYRO_DATA) {
+    try {
+      await env.KYRO_DATA.put(cacheKey, JSON.stringify(session), { expirationTtl: 300 });
+    } catch {}
+  }
+
+  return session;
 }
 
 async function discord(href, accessToken) {
-  const res = await fetch(href, { headers: { authorization: 'Bearer ' + accessToken } });
+  let res = await fetch(href, { headers: { authorization: 'Bearer ' + accessToken } });
+
+  // Handle 429 Too Many Requests with retry
+  if (res.status === 429) {
+    const rateLimitData = await res.json().catch(() => ({}));
+    const retryAfter = Math.min(3, Number(rateLimitData.retry_after) || 1);
+    await new Promise(r => setTimeout(r, retryAfter * 1000));
+    res = await fetch(href, { headers: { authorization: 'Bearer ' + accessToken } });
+  }
+
   // 401 must stay 401: the site keys its "sign in again" path off that status.
   if (res.status === 401) throw Object.assign(
     new Error('Discord rejected this session (401). Sign in again.'), { status: 401, code: 'invalid_token' }
   );
-  if (!res.ok) throw Object.assign(
-    new Error('Discord API error ' + res.status), { status: 502, code: 'discord_api_error' }
-  );
+  if (!res.ok) {
+    if (res.status === 429) {
+      throw Object.assign(
+        new Error('Discord rate limit reached. Please wait a few seconds and try again.'),
+        { status: 429, code: 'rate_limited' }
+      );
+    }
+    throw Object.assign(
+      new Error('Discord API error ' + res.status), { status: 502, code: 'discord_api_error' }
+    );
+  }
   return res.json();
 }
 
