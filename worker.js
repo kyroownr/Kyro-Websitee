@@ -823,21 +823,34 @@ function redirectUri(request, env) {
   return String(env.KYRO_REDIRECT_URI || (new URL(request.url).origin + '/callback'));
 }
 
+async function sha256(text) {
+  const bytes = new TextEncoder().encode(String(text));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+}
+
 async function readSession(accessToken, env) {
   if (!accessToken) throw fail(401, 'missing_token', 'No access token provided.');
 
-  // Check KV session cache (5-minute TTL) to eliminate redundant Discord API calls and prevent 429 rate limits
-  const cacheKey = 'kyro.session_cache.' + (await sha256(accessToken)).slice(0, 32);
+  // Cache only the stable identity; membership/owner/role are resolved live so
+  // a transferred owner or demoted moderator loses access immediately.
+  const cacheKey = 'kyro.identity_cache.' + (await sha256(accessToken)).slice(0, 32);
+  let user = null;
   if (env.KYRO_DATA) {
     try {
       const cached = await env.KYRO_DATA.get(cacheKey, 'json');
-      if (cached && cached.id && cached.username) {
-        return cached;
-      }
+      if (cached && cached.id && cached.username) user = cached;
     } catch {}
   }
+  if (!user) {
+    user = await discord('https://discord.com/api/users/@me', accessToken);
+    if (env.KYRO_DATA) {
+      try {
+        await env.KYRO_DATA.put(cacheKey, JSON.stringify({ id: user.id, username: user.username, discriminator: user.discriminator, avatar: user.avatar }), { expirationTtl: 300 });
+      } catch {}
+    }
+  }
 
-  const user = await discord('https://discord.com/api/users/@me', accessToken);
   const guilds = await discord('https://discord.com/api/users/@me/guilds', accessToken);
   const guildId = String(env.KYRO_GUILD_ID || '');
   const guild = guildId ? guilds.find(g => String(g.id) === guildId) : undefined;
@@ -878,13 +891,6 @@ async function readSession(accessToken, env) {
     isOwner,
     role: roleName
   };
-
-  // Cache session for 5 minutes (300 seconds)
-  if (env.KYRO_DATA) {
-    try {
-      await env.KYRO_DATA.put(cacheKey, JSON.stringify(session), { expirationTtl: 300 });
-    } catch {}
-  }
 
   return session;
 }
