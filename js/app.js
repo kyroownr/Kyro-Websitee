@@ -631,6 +631,9 @@
       const open = resources.find(x => x.id === modalId);
       if (open) wireDownloads(open);
     }
+    /* On the incoming page, signing in or out changes the waitlist gate and the
+       owner's early-access controls, so both repaint with the new session. */
+    if ($('#earlyAccessSection')) { loadEarlyAccess(); loadIncomingReleases(); }
   }
 
   /* ========================= directory rendering ======================== */
@@ -860,10 +863,13 @@
         const pct = Math.min(100, Math.max(0, Math.round((votes / limit) * 100)));
         const isReleased = Boolean(item.released || votes >= limit);
         const userVote = Number(item.userVote || 0);
+        const earlyAccess = Boolean(item.early_access) && !isReleased;
 
         const statusBadge = isReleased
           ? '<span class="badge badge-free mono" style="font-size:0.75rem;padding:2px 8px;">Just Dropped</span>'
-          : '<span class="badge badge-pro mono" style="font-size:0.75rem;padding:2px 8px;">Voting In Progress</span>';
+          : earlyAccess
+            ? '<span class="badge mono" style="font-size:0.75rem;padding:2px 8px;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.4);">Early Access</span>'
+            : '<span class="badge badge-pro mono" style="font-size:0.75rem;padding:2px 8px;">Voting In Progress</span>';
 
         const thumb = item.image_url
           ? `<img src="${esc(item.image_url)}" alt="${esc(item.title)}" style="width:100%;height:140px;object-fit:cover;border-radius:8px 8px 0 0;" />`
@@ -898,19 +904,27 @@
                 </div>
               </div>
 
+              ${earlyAccess && item.pass ? `
+                <div class="mono" style="font-size:0.75rem;color:#f59e0b;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);border-radius:6px;padding:6px 8px;">Archive password: <strong>${esc(item.pass)}</strong></div>
+              ` : ''}
+
               <!-- Community Vote Actions -->
               <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
-                ${!isReleased ? `
+                ${isReleased ? `
+                  <a href="#${esc(item.slug)}" class="btn btn-primary btn-sm" style="flex:1;justify-content:center;text-decoration:none;">
+                    Now Live · Get Resource ↗
+                  </a>
+                ` : earlyAccess && item.download_url ? `
+                  <a href="${esc(item.download_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm" style="flex:1;justify-content:center;text-decoration:none;background:linear-gradient(90deg,#f59e0b,#fbbf24);border-color:#f59e0b;color:#1a1205;">
+                    Early Access · Download ↗
+                  </a>
+                ` : `
                   <button type="button" class="btn btn-sm ${userVote === 1 ? 'btn-primary' : 'btn-ghost'}" data-vote-action="1" data-id="${esc(item.id)}" style="flex:1;justify-content:center;font-size:0.8rem;gap:4px;">
                     Speed It Up (+1)
                   </button>
                   <button type="button" class="btn btn-sm ${userVote === -1 ? 'btn-danger' : 'btn-ghost'}" data-vote-action="-1" data-id="${esc(item.id)}" style="flex:1;justify-content:center;font-size:0.8rem;gap:4px;">
                     Hold Off (-1)
                   </button>
-                ` : `
-                  <a href="#${esc(item.slug)}" class="btn btn-primary btn-sm" style="flex:1;justify-content:center;text-decoration:none;">
-                    Now Live · Get Resource ↗
-                  </a>
                 `}
                 ${isOwner ? `
                   <button type="button" class="btn btn-ghost btn-sm" data-incoming-delete="${esc(item.id)}" title="Delete incoming item" style="padding:4px 8px;color:#ef4444;">
@@ -988,6 +1002,85 @@
       }
     } catch (e) {
       console.warn('Failed to load incoming releases:', e);
+    }
+  }
+
+  /* ---------------------- Early Access (owner-managed) -------------------- */
+  async function loadEarlyAccess() {
+    const section = $('#earlyAccessSection');
+    if (!section) return;
+    if (auth.state !== VERIFIED) { section.innerHTML = ''; return; }
+    let data;
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/early-access', { headers: reqHeaders(), credentials: 'omit' });
+      if (!res.ok) { section.innerHTML = ''; return; }
+      data = await res.json();
+    } catch { section.innerHTML = ''; return; }
+
+    const bolt = '<span style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;background:rgba(245,158,11,0.18);border:1px solid rgba(245,158,11,0.4);color:#f59e0b;flex-shrink:0;"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12z"/></svg></span>';
+
+    if (data.is_owner) {
+      const users = Array.isArray(data.users) ? data.users : [];
+      const rows = users.length
+        ? users.map(u => '<li style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);border-radius:8px;">' +
+            '<span class="mono" style="font-size:0.82rem;color:#e2e8f0;">' + esc(u.username || u.id) + ' <span style="color:var(--dim);">· ' + esc(u.id) + '</span></span>' +
+            '<button type="button" class="btn btn-ghost btn-sm" data-ea-revoke="' + esc(u.id) + '" style="padding:3px 9px;color:#ef4444;">Revoke</button>' +
+          '</li>').join('')
+        : '<li class="mono" style="color:var(--dim);font-size:0.82rem;padding:6px 2px;">No members have early access yet.</li>';
+      section.innerHTML =
+        '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px;">' +
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">' +
+            '<span class="badge mono" style="background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.4);font-size:0.7rem;padding:2px 8px;">OWNER</span>' +
+            '<h3 style="margin:0;color:#fff;font-size:1rem;font-weight:700;">Early Access</h3>' +
+          '</div>' +
+          '<p style="color:var(--dim);font-size:0.82rem;margin:0 0 12px;">Grant members a pass to skip the incoming waitlist and download builds directly, before the community vote goal is reached.</p>' +
+          '<form id="eaGrantForm" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">' +
+            '<input type="text" id="eaUserId" class="input input-sm" placeholder="Discord user ID (17–20 digits)" inputmode="numeric" autocomplete="off" style="flex:1;min-width:200px;" />' +
+            '<input type="text" id="eaUserName" class="input input-sm" placeholder="Label (optional)" autocomplete="off" style="flex:1;min-width:140px;" />' +
+            '<button type="submit" class="btn btn-primary btn-sm" id="eaGrantBtn">Grant Access</button>' +
+          '</form>' +
+          '<ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;">' + rows + '</ul>' +
+        '</div>';
+      const form = $('#eaGrantForm');
+      if (form) form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = ($('#eaUserId')?.value || '').trim();
+        const username = ($('#eaUserName')?.value || '').trim();
+        if (!/^\d{17,20}$/.test(id)) { toast({ title: 'Invalid user ID', sub: 'Enter a Discord user ID (17–20 digits).', icon: ICON.x }); return; }
+        const btn = $('#eaGrantBtn'); if (btn) { btn.disabled = true; btn.textContent = 'Granting…'; }
+        try {
+          const res = await fetch(AUTH_WORKER_URL + '/early-access', { method: 'POST', headers: Object.assign({ 'content-type': 'application/json' }, reqHeaders()), credentials: 'omit', body: JSON.stringify({ id, username }) });
+          const out = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(out.error || 'Server error');
+          toast({ title: 'Early access granted', sub: (username || id) + ' can skip the waitlist.', icon: ICON.check });
+          loadEarlyAccess();
+        } catch (err) { toast({ title: 'Grant failed', sub: err.message, icon: ICON.x }); }
+        finally { if (btn) { btn.disabled = false; btn.textContent = 'Grant Access'; } }
+      });
+      section.querySelectorAll('[data-ea-revoke]').forEach(btn => btn.addEventListener('click', async () => {
+        const id = btn.dataset.eaRevoke;
+        btn.disabled = true;
+        try {
+          const res = await fetch(AUTH_WORKER_URL + '/early-access', { method: 'DELETE', headers: Object.assign({ 'content-type': 'application/json' }, reqHeaders()), credentials: 'omit', body: JSON.stringify({ id }) });
+          const out = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(out.error || 'Server error');
+          toast({ title: 'Early access revoked', sub: id + ' is back on the waitlist.', icon: ICON.check });
+          loadEarlyAccess();
+          loadIncomingReleases();
+        } catch (err) { toast({ title: 'Revoke failed', sub: err.message, icon: ICON.x }); btn.disabled = false; }
+      }));
+      return;
+    }
+
+    if (data.earlyAccess) {
+      section.innerHTML =
+        '<div style="display:flex;align-items:center;gap:12px;background:linear-gradient(90deg,rgba(245,158,11,0.12),rgba(251,191,36,0.04));border:1px solid rgba(245,158,11,0.35);border-radius:12px;padding:14px 16px;">' +
+          bolt +
+          '<div><strong style="color:#f59e0b;font-size:0.92rem;">You have Early Access</strong>' +
+          '<p style="margin:2px 0 0;color:#cbd5e1;font-size:0.82rem;">Skip the waitlist — incoming builds below show a direct download link just for you.</p></div>' +
+        '</div>';
+    } else {
+      section.innerHTML = '';
     }
   }
 
@@ -1428,12 +1521,12 @@
     reqNewRequest.textContent = reqComposeOpen ? '− Close Form' : '+ New Request';
     requestGate.hidden = verified || !reqComposeOpen;
     if (!requestGate.hidden) requestGate.innerHTML = reqGateHTML();
-    requestCount.textContent = reqError ? 'board unavailable' : !reqLoaded ? 'loading…' : requests.length + (requests.length === 1 ? ' request' : ' requests');
+    requestCount.textContent = reqError ? 'board unavailable' : !reqLoaded ? 'loading…' : requests.length + (requests.length === 1 ? ' request' : ' requests') + (verified && !reqAdmin ? ' · yours' : '');
 
     let rows = requests.filter(row => (reqFilter === 'all' || row.category === reqFilter) && (reqSort !== 'added' || row.status === 'shipped'));
     rows.sort(reqSort === 'top' ? (a, b) => b.votes - a.votes || String(b.created).localeCompare(String(a.created)) : (a, b) => String(b.created).localeCompare(String(a.created)));
     requestList.innerHTML = reqError ? '<p class="req-empty">' + esc(reqError) + '</p>' : !reqLoaded ? '<p class="req-empty">Loading the board…</p>' : rows.length ? rows.map(requestCardHTML).join('') :
-      '<p class="req-empty">' + (reqSort === 'added' ? 'No shipped requests yet.' : requests.length ? 'No requests match this category.' : 'Nothing on the board yet. Post the first request.') + '</p>';
+      '<p class="req-empty">' + (reqSort === 'added' ? 'No shipped requests yet.' : requests.length ? 'No requests match this category.' : (verified && !reqAdmin ? 'You have not posted any requests yet. Use + New Request to add one.' : 'Nothing on the board yet. Post the first request.')) + '</p>';
     requestList.querySelectorAll('[data-vote]').forEach(btn => btn.addEventListener('click', () => voteRequest(btn.dataset.vote)));
     requestList.querySelectorAll('[data-req-status]').forEach(select => select.addEventListener('change', () => {
       reqWrite('/requests/status', { token: auth.token, id: select.dataset.reqStatus, status: select.value });
@@ -1559,6 +1652,7 @@
   let feedbackItems = [];
   let feedbackLoading = false;
   let feedbackComposeOpen = false;
+  let feedbackAdmin = false;
 
   function setFeedbackRating(val) {
     feedbackRating = Math.max(1, Math.min(5, Number(val) || 5));
@@ -1570,7 +1664,7 @@
 
   function renderFeedback() {
     if (!feedbackDrawer) return;
-    feedbackCount.textContent = feedbackLoading ? 'loading…' : (feedbackItems.length + (feedbackItems.length === 1 ? ' review' : ' reviews'));
+    feedbackCount.textContent = feedbackLoading ? 'loading…' : (feedbackItems.length + (feedbackItems.length === 1 ? ' review' : ' reviews') + (feedbackAdmin ? '' : ' · yours'));
     if (feedbackNewBtn) {
       feedbackNewBtn.setAttribute('aria-expanded', String(feedbackComposeOpen));
       feedbackNewBtn.textContent = feedbackComposeOpen ? 'Cancel' : '+ Give Feedback';
@@ -1586,7 +1680,7 @@
       feedbackGate.innerHTML =
         '<div class="req-gate-card">' +
           '<div class="req-gate-title">Discord verification required</div>' +
-          '<div class="req-gate-sub">Feedback and community reviews are exclusively visible to verified server members. Sign in with Discord to view and share reviews.</div>' +
+          '<div class="req-gate-sub">Sign in with Discord to see your own feedback and share reviews with the Kyro team.</div>' +
           '<button type="button" class="btn btn-discord btn-sm mono" id="feedbackGateLogin">' +
             ICON.discord + ' Sign in with Discord' +
           '</button>' +
@@ -1606,7 +1700,7 @@
     }
 
     if (!feedbackItems.length) {
-      feedbackList.innerHTML = '<div class="req-empty mono">No feedback yet. Be the first to review Kyro!</div>';
+      feedbackList.innerHTML = '<div class="req-empty mono">' + (feedbackAdmin ? 'No feedback yet.' : 'No feedback from you yet. Use + Give Feedback to review Kyro.') + '</div>';
       return;
     }
 
@@ -1614,14 +1708,14 @@
     feedbackList.innerHTML = feedbackItems.map(item => {
       const avatarHtml = item.anonymous || !item.author_avatar
         ? '<div class="req-author-avatar-anon" style="width:28px;height:28px;border-radius:50%;background:#222;display:flex;align-items:center;justify-content:center;font-size:12px;border:1px solid #333;">?</div>'
-        : '<img class="req-author-avatar" src="' + escapeHtml(item.author_avatar) + '" alt="" width="28" height="28" style="border-radius:50%;" />';
-      const name = item.anonymous ? 'Anonymous Editor' : escapeHtml(item.author_name);
+        : '<img class="req-author-avatar" src="' + esc(item.author_avatar) + '" alt="" width="28" height="28" style="border-radius:50%;" />';
+      const name = item.anonymous ? 'Anonymous Editor' : esc(item.author_name);
       const stars = starStr(item.rating);
       const date = item.created ? new Date(item.created).toLocaleDateString() : '';
       const improv = item.improvements
         ? '<div style="margin-top:8px;padding-top:8px;border-top:1px dashed rgba(255,255,255,0.08);font-size:13px;color:rgba(255,255,255,0.7);">' +
             '<span class="mono" style="font-size:11px;color:#888;display:block;margin-bottom:2px;">REQUESTED IMPROVEMENTS:</span>' +
-            escapeHtml(item.improvements) +
+            esc(item.improvements) +
           '</div>'
         : '';
 
@@ -1633,7 +1727,7 @@
           '</div>' +
           '<span class="mono" style="color:#f59e0b;letter-spacing:1px;font-size:13px;">' + stars + '</span>' +
         '</div>' +
-        '<p style="margin:4px 0 0;font-size:14px;line-height:1.45;color:#eee;">' + escapeHtml(item.feedback) + '</p>' +
+        '<p style="margin:4px 0 0;font-size:14px;line-height:1.45;color:#eee;">' + esc(item.feedback) + '</p>' +
         improv +
         '<div style="margin-top:4px;font-size:11px;color:#666;" class="mono">' + date + '</div>' +
       '</article>';
@@ -1655,6 +1749,7 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load feedback');
       feedbackItems = Array.isArray(data.feedback) ? data.feedback : [];
+      feedbackAdmin = Boolean(data.is_admin);
     } catch (err) {
       toast({ title: 'Could not load feedback', sub: err.message, icon: ICON.x });
       feedbackItems = [];
@@ -1697,6 +1792,7 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to submit feedback');
       feedbackItems = Array.isArray(data.feedback) ? data.feedback : feedbackItems;
+      feedbackAdmin = Boolean(data.is_admin);
       feedbackForm.reset();
       setFeedbackRating(5);
       feedbackComposeOpen = false;
@@ -3613,6 +3709,7 @@
   renderCategoryHead();
   renderBrowse();
   loadIncomingReleases();
+  loadEarlyAccess();
   renderReqCategories();
   wireRequestControls();
   initFeedbackDrawer();

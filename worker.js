@@ -90,6 +90,7 @@ export default {
       if (url.pathname === '/vault/public') return await handleVaultPublic(request, url, env, cors);
       if (url.pathname === '/vault/incoming') return await handleIncomingReleases(request, url, env, cors);
       if (url.pathname === '/vault/incoming/vote') return await handleIncomingVote(request, url, env, cors);
+      if (url.pathname === '/early-access') return await handleEarlyAccess(request, url, env, cors);
       if (url.pathname === '/api/vault/publish') return await handleVaultPublish(request, url, env, cors);
       if (url.pathname === '/dashboard/settings') return await handleDashboardSettings(request, url, env, cors);
       if (url.pathname === '/dashboard/embed') return await handleDashboardEmbed(request, url, env, cors);
@@ -440,6 +441,14 @@ function project(rows, viewerId) {
     .sort((a, b) => b.votes - a.votes || String(b.created).localeCompare(String(a.created)));
 }
 
+/* A member manages only the requests they posted; the owner and admins keep the
+   whole board for moderation. Signed-out visitors still see the public showcase. */
+function projectForViewer(rows, session, env) {
+  const viewerId = session && session.inServer ? session.id : '';
+  const visible = viewerId && !isAdmin(session, env) ? rows.filter(r => r.by === viewerId) : rows;
+  return project(visible, viewerId);
+}
+
 /* Shared by the board and the counters: both belong to members, and the copy
    has to stay true whichever route called it. */
 async function requireMember(token, env) {
@@ -467,7 +476,7 @@ async function handleRequests(request, url, env, cors) {
       try { session = await readSession(token, env); } catch { session = null; }
     }
     const rows = await requestBoard(env, { action: 'read' });
-    return json({ requests: project(rows, session && session.inServer ? session.id : ''), is_admin: isAdmin(session, env), is_owner: Boolean(session && session.isOwner) }, 200, cors);
+    return json({ requests: projectForViewer(rows, session, env), is_admin: isAdmin(session, env), is_owner: Boolean(session && session.isOwner) }, 200, cors);
   }
   if (request.method !== 'POST') return json({ error: 'Use GET or POST.' }, 405, cors);
   const input = await jsonBody(request);
@@ -490,7 +499,7 @@ async function handleRequests(request, url, env, cors) {
   };
   const written = await requestBoard(env, { action: 'create', row });
   const notification = env.DISCORD_REQUESTS_WEBHOOK_URL ? 'queued' : 'not_configured';
-  return json({ id: row.id, requests: project(written, session.id), is_admin: isAdmin(session, env), is_owner: Boolean(session && session.isOwner), notification }, 201, cors);
+  return json({ id: row.id, requests: projectForViewer(written, session, env), is_admin: isAdmin(session, env), is_owner: Boolean(session && session.isOwner), notification }, 201, cors);
 }
 
 async function handleVote(request, env, cors) {
@@ -501,7 +510,7 @@ async function handleVote(request, env, cors) {
   if (!id) throw fail(400, 'bad_id', 'Missing request id.');
 
   const written = await requestBoard(env, { action: 'vote', id, viewerId: session.id });
-  return json({ requests: project(written, session.id), is_admin: isAdmin(session, env), is_owner: Boolean(session && session.isOwner) }, 200, cors);
+  return json({ requests: projectForViewer(written, session, env), is_admin: isAdmin(session, env), is_owner: Boolean(session && session.isOwner) }, 200, cors);
 }
 
 async function handleStatus(request, env, cors) {
@@ -519,7 +528,7 @@ async function handleStatus(request, env, cors) {
   const id = cleanText(input.id, 60);
   if (!id) throw fail(400, 'bad_id', 'Missing request id.');
   const written = await requestBoard(env, { action: 'status', id, status });
-  return json({ requests: project(written, session.id), is_admin: true, is_owner: session.isOwner }, 200, cors);
+  return json({ requests: projectForViewer(written, session, env), is_admin: true, is_owner: session.isOwner }, 200, cors);
 }
 
 async function handleDelete(request, env, cors) {
@@ -530,42 +539,37 @@ async function handleDelete(request, env, cors) {
   const id = cleanText(input.id, 60);
   if (!id) throw fail(400, 'bad_id', 'Missing request id.');
   const written = await requestBoard(env, { action: 'delete', id });
-  return json({ requests: project(written, session.id), is_admin: true, is_owner: true }, 200, cors);
+  return json({ requests: projectForViewer(written, session, env), is_admin: true, is_owner: true }, 200, cors);
 }
 
 /* ------------------------------ feedback board ---------------------------- */
 const FEEDBACK_KEY = 'kyro.feedback.v1';
 
+/* Author ids never leave the worker; anonymous entries lose their identity for
+   everyone but the person who wrote them (the list is already filtered to them). */
+function feedbackView(items) {
+  return items.map(item => item.anonymous
+    ? {
+        id: item.id, rating: item.rating, feedback: item.feedback,
+        improvements: item.improvements || '', anonymous: true,
+        author_name: 'Anonymous Editor', author_avatar: '', created: item.created
+      }
+    : {
+        id: item.id, rating: item.rating, feedback: item.feedback,
+        improvements: item.improvements || '', anonymous: false,
+        author_name: item.author_name || 'Member', author_avatar: item.author_avatar || '', created: item.created
+      });
+}
+
 async function handleFeedback(request, url, env, cors) {
   if (request.method === 'GET') {
     const token = bearerToken(request, url);
-    await requireMember(token, env);
+    const session = await requireMember(token, env);
+    const admin = isAdmin(session, env);
     const doc = (await readDoc(env, FEEDBACK_KEY, { items: [] })).value || { items: [] };
-    const items = (Array.isArray(doc.items) ? doc.items : []).map(item => {
-      if (item.anonymous) {
-        return {
-          id: item.id,
-          rating: item.rating,
-          feedback: item.feedback,
-          improvements: item.improvements || '',
-          anonymous: true,
-          author_name: 'Anonymous Editor',
-          author_avatar: '',
-          created: item.created
-        };
-      }
-      return {
-        id: item.id,
-        rating: item.rating,
-        feedback: item.feedback,
-        improvements: item.improvements || '',
-        anonymous: false,
-        author_name: item.author_name || 'Member',
-        author_avatar: item.author_avatar || '',
-        created: item.created
-      };
-    });
-    return json({ feedback: items }, 200, cors);
+    const all = Array.isArray(doc.items) ? doc.items : [];
+    const visible = admin ? all : all.filter(item => item.author_id === session.id);
+    return json({ feedback: feedbackView(visible), is_admin: admin, is_owner: Boolean(session.isOwner) }, 200, cors);
   }
 
   if (request.method !== 'POST') return json({ error: 'Use GET or POST.' }, 405, cors);
@@ -637,32 +641,10 @@ async function handleFeedback(request, url, env, cors) {
     }
   }
 
-  const responseItems = (written.items || []).map(item => {
-    if (item.anonymous) {
-      return {
-        id: item.id,
-        rating: item.rating,
-        feedback: item.feedback,
-        improvements: item.improvements || '',
-        anonymous: true,
-        author_name: 'Anonymous Editor',
-        author_avatar: '',
-        created: item.created
-      };
-    }
-    return {
-      id: item.id,
-      rating: item.rating,
-      feedback: item.feedback,
-      improvements: item.improvements || '',
-      anonymous: false,
-      author_name: item.author_name || 'Member',
-      author_avatar: item.author_avatar || '',
-      created: item.created
-    };
-  });
+  const admin = isAdmin(session, env);
+  const responseItems = feedbackView((written.items || []).filter(item => admin || item.author_id === session.id));
 
-  return json({ feedback: responseItems }, 201, cors);
+  return json({ feedback: responseItems, is_admin: admin, is_owner: Boolean(session.isOwner) }, 201, cors);
 }
 
 async function handleInvite(request, url, env, cors) {
@@ -1249,27 +1231,37 @@ async function handleIncomingReleases(request, url, env, cors) {
     const doc = (await readDoc(env, INCOMING_RELEASES_KEY, { items: [] })).value;
     const items = Array.isArray(doc.items) ? doc.items : [];
     
-    // Check viewer id if token present
+    // Resolve the viewer: owner/admin and early-access members skip the waitlist.
     let viewerId = '';
+    let canBypass = false;
     try {
       const token = bearerToken(request, url);
       if (token) {
         const session = await readSession(token, env);
-        if (session && session.inServer) viewerId = session.id;
+        if (session && session.inServer) {
+          viewerId = session.id;
+          canBypass = isAdmin(session, env) || await hasEarlyAccess(env, session.id);
+        }
       }
     } catch {}
 
     const projected = items.map(item => {
       const voters = item.voters || {};
       const userVote = viewerId ? (voters[viewerId] || 0) : 0;
+      const unlocked = Boolean(item.released) || canBypass;
       return {
         ...item,
         userVote,
-        voters: undefined // keep privacy
+        voters: undefined, // keep privacy
+        early_access: canBypass && !item.released,
+        // The direct link stays hidden until the goal is reached or the viewer
+        // holds an early-access pass, so the waitlist is a real gate.
+        download_url: unlocked ? item.download_url : undefined,
+        pass: unlocked ? item.pass : undefined
       };
     });
 
-    return json({ incoming: projected }, 200, cors);
+    return json({ incoming: projected, earlyAccess: canBypass }, 200, cors);
   }
 
   if (request.method === 'POST') {
@@ -1870,6 +1862,69 @@ const DASHBOARD_CONFIG_KEY = 'kyro.dashboard_config.v1';
 const DASHBOARD_AUDIT_KEY = 'kyro.dashboard_audit.v1';
 const NOTIFICATIONS_KEY = 'kyro.notifications.v1';
 const INCOMING_RELEASES_KEY = 'kyro.incoming_releases.v1';
+const EARLY_ACCESS_KEY = 'kyro.early_access.v1';
+
+/* Owner-granted pass: these members skip the incoming waitlist and pull the
+   download link directly, before the community vote goal is reached. */
+async function earlyAccessUsers(env) {
+  const doc = (await readDoc(env, EARLY_ACCESS_KEY, { users: {} })).value || {};
+  return doc.users && typeof doc.users === 'object' ? doc.users : {};
+}
+
+async function hasEarlyAccess(env, userId) {
+  if (!userId) return false;
+  const users = await earlyAccessUsers(env);
+  return Boolean(users[userId]);
+}
+
+async function handleEarlyAccess(request, url, env, cors) {
+  const token = bearerToken(request, url);
+  const session = await requireMember(token, env);
+  const isOwner = session.isOwner || session.id === '1052909930073567232' || (session.role || '').toLowerCase() === 'owner';
+
+  if (request.method === 'GET') {
+    const users = await earlyAccessUsers(env);
+    const payload = {
+      earlyAccess: isOwner || isAdmin(session, env) || Boolean(users[session.id]),
+      is_owner: isOwner
+    };
+    if (isOwner) payload.users = Object.entries(users).map(([id, meta]) => ({ id, ...(meta || {}) }));
+    return json(payload, 200, cors);
+  }
+
+  if (!isOwner) throw fail(403, 'forbidden', 'Only the Server Owner can manage early access.');
+
+  if (request.method === 'POST') {
+    const input = await jsonBody(request);
+    const id = cleanText(input.id, 40);
+    if (!/^\d{17,20}$/.test(id)) throw fail(400, 'bad_id', 'Enter a valid Discord user ID (17–20 digits).');
+    const username = cleanText(input.username || '', 60);
+    const meta = { username: username || undefined, granted_by: session.id, granted_at: new Date().toISOString() };
+    await mutateDoc(env, EARLY_ACCESS_KEY, { users: {} }, curr => {
+      const users = curr && curr.users && typeof curr.users === 'object' ? curr.users : {};
+      return { users: { ...users, [id]: meta } };
+    });
+    await logBotAudit(env, 'Early Access Granted', session, `Granted early access to ${username || id} (${id}).`);
+    return json({ ok: true, id }, 200, cors);
+  }
+
+  if (request.method === 'DELETE') {
+    const input = await jsonBody(request);
+    const id = cleanText(input.id, 40);
+    if (!id) throw fail(400, 'bad_id', 'Missing user ID.');
+    let removed = false;
+    await mutateDoc(env, EARLY_ACCESS_KEY, { users: {} }, curr => {
+      const users = curr && curr.users && typeof curr.users === 'object' ? { ...curr.users } : {};
+      removed = Boolean(users[id]);
+      delete users[id];
+      return { users };
+    });
+    if (removed) await logBotAudit(env, 'Early Access Revoked', session, `Revoked early access from ${id}.`);
+    return json({ ok: true, removed }, 200, cors);
+  }
+
+  return json({ error: 'Use GET, POST, or DELETE.' }, 405, cors);
+}
 const KYRO_ICON = 'https://raw.githubusercontent.com/kyroownr/Kyro-Websitee/main/assets/kyro-icon.png';
 
 async function handleVaultPublish(request, url, env, cors) {

@@ -206,6 +206,9 @@ const incomingMain = `  <main class="shell">
     <!-- ============ Access status strip ============ -->
     <section class="access-strip" id="accessStrip" aria-live="polite"></section>
 
+    <!-- ============ Early Access (owner-managed waitlist bypass) ============ -->
+    <section id="earlyAccessSection" aria-live="polite" style="margin:16px 0;"></section>
+
     <!-- ============ Incoming Items Grid ============ -->
     <section class="incoming-section" id="incomingSection" style="margin: 24px 0 48px 0;">
       <div class="grid" id="incomingGrid" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:16px;"></div>
