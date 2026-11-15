@@ -53,7 +53,7 @@ window.KYRO_SEED = [
         name: 'After.Effects.v27.0.rar',
         size: '',
         label: 'After Effects v27 — Windows',
-        url: 'https://clicknupload.click/12l0im7t93mi/After.Effects.v27.0.rar'
+        gated: true
       }
     ],
     features: [
@@ -81,7 +81,7 @@ window.KYRO_SEED = [
         name: 'Premiere.v27.0.0.rar',
         size: '',
         label: 'Premiere Pro v27 — Windows',
-        url: 'https://clicknupload.click/31b0y6wfvmpk/Premiere.v27.0.0.rar'
+        gated: true
       }
     ],
     features: [
@@ -111,8 +111,7 @@ window.KYRO_SEED = [
         name: 'After Effects 26.2.1 ARM',
         size: '',
         label: 'After Effects 26.2.1 ARM — macOS',
-        url: 'https://bzzhr.to/nijvtdnsgiqg',
-        pass: 'flame'
+        gated: true,
       }
     ],
     features: [
@@ -140,8 +139,7 @@ window.KYRO_SEED = [
         name: 'After Effects — macOS',
         size: '',
         label: 'After Effects — macOS',
-        url: 'https://bzzhr.to/21ps0jufvpm5',
-        pass: 'flame'
+        gated: true,
       }
     ],
     features: [
@@ -171,8 +169,7 @@ window.KYRO_SEED = [
         name: 'Premiere Pro 26.2.1 ARM',
         size: '',
         label: 'Premiere Pro 26.2.1 ARM — macOS',
-        url: 'https://bzzhr.to/4l6fm7mn8p89',
-        pass: 'flame'
+        gated: true,
       }
     ],
     features: [
@@ -200,8 +197,7 @@ window.KYRO_SEED = [
         name: 'Premiere Pro — macOS',
         size: '',
         label: 'Premiere Pro — macOS',
-        url: 'https://bzzhr.to/ow8mf9x1fci8',
-        pass: 'flame'
+        gated: true,
       }
     ],
     features: [
@@ -233,8 +229,7 @@ window.KYRO_SEED = [
         name: 'Toon Boom Harmony Premium',
         size: '',
         label: 'Windows',
-        url: 'https://1024terabox.com/s/1exMINTeowOqb6mzXgZ_TIQ',
-        pass: 'Kyro'
+        gated: true,
       }
     ],
     features: [
@@ -269,8 +264,7 @@ window.KYRO_SEED = [
         name: 'Krotos Concept 2.0.3.zip',
         size: '',
         label: 'Krotos Concept 2.0.3 — Windows',
-        url: 'https://1024terabox.com/s/1lv5g6zY7PrlBxMpO-KopDg',
-        pass: 'Kyro'
+        gated: true,
       }
     ],
     features: [
@@ -303,8 +297,7 @@ window.KYRO_SEED = [
         name: 'Aescripts AutoCaption v4.6.1.zip',
         size: '',
         label: 'AutoCaption v4.6.1 — After Effects extension',
-        url: 'https://1024terabox.com/s/1xSDwplTO-NmHCJL8UiSPLw',
-        pass: 'Kyro'
+        gated: true,
       }
     ],
     features: [
@@ -335,8 +328,7 @@ window.KYRO_SEED = [
         name: 'Aescripts Cosmic v1.0.0.zip',
         size: '',
         label: 'Cosmic v1.0.0 — After Effects / Premiere Pro plug-in',
-        url: 'https://1024terabox.com/s/1QdVEcXH1oNuEqplqPBf3nQ',
-        pass: 'Kyro'
+        gated: true,
       }
     ],
     features: [
@@ -374,8 +366,7 @@ window.KYRO_SEED = [
         name: 'AppleFX-1.2.5.zxp',
         size: '',
         label: 'Signed CEP extension panel',
-        url: 'https://1024terabox.com/s/1sxC_pFYaOWc7dpeTkzRUsw',
-        pass: 'Kyro'
+        gated: true,
       }
     ],
     features: [
@@ -414,22 +405,21 @@ window.KYRO_SEED = [
         name: 'SaaSor Plus — primary link (Terabox) [Recommended]',
         size: '',
         label: 'Scenes, 3D assets, GLB models and the extension panel (Recommended)',
-        url: 'https://1024terabox.com/s/1ELxpFUwyeCCeXc_mdkIpsw',
-        pass: 'Kyro'
+        gated: true,
       },
       {
         ext: 'cloud',
         name: 'SaaSor Plus — alternate link (Google Drive) [Recommended / Good]',
         size: '',
         label: 'Google Drive mirror for SaaSor Plus toolkit',
-        url: 'https://forms.gle/eaVG8ys3pDCmKxwg8'
+        gated: true
       },
       {
         ext: 'archive',
         name: 'SaaSor Plus — direct link (Filez) [Sometimes Broken - Not Recommended]',
         size: '',
         label: 'Direct mirror link (Sometimes broken - Terabox or Drive recommended)',
-        url: 'https://filez.stream/w6wtU5qd47#d0xs_-wVX4uyQsxzHkRdQQWtemLVaYJXJ2OUPDR_lJo'
+        gated: true
       }
     ],
     features: [

@@ -2980,11 +2980,11 @@
       const action = !unlocked
         ? '<button type="button" class="btn btn-ghost btn-sm" data-file="' + esc(f.ext) + '">' +
           ICON.lock + (auth.state === OUT ? 'Login' : 'Locked') + '</button>'
-        : f.url
-          /* Externally hosted archives hand off to the file host, so the
-             button links out instead of faking a transfer. */
-          ? '<a class="btn btn-primary btn-sm" data-ext-link href="' + esc(f.url) +
-            '" target="_blank" rel="noopener noreferrer">' + ICON.download + 'Download</a>'
+        : (f.gated || f.url)
+          /* The archive lives on an external host. Its URL is not in the page:
+             the worker hands it over with the member token on click. */
+          ? '<button type="button" class="btn btn-primary btn-sm" data-gated="' + esc(f.name || f.ext || '') +
+            '">' + ICON.download + 'Download</button>'
           : '<button type="button" class="btn btn-primary btn-sm" data-file="' + esc(f.ext) +
             '" style="position:relative">' + ICON.download + 'Download<span class="ring"></span></button>';
       return (
@@ -3019,16 +3019,9 @@
       '<p class="checksum-help">Verify the downloaded file, then compare the result:<br>Windows<code>certutil -hashfile &lt;file&gt; SHA256</code>macOS<code>shasum -a 256 &lt;file&gt;</code></p></section>';
   }
 
-  function passwordHTML(r) {
-    if (auth.state !== VERIFIED) return '';
-    const pass = (r.files || []).map(f => f.pass).filter(Boolean)[0];
-    if (!pass) return '';
-    return '<div class="pass-row">' +
-      '<span class="pass-label mono">ARCHIVE PASSWORD</span>' +
-      '<code class="pass-value">' + esc(pass) + '</code>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-pass-copy data-pass="' + esc(pass) + '">' + ICON.copy + 'Copy</button>' +
-      '</div>';
-  }
+  /* The archive password is part of the worker's download answer, never part
+     of this bundle, so there is nothing to render before the click. */
+  function passwordHTML() { return ''; }
 
   /* -------------------------- release lock / countdown -------------------
      A staged drop carries `releaseAt` (an ISO timestamp). Until that moment its
@@ -3088,15 +3081,8 @@
     if (gr) gr.addEventListener('click', recheckMembership);
     zone.querySelectorAll('[data-file]').forEach(btn =>
       btn.addEventListener('click', () => requestFile(r, btn.dataset.file, btn)));
-    /* The externally hosted archive leaves the page, so the click itself is the
-       only signal that somebody actually took the file. */
-    zone.querySelectorAll('[data-ext-link]').forEach(a =>
-      a.addEventListener('click', () => {
-        countDownload(r);
-        recordDownloadHistory(r, { ext: 'link', name: r.title, size: 'External' });
-      }));
-    const cp = zone.querySelector('[data-pass-copy]');
-    if (cp) cp.addEventListener('click', () => copyText(cp, cp.dataset.pass));
+    zone.querySelectorAll('[data-gated]').forEach(btn =>
+      btn.addEventListener('click', () => requestLink(r, btn.dataset.gated, btn)));
   }
 
   function copyText(btn, text, title = 'Password copied', sub = 'Paste it when the archive asks.') {
@@ -3360,6 +3346,46 @@
       return;
     }
     startDownload(r, ext, btn);
+  }
+
+  /* Asks the worker for the real archive URL. Only a verified member gets an
+     answer, and a staged incoming release is refused until it is released. */
+  async function requestLink(r, name, btn) {
+    if (btn.disabled) return;
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = ICON.download + 'Preparing…';
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/vault/link', {
+        method: 'POST',
+        headers: Object.assign({ 'content-type': 'application/json' }, reqHeaders()),
+        credentials: 'omit',
+        body: JSON.stringify({ id: r.id, name })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.url) {
+        toast({
+          title: res.status === 403 ? 'Not live yet' : 'Link unavailable',
+          sub: data.error || 'Try again in a moment.', icon: ICON.lock, warn: true, ttl: 6500
+        });
+        return;
+      }
+      countDownload(r);
+      recordDownloadHistory(r, { ext: 'link', name: r.title, size: 'External' });
+      if (data.pass) {
+        toast({
+          title: 'Archive password: ' + data.pass,
+          sub: 'Paste it when the archive asks.', icon: ICON.check, ttl: 10000,
+          actions: [{ label: 'Copy password', onClick: () => navigator.clipboard && navigator.clipboard.writeText(data.pass) }]
+        });
+      }
+      window.open(data.url, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      toast({ title: 'Link unavailable', sub: 'Check your connection and try again.', icon: ICON.lock, warn: true });
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = original;
+    }
   }
 
   function startDownload(r, ext, btn) {

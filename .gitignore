@@ -15,6 +15,9 @@ dist/
 # docs/ is the published site mirror and is committed on purpose.
 _site/
 
+# Download links and archive passwords — upload to KV, never commit
+vault-links.json
+
 # Local tooling and OS noise
 node_modules/
 *.log

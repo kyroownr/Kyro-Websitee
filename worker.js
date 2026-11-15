@@ -88,6 +88,7 @@ export default {
       if (url.pathname === '/vault/submissions/manage') return await handleVaultSubmissionManage(request, url, env, cors);
       if (url.pathname === '/vault/notifications') return await handleVaultNotifications(request, url, env, cors);
       if (url.pathname === '/vault/public') return await handleVaultPublic(request, url, env, cors);
+      if (url.pathname === '/vault/link') return await handleVaultLink(request, url, env, cors);
       if (url.pathname === '/vault/incoming') return await handleIncomingReleases(request, url, env, cors);
       if (url.pathname === '/vault/incoming/vote') return await handleIncomingVote(request, url, env, cors);
       if (url.pathname === '/early-access') return await handleEarlyAccess(request, url, env, cors);
@@ -1079,6 +1080,42 @@ async function handleVaultPublic(request, url, env, cors) {
     // Discord message id are none of a visitor's business.
     .map(({ voters, by, discord_msg_id, vote_offset, updated_at, ...item }) => item);
   return json({ items, hidden }, 200, cors);
+}
+
+/* Download links and archive passwords never ship to the browser: the public
+   catalogue only marks a file as gated, and this endpoint hands the real URL
+   to a verified member (and only once an incoming release is actually live). */
+const VAULT_LINKS_KEY = 'kyro.vault_links.v1';
+
+async function handleVaultLink(request, url, env, cors) {
+  if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
+  const token = bearerToken(request, url);
+  const session = await requireMember(token, env);
+  const input = await jsonBody(request);
+  const id = String(input.id || '').trim();
+  const name = String(input.name || '').trim();
+  if (!id) throw fail(400, 'bad_id', 'Resource ID is required.');
+
+  const doc = (await readDoc(env, VAULT_LINKS_KEY, { items: {} })).value || {};
+  const entry = doc.items && doc.items[id];
+  if (!entry) throw fail(404, 'no_file', 'No downloadable file is stored for that resource.');
+
+  // A staged release stays sealed until the community vote releases it, even
+  // for members who know the title — early access or staff bypass it.
+  const incoming = (await readDoc(env, INCOMING_RELEASES_KEY, { items: [] })).value || {};
+  const staged = (Array.isArray(incoming.items) ? incoming.items : [])
+    .find(item => item.id === id || item.slug === id);
+  if (staged && !staged.released) {
+    const bypass = isAdmin(session, env) || await hasEarlyAccess(env, session.id);
+    if (!bypass) throw fail(403, 'not_released', 'That release is still gathering community votes.');
+  }
+
+  const files = entry.files || {};
+  const file = name ? files[name] : Object.values(files)[0];
+  if (!file || !file.url) throw fail(404, 'no_file', 'No downloadable file is stored for that resource.');
+
+  await limitWrites(env, 'links', session.id, 80);
+  return json({ ok: true, url: file.url, pass: file.pass || '' }, 200, cors);
 }
 
 function hiddenTokens(input) {
