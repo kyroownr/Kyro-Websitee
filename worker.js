@@ -1987,6 +1987,9 @@ async function handleVaultPublish(request, url, env, cors) {
   return json(outcomes, 200, cors);
 }
 
+// Channels
+const AUDIT_UPDATES_CHANNEL_ID = '1571403237788221611'; // #updates in category "Staff for mods+"
+
 async function logBotAudit(env, action, byUser, details) {
   const entry = {
     id: crypto.randomUUID(),
@@ -2001,10 +2004,10 @@ async function logBotAudit(env, action, byUser, details) {
     return { logs: [entry, ...logs].slice(0, 100) };
   });
 
-  // Post to public/audit channel if configured
+  // Post audit logs to private staff #updates channel
   if (env.DISCORD_BOT_TOKEN) {
     try {
-      const channelId = env.DISCORD_PUBLIC_APPS_CHANNEL_ID || '1542135796369457182';
+      const channelId = env.DISCORD_AUDIT_CHANNEL_ID || AUDIT_UPDATES_CHANNEL_ID;
       await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
         method: 'POST',
         headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
