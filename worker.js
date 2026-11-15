@@ -1202,20 +1202,23 @@ async function handleVaultSubmissionManage(request, url, env, cors) {
     let deletedSub = null;
     await mutateDoc(env, VAULT_SUBMISSIONS_KEY, { submissions: [] }, curr => {
       const list = Array.isArray(curr?.submissions) ? curr.submissions : [];
-      deletedSub = list.find(s => s.id === subId);
-      return { submissions: list.filter(s => s.id !== subId) };
+      deletedSub = list.find(s => s.id === subId || s.slug === subId);
+      return { submissions: list.filter(s => s.id !== subId && s.slug !== subId) };
     });
 
-    if (deletedSub) {
-      // Also remove from public items
-      await mutateDoc(env, VAULT_PUBLIC_ITEMS_KEY, { items: [] }, curr => {
-        const items = Array.isArray(curr?.items) ? curr.items : [];
-        return { items: items.filter(i => i.id !== subId && i.slug !== deletedSub.slug) };
-      });
+    // Also remove from public items (match by id or slug)
+    let deletedPublic = null;
+    await mutateDoc(env, VAULT_PUBLIC_ITEMS_KEY, { items: [] }, curr => {
+      const items = Array.isArray(curr?.items) ? curr.items : [];
+      deletedPublic = items.find(i => i.id === subId || i.slug === subId);
+      return { items: items.filter(i => i.id !== subId && i.slug !== subId && (!deletedSub || i.slug !== deletedSub.slug)) };
+    });
 
+    const targetSub = deletedSub || deletedPublic;
+    if (targetSub) {
       // If Discord messages were recorded, remove or edit them
       const vaultItemsDoc = (await readDoc(env, VAULT_ITEMS_KEY, { items: {} })).value;
-      const meta = vaultItemsDoc.items && vaultItemsDoc.items[deletedSub.slug];
+      const meta = vaultItemsDoc.items && vaultItemsDoc.items[targetSub.slug];
       if (meta && env.DISCORD_BOT_TOKEN) {
         if (meta.announcement_msg_id) {
           fetch(`https://discord.com/api/v10/channels/1539961971422658571/messages/${meta.announcement_msg_id}`, {
@@ -1232,8 +1235,8 @@ async function handleVaultSubmissionManage(request, url, env, cors) {
       }
     }
 
-    await logBotAudit(env, 'Vault Resource Deleted', session, `Owner deleted submission "${deletedSub?.title || subId}".`);
-    return json({ ok: true, deleted: Boolean(deletedSub) }, 200, cors);
+    await logBotAudit(env, 'Vault Resource Deleted', session, `Owner deleted submission "${targetSub?.title || subId}".`);
+    return json({ ok: true, deleted: Boolean(targetSub) }, 200, cors);
   }
 
   if (request.method === 'PUT' || request.method === 'PATCH') {
@@ -1244,7 +1247,7 @@ async function handleVaultSubmissionManage(request, url, env, cors) {
     let updatedSub = null;
     await mutateDoc(env, VAULT_SUBMISSIONS_KEY, { submissions: [] }, curr => {
       const list = Array.isArray(curr?.submissions) ? curr.submissions : [];
-      const found = list.find(s => s.id === subId);
+      const found = list.find(s => s.id === subId || s.slug === subId);
       if (found) {
         if (input.title) found.title = cleanText(input.title, 120);
         if (input.details !== undefined) found.details = cleanText(input.details, 1500);
@@ -1259,20 +1262,36 @@ async function handleVaultSubmissionManage(request, url, env, cors) {
       return { submissions: list };
     });
 
-    if (!updatedSub) throw fail(404, 'not_found', 'Submission not found.');
-
-    // Update in public items if approved
-    if (updatedSub.status === 'approved') {
-      await mutateDoc(env, VAULT_PUBLIC_ITEMS_KEY, { items: [] }, curr => {
-        const items = Array.isArray(curr?.items) ? curr.items : [];
+    // Update in public items if approved (or if public item exists even if submission record was missing)
+    let updatedPublic = null;
+    await mutateDoc(env, VAULT_PUBLIC_ITEMS_KEY, { items: [] }, curr => {
+      const items = Array.isArray(curr?.items) ? curr.items : [];
+      const found = items.find(i => i.id === subId || i.slug === subId);
+      if (found) {
+        if (input.title) found.title = cleanText(input.title, 120);
+        if (input.details !== undefined) found.details = cleanText(input.details, 1500);
+        if (input.download_url) found.download_url = String(input.download_url).trim();
+        if (input.password !== undefined) found.pass = cleanText(input.password, 100);
+        if (input.size) found.size = cleanText(input.size, 30);
+        if (input.category) found.category = cleanText(input.category, 60);
+        if (input.image_url) found.image_url = String(input.image_url).trim();
+        found.updated_at = new Date().toISOString();
+        updatedPublic = found;
+        return { items: [found, ...items.filter(i => i !== found)] };
+      } else if (updatedSub && updatedSub.status === 'approved') {
         return { items: [updatedSub, ...items.filter(i => i.id !== subId && i.slug !== updatedSub.slug)] };
-      });
-      // Synchronize modified details with Discord embeds
-      await syncModifiedDiscordEmbed(updatedSub, env);
-    }
+      }
+      return { items };
+    });
 
-    await logBotAudit(env, 'Vault Resource Modified', session, `Owner edited submission "${updatedSub.title}".`);
-    return json({ ok: true, submission: updatedSub }, 200, cors);
+    const activeItem = updatedSub || updatedPublic;
+    if (!activeItem) throw fail(404, 'not_found', 'Resource not found.');
+
+    // Synchronize modified details with Discord embeds
+    await syncModifiedDiscordEmbed(activeItem, env);
+
+    await logBotAudit(env, 'Vault Resource Modified', session, `Owner edited submission "${activeItem.title}".`);
+    return json({ ok: true, submission: activeItem }, 200, cors);
   }
 
   return json({ error: 'Use PUT, PATCH, or DELETE.' }, 405, cors);

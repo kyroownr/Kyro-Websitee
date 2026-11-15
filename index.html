@@ -613,6 +613,57 @@
     </div>
   </div>
 
+  <!-- ============ Owner Edit Resource Modal ============ -->
+  <div class="overlay" id="ownerEditModalOverlay" hidden>
+    <div class="modal" id="ownerEditModalBox" role="dialog" aria-modal="true" aria-label="Edit Resource" style="max-width:540px;background:#0d1117;border:1px solid rgba(255,255,255,0.1);padding:24px;border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,0.6);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h3 style="font-size:1.15rem;font-weight:700;color:#fff;display:flex;align-items:center;gap:8px;">
+          <span>⚙️</span> Edit Resource Post
+        </h3>
+        <button type="button" class="close-x" id="ownerEditModalClose" aria-label="Close modal"></button>
+      </div>
+      <form id="ownerEditModalForm" style="display:flex;flex-direction:column;gap:12px;">
+        <input type="hidden" id="oemId">
+        <div>
+          <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Resource Title</label>
+          <input type="text" class="input" id="oemTitle" required style="width:100%;box-sizing:border-box;">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div>
+            <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Approx Size</label>
+            <input type="text" class="input" id="oemSize" placeholder="e.g. 4.88MB" style="width:100%;box-sizing:border-box;">
+          </div>
+          <div>
+            <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Category</label>
+            <input type="text" class="input" id="oemCategory" placeholder="e.g. Adobe After Effects" style="width:100%;box-sizing:border-box;">
+          </div>
+        </div>
+        <div>
+          <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Download URL</label>
+          <input type="url" class="input" id="oemDownloadUrl" required style="width:100%;box-sizing:border-box;">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div>
+            <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Archive Password (Optional)</label>
+            <input type="text" class="input" id="oemPassword" placeholder="e.g. Kyro" style="width:100%;box-sizing:border-box;">
+          </div>
+          <div>
+            <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Banner Image URL</label>
+            <input type="url" class="input" id="oemImageUrl" placeholder="https://..." style="width:100%;box-sizing:border-box;">
+          </div>
+        </div>
+        <div>
+          <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Description / Effects / Notes</label>
+          <textarea class="input" id="oemDetails" rows="4" style="width:100%;box-sizing:border-box;resize:vertical;font-family:inherit;line-height:1.4;"></textarea>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px;">
+          <button type="button" class="btn btn-ghost" id="oemCancelBtn">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="oemSaveBtn">Save &amp; Update Live Post</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Toast stack (downloads, access notices) -->
   <div class="toasts" id="toasts" aria-live="polite"></div>
 

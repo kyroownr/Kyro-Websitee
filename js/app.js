@@ -103,6 +103,7 @@
 
           return {
             id: itemSlug,
+            cloud_id: item.id,
             title: item.title,
             desc: item.details || `${item.title} — verified resource on Kyro.`,
             category: item.category || (resourceKind === 'software' ? 'software' : 'extension'),
@@ -126,6 +127,8 @@
         });
 
         if (cloudItems.length) {
+          const seedIds = new Set((window.KYRO_SEED || []).map(r => r.id));
+          resources = (window.KYRO_SEED || []).map(r => Object.assign({}, r));
           const existingIds = new Set(resources.map(r => r.id));
           cloudItems.forEach(ci => {
             if (!existingIds.has(ci.id)) {
@@ -525,7 +528,10 @@
       const state = data.in_server ? VERIFIED : LOGGED;
       const stateChanged = auth.state !== state;
       auth.state = state;
-      if (auth.user) auth.user.role = data.role || (data.is_owner ? 'Owner' : 'Member');
+      if (auth.user) {
+        auth.user.role = data.role || (data.is_owner ? 'Owner' : 'Member');
+        auth.user.is_owner = Boolean(data.is_owner);
+      }
       saveAuth();
       setDiscordRole(data.is_owner, data.role);
       if (stateChanged) renderAuth();
@@ -570,7 +576,10 @@
       if (!res.ok) throw new Error(data.error || ('Worker responded ' + res.status));
 
       const member = Boolean(data.in_server);
-      if (auth.user) auth.user.role = data.role || (data.is_owner ? 'Owner' : 'Member');
+      if (auth.user) {
+        auth.user.role = data.role || (data.is_owner ? 'Owner' : 'Member');
+        auth.user.is_owner = Boolean(data.is_owner);
+      }
       auth = { state: member ? VERIFIED : LOGGED, user: auth.user, token: data.token || auth.token };
       setDiscordRole(data.is_owner, data.role);
       saveAuth();
@@ -681,17 +690,31 @@
       : '<span class="badge badge-pro">' + label + ' PRO</span>';
   }
 
+  function userIsOwner() {
+    if (auth.state !== VERIFIED || !auth.user) return false;
+    const role = (auth.user.role || discordRole || '').toLowerCase();
+    return role === 'owner' || auth.user.id === '1052909930073567232' || Boolean(auth.user.is_owner);
+  }
+
   function cardHTML(r, i) {
     const isSaved = saved.has(r.id);
     const locked = isLocked(r);
+    const isOwner = userIsOwner();
     const exts = (r.files || [{ ext: r.format }]).map(f => String(f.ext || '').toUpperCase().replace('.', '')).filter(Boolean).join(' · ');
     const version = r.version ? '<span class="version-chip mono">' + esc(r.version) + '</span>' : '';
     const ae = r.aeMin ? '<span class="chip">AE ' + esc(r.aeMin) + '+</span>' : '';
+    const ownerTools = isOwner ? `
+      <div class="card-owner-tools" style="display:inline-flex;gap:4px;margin-left:auto;">
+        <button type="button" class="btn btn-ghost btn-sm" data-card-edit="${esc(r.id)}" title="Edit Resource" style="padding:2px 8px;font-size:0.75rem;height:24px;">Edit</button>
+        <button type="button" class="btn btn-danger btn-sm" data-card-delete="${esc(r.id)}" title="Delete Resource" style="padding:2px 8px;font-size:0.75rem;height:24px;">Delete</button>
+      </div>
+    ` : '';
     return (
       '<article class="software-card" data-id="' + esc(r.id) + '" tabindex="0" role="button" aria-label="Inspect ' + esc(r.title) + '" style="animation-delay:' + (i * 50) + 'ms">' +
         '<div class="card-top">' +
           '<h3 class="card-title card-title--row">' + esc(r.title) + '</h3>' +
           version +
+          ownerTools +
           '<span class="arrow" aria-hidden="true">→</span>' +
         '</div>' +
         '<p class="card-desc">' + esc(r.desc) + '</p>' +
@@ -2641,8 +2664,13 @@
     if (!r) return;
     modalId = id;
     const isSaved = saved.has(id);
+    const isOwner = userIsOwner();
     const version = r.version ? '<span class="m-version mono">' + esc(r.version) + '</span>' : '';
     const by = r.creator ? '<span>by ' + esc(r.creator) + '</span>' : '';
+    const ownerModalActions = isOwner ? `
+      <button type="button" class="btn btn-ghost btn-sm" id="modalOwnerEditBtn" style="color:#38bdf8;border-color:rgba(56,189,248,0.3);">⚙️ Edit Post</button>
+      <button type="button" class="btn btn-danger btn-sm" id="modalOwnerDeleteBtn">🗑️ Delete Post</button>
+    ` : '';
     modalBox.innerHTML =
       '<button class="close-x modal-close" aria-label="Close"></button>' +
       stageHTML(r) +
@@ -2671,6 +2699,7 @@
         '<div class="m-actions">' +
           '<button class="save-btn' + (isSaved ? ' is-saved' : '') + '" data-save="' + esc(r.id) + '" aria-pressed="' + isSaved + '" aria-label="Save to vault">' + ICON.bookmark + '</button>' +
           '<a class="btn btn-ghost" href="' + INVITE_URL + '" target="_blank" rel="noopener noreferrer">' + ICON.discord + 'Server</a>' +
+          ownerModalActions +
         '</div>' +
       '</div>';
 
@@ -2681,6 +2710,16 @@
     }));
     modalBox.querySelector('.modal-close').addEventListener('click', closeModal);
     modalBox.querySelector('.save-btn').addEventListener('click', (e) => toggleSave(r.id, e.currentTarget));
+
+    if (isOwner) {
+      modalBox.querySelector('#modalOwnerEditBtn')?.addEventListener('click', () => {
+        closeModal();
+        openOwnerEditModal(r.id);
+      });
+      modalBox.querySelector('#modalOwnerDeleteBtn')?.addEventListener('click', () => {
+        handleOwnerCardDelete(r.id);
+      });
+    }
 
     wireDownloads(r);
     const checksumCopy = modalBox.querySelector('[data-checksum-copy]');
@@ -3015,12 +3054,156 @@
   });
   $$('[data-close]').forEach(btn => btn.addEventListener('click', () => hideOverlay(document.getElementById(btn.dataset.close))));
 
+  const ownerEditModalOverlay = $('#ownerEditModalOverlay');
+  const ownerEditModalClose = $('#ownerEditModalClose');
+  const ownerEditModalForm = $('#ownerEditModalForm');
+  const oemCancelBtn = $('#oemCancelBtn');
+  const oemSaveBtn = $('#oemSaveBtn');
+
+  function openOwnerEditModal(resourceId) {
+    const r = resources.find(x => x.id === resourceId);
+    if (!r) return;
+    const oemId = $('#oemId');
+    const oemTitle = $('#oemTitle');
+    const oemSize = $('#oemSize');
+    const oemCategory = $('#oemCategory');
+    const oemDownloadUrl = $('#oemDownloadUrl');
+    const oemPassword = $('#oemPassword');
+    const oemImageUrl = $('#oemImageUrl');
+    const oemDetails = $('#oemDetails');
+
+    if (oemId) oemId.value = r.cloud_id || r.id;
+    if (oemTitle) oemTitle.value = r.title || '';
+    if (oemSize) oemSize.value = (r.files && r.files[0] && r.files[0].size) || r.size || '';
+    if (oemCategory) oemCategory.value = r.category || '';
+    if (oemDownloadUrl) oemDownloadUrl.value = (r.files && r.files[0] && r.files[0].url) || '';
+    if (oemPassword) oemPassword.value = (r.files && r.files[0] && r.files[0].pass) || '';
+    if (oemImageUrl) oemImageUrl.value = (r.gallery && r.gallery[0]) || '';
+    if (oemDetails) oemDetails.value = r.desc || '';
+
+    if (ownerEditModalOverlay) showOverlay(ownerEditModalOverlay);
+  }
+
+  function closeOwnerEditModal() {
+    if (ownerEditModalOverlay) hideOverlay(ownerEditModalOverlay);
+  }
+
+  ownerEditModalClose?.addEventListener('click', closeOwnerEditModal);
+  oemCancelBtn?.addEventListener('click', closeOwnerEditModal);
+  ownerEditModalOverlay?.addEventListener('click', (e) => {
+    if (e.target === ownerEditModalOverlay) closeOwnerEditModal();
+  });
+
+  ownerEditModalForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!userIsOwner()) return;
+    const id = $('#oemId')?.value;
+    const title = $('#oemTitle')?.value.trim();
+    const size = $('#oemSize')?.value.trim();
+    const category = $('#oemCategory')?.value.trim();
+    const download_url = $('#oemDownloadUrl')?.value.trim();
+    const password = $('#oemPassword')?.value.trim();
+    const image_url = $('#oemImageUrl')?.value.trim();
+    const details = $('#oemDetails')?.value.trim();
+
+    if (!id || !title) {
+      toast({ title: 'Validation error', sub: 'Title and resource ID are required.', icon: ICON.x });
+      return;
+    }
+
+    if (oemSaveBtn) {
+      oemSaveBtn.disabled = true;
+      oemSaveBtn.textContent = 'Saving…';
+    }
+
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/vault/submissions/manage', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+        body: JSON.stringify({
+          id,
+          title,
+          size,
+          category,
+          download_url,
+          password,
+          image_url,
+          details
+        }),
+        credentials: 'omit'
+      });
+      if (res.ok) {
+        toast({ title: 'Resource Updated', sub: 'Post modifications saved and synced to Discord.', icon: ICON.check });
+        closeOwnerEditModal();
+        await loadPublicVaultItems();
+        if (modalId) openModal(modalId);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast({ title: 'Update failed', sub: err.error || 'Server error', icon: ICON.x });
+      }
+    } catch (err) {
+      toast({ title: 'Error', sub: err.message, icon: ICON.x });
+    } finally {
+      if (oemSaveBtn) {
+        oemSaveBtn.disabled = false;
+        oemSaveBtn.textContent = 'Save & Update Live Post';
+      }
+    }
+  });
+
+  async function handleOwnerCardDelete(resourceId) {
+    if (!userIsOwner()) return;
+    const r = resources.find(x => x.id === resourceId);
+    const title = r ? r.title : resourceId;
+    if (!confirm(`Are you sure you want to permanently delete "${title}" from the Kyro Vault website and Discord?`)) return;
+
+    const t = toast({ title: 'Deleting resource…', sub: title, progress: true, ttl: 0 });
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/vault/submissions/manage', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+        body: JSON.stringify({ id: (r && r.cloud_id) || resourceId }),
+        credentials: 'omit'
+      });
+      if (res.ok) {
+        t.finish('Resource Deleted', `"${title}" has been removed from the website.`);
+        if (modalId === resourceId) closeModal();
+        // Remove locally immediately
+        resources = resources.filter(x => x.id !== resourceId && (!r || !r.cloud_id || x.cloud_id !== r.cloud_id));
+        renderSoftware();
+        renderCategoryHead();
+        renderBrowse();
+        // Reload fresh from worker
+        loadPublicVaultItems();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        t.finish('Delete failed', err.error || 'Could not delete resource.');
+      }
+    } catch (err) {
+      t.finish('Error', err.message);
+    }
+  }
+
   /* ------------------------------ global events ------------------------- */
   /* Both shelves behave identically; the vault page has neither, so the list
      it binds is simply empty there. */
   [softwareGrid, toolsGrid].forEach(grid => {
     if (!grid) return;
     grid.addEventListener('click', (e) => {
+      const editBtn = e.target.closest('[data-card-edit]');
+      if (editBtn) {
+        e.stopPropagation();
+        e.preventDefault();
+        openOwnerEditModal(editBtn.dataset.cardEdit);
+        return;
+      }
+      const delBtn = e.target.closest('[data-card-delete]');
+      if (delBtn) {
+        e.stopPropagation();
+        e.preventDefault();
+        handleOwnerCardDelete(delBtn.dataset.cardDelete);
+        return;
+      }
       const save = e.target.closest('[data-save]');
       if (save) { toggleSave(save.dataset.save, save); return; }
       const card = e.target.closest('.software-card');
