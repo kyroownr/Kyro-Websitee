@@ -1056,7 +1056,7 @@ server.on('error', (err) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log('=======================================================');
-  console.log('  Utility Bot — Multi-Server Command Center');
+  console.log('  Kyro Staff Bot — Multi-Server Command Center');
   console.log(`  http://localhost:${PORT}`);
   console.log(`  Bot token: ${BOT_TOKEN ? 'loaded' : 'MISSING — set DISCORD_BOT_TOKEN in .env'}`);
   console.log('  Features: moderation, giveaways, reaction roles,');
@@ -1066,6 +1066,9 @@ server.listen(PORT, '127.0.0.1', () => {
     setInterval(pollTick, 5000);
     console.log('  Background poller active (giveaways / roles / automod / welcome).');
   }
+  // /start-kyro runs on Cloudflare, so it can never open a browser on this
+  // machine — opening on boot is what makes the dashboard actually appear.
+  if (!process.env.DASHBOARD_DISABLE_OPEN) openLocalDashboard();
 });
 
 export { server };

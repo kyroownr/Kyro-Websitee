@@ -15,6 +15,7 @@ const TMP_DATA = path.join(os.tmpdir(), `kyro-dashboard-test-${Date.now()}.json`
 
 process.env.PORT = String(PORT);
 process.env.DASHBOARD_DISABLE_POLLER = '1';
+process.env.DASHBOARD_DISABLE_OPEN = '1';
 process.env.DISCORD_BOT_TOKEN = 'test-bot-token';
 process.env.DISCORD_OWNER_ID = '1052909930073567232';
 process.env.DASHBOARD_DATA_FILE = TMP_DATA;
