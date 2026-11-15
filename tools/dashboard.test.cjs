@@ -24,6 +24,9 @@ const realFetch = global.fetch;
 const calls = [];
 const BOT_ID = 'bot0000000000000001';
 let failRoleCreation = false;
+// Flipped to '0' to simulate a server where the bot was invited without
+// Administrator; the dashboard must then ask for admin instead of failing.
+let adminPermissions = '8';
 
 function jsonRes(obj, status) {
   const s = status || 200;
@@ -44,8 +47,8 @@ global.fetch = async (url, opts) => {
 
   if (p === '/users/@me') return jsonRes({ id: BOT_ID, username: 'UtilityBot' });
   if (p === '/users/@me/guilds') return jsonRes([
-    { id: 'guild1', name: 'Test Server', icon: null, owner: true, approximate_member_count: 100, permissions: '8' },
-    { id: 'guild2', name: 'Second Server', icon: null, owner: false, approximate_member_count: 42, permissions: '8' }
+    { id: 'guild1', name: 'Test Server', icon: null, owner: true, approximate_member_count: 100, permissions: adminPermissions },
+    { id: 'guild2', name: 'Second Server', icon: null, owner: false, approximate_member_count: 42, permissions: adminPermissions }
   ]);
   if (/^\/guilds\/guild1$/.test(p)) return jsonRes({ id: 'guild1', name: 'Test Server', icon: null, owner_id: '1052909930073567232', approximate_member_count: 100, approximate_presence_count: 20, verification_level: 2, premium_tier: 1 });
   if (p === '/guilds/guild1/channels') {
@@ -368,6 +371,92 @@ async function waitForServer() {
   ok(vfFail.status === 403 && /oauth2\/authorize/.test(vfFail.data.error), 'verification permission error explains the fix');
   failRoleCreation = false;
 
-  console.log(JSON.stringify({ checks: passed, multiServer: 'guild selector + per-guild isolation', features: 'moderation, giveaways, reaction roles, automod, welcome, logging, setup, security, utility, embed', discord: 'mocked REST', result: 'passed' }));
+  // ---- Admin access gate ----
+  const access = await req('GET', '/api/bot/access?guild=guild1');
+  ok(access.status === 200 && access.data.isAdmin === true, 'admin access reported for an admin bot');
+
+  adminPermissions = '0';
+  const accessDenied = await req('GET', '/api/bot/access?guild=guild2');
+  ok(accessDenied.status === 200 && accessDenied.data.isAdmin === false, 'missing admin detected');
+  ok(accessDenied.data.missing.includes('Manage Roles') && accessDenied.data.missing.includes('Ban Members'), 'missing permissions listed');
+  const deniedSetup = await req('POST', '/api/permissions/apply', { guild: 'guild2' });
+  ok(deniedSetup.status === 403 && deniedSetup.data.needsAdmin === true, 'setup blocked when the bot lacks admin');
+  ok(/oauth2\/authorize/.test(deniedSetup.data.inviteUrl || ''), 'blocked setup links the admin invite');
+  const grant = await req('POST', '/api/bot/grant', { guild: 'guild2' });
+  ok(grant.status === 200 && grant.data.isAdmin === false && /invite link/.test(grant.data.message), 'grant endpoint explains the invite');
+  adminPermissions = '8';
+  const grantOk = await req('POST', '/api/bot/grant', { guild: 'guild2' });
+  ok(grantOk.status === 200 && grantOk.data.isAdmin === true, 'grant re-check reports admin after the invite');
+
+  // ---- Role packs & presets ----
+  const packs = await req('GET', '/api/roles/packs');
+  ok(packs.status === 200 && packs.data.packs.length >= 12, 'role packs catalogue for many server types');
+  ok(packs.data.packs.some((p) => p.id === 'gaming') && packs.data.packs.some((p) => p.id === 'business'), 'gaming and business packs present');
+  const packCreate = await req('POST', '/api/roles/packs/create', { guild: 'guild1', packId: 'gaming' });
+  ok(packCreate.status === 200 && packCreate.data.created.length >= 8, 'role pack creates the whole hierarchy');
+  const packRoleCall = lastCall((c) => c.method === 'POST' && c.path === '/guilds/guild1/roles' && /Owner/.test(c.body.name));
+  ok(packRoleCall && packRoleCall.body.permissions === '8' && packRoleCall.body.hoist === true, 'pack roles carry preset permissions and hoisting');
+  const badPack = await req('POST', '/api/roles/packs/create', { guild: 'guild1', packId: 'nope' });
+  ok(badPack.status === 500 && /Unknown role pack/.test(badPack.data.error), 'unknown role pack rejected');
+
+  const presets = await req('GET', '/api/roles/presets?guild=guild1');
+  ok(presets.status === 200 && presets.data.presets.length >= 18, 'role preset catalogue');
+  ok(presets.data.roles.some((r) => r.name === 'VIP' && r.presetId === 'vip'), 'existing roles mapped to presets');
+  const presetApply = await req('POST', '/api/roles/presets/apply', { guild: 'guild1', roleId: 'role2', presetId: 'moderator' });
+  ok(presetApply.status === 200 && /moderation/.test(presetApply.data.preset), 'single role preset applied');
+  const presetPatch = lastCall((c) => c.method === 'PATCH' && c.path === '/guilds/guild1/roles/role2');
+  ok(presetPatch && (BigInt(presetPatch.body.permissions) & 8192n) !== 0n, 'preset grants manage messages');
+  const presetBad = await req('POST', '/api/roles/presets/apply', { guild: 'guild1', roleId: 'role2', presetId: 'nope' });
+  ok(presetBad.status === 500 && /Unknown role preset/.test(presetBad.data.error), 'unknown preset rejected');
+
+  // ---- Engagement suite ----
+  const eng = await req('POST', '/api/engagement', { guild: 'guild1', autoRole: { enabled: true, roleId: 'role1' }, starboard: { enabled: true, channelId: 'chan1', threshold: 2, emoji: '⭐' }, sticky: { enabled: true, channelId: 'chan1', content: 'Read the rules' }, voiceRole: { enabled: true, roleId: 'role2' } });
+  ok(eng.status === 200 && eng.data.engagement.autoRole.enabled && eng.data.engagement.starboard.threshold === 2, 'engagement settings saved');
+  const cfgEng = await req('GET', '/api/config?guild=guild1');
+  ok(cfgEng.data.engagement.sticky.content === 'Read the rules' && cfgEng.data.engagement.voiceRole.roleId === 'role2', 'engagement persisted');
+
+  // ---- Levels / birthdays / suggestions / stats / polls / schedule ----
+  const lvSave = await req('POST', '/api/levels', { guild: 'guild1', enabled: true, minXp: 5, maxXp: 10, cooldownSeconds: 0, channelId: 'chan1', rewards: [{ level: 5, roleId: 'role2' }] });
+  ok(lvSave.status === 200 && lvSave.data.levels.rewards.length === 1, 'leveling config saved');
+  const lvBoard = await req('GET', '/api/levels?guild=guild1');
+  ok(lvBoard.status === 200 && Array.isArray(lvBoard.data.leaderboard), 'levels leaderboard endpoint');
+
+  const bd = await req('POST', '/api/birthdays', { guild: 'guild1', enabled: true, channelId: 'chan1', message: 'Happy {user}', users: [{ userId: '200000000000000003', date: '04-18' }, { userId: 'nope', date: 'zz' }, { userId: '200000000000000004', date: '04-18' }] });
+  ok(bd.status === 200 && bd.data.birthdays.users.length === 2, 'birthdays validate and store members');
+
+  const sg = await req('POST', '/api/suggestions/post', { guild: 'guild1', channelId: 'chan1' });
+  ok(sg.status === 200 && sg.data.message_id === 'msg1', 'suggestion panel posted');
+  const sgCfg = await req('GET', '/api/config?guild=guild1');
+  ok(sgCfg.data.suggestions.enabled === true && sgCfg.data.suggestions.channelId === 'chan1', 'suggestions configured');
+  const sgOff = await req('POST', '/api/suggestions/config', { guild: 'guild1', enabled: false });
+  ok(sgOff.status === 200 && sgOff.data.suggestions.enabled === false, 'suggestions can be disabled');
+
+  const stc = await req('POST', '/api/stat-channels', { guild: 'guild1', enabled: true, memberChannelId: 'chan1', botChannelId: '' });
+  ok(stc.status === 200 && stc.data.statChannels.memberChannelId === 'chan1', 'stat channels saved');
+  ok(lastCall((c) => c.method === 'PATCH' && c.path === '/channels/chan1' && /Members:/.test(c.body.name || '')), 'stat channel renamed with the live count');
+
+  const poll = await req('POST', '/api/poll', { guild: 'guild1', channelId: 'chan1', question: 'Best game?', options: ['Valorant', 'Minecraft'], hours: 24, multiple: false });
+  ok(poll.status === 200 && poll.data.poll.question === 'Best game?', 'poll created');
+  const pollCall = lastCall((c) => c.method === 'POST' && c.path === '/channels/chan1/messages' && c.body && c.body.poll);
+  ok(pollCall && pollCall.body.poll.answers.length === 2 && pollCall.body.poll.duration === 24, 'native poll payload correct');
+  const pollBad = await req('POST', '/api/poll', { guild: 'guild1', channelId: 'chan1', question: 'Only one?', options: ['solo'] });
+  ok(pollBad.status === 500 && /two poll options/.test(pollBad.data.error), 'poll requires two options');
+
+  const scAdd = await req('POST', '/api/schedule', { guild: 'guild1', channelId: 'chan1', title: 'Movie night', description: '8pm', inMinutes: 30 });
+  ok(scAdd.status === 200 && scAdd.data.schedule.announcements.length === 1, 'announcement scheduled');
+  const scId = scAdd.data.schedule.announcements[0].id;
+  const scRem = await req('POST', '/api/schedule', { guild: 'guild1', type: 'reminder', userId: '200000000000000003', text: 'Send your entry', inMinutes: 5 });
+  ok(scRem.status === 200 && scRem.data.schedule.reminders.length === 1, 'reminder scheduled');
+  const scBad = await req('POST', '/api/schedule', { guild: 'guild1', type: 'reminder', userId: '../etc/passwd', text: 'x' });
+  ok(scBad.status === 400, 'reminder validates the member id');
+  const scDel = await req('POST', '/api/schedule/delete', { guild: 'guild1', id: scId });
+  ok(scDel.status === 200 && scDel.data.schedule.announcements.length === 0, 'scheduled announcement cancelled');
+
+  const ac = await req('POST', '/api/autoresponses', { guild: 'guild1', responses: [{ trigger: 'ping', reply: 'pong' }, { trigger: '', reply: 'ignored' }] });
+  ok(ac.status === 200 && ac.data.autoResponses.length === 1, 'auto-responses saved and filtered');
+  const acCfg = await req('GET', '/api/config?guild=guild1');
+  ok(acCfg.data.autoResponses[0].trigger === 'ping' && acCfg.data.rolePacks.length >= 12, 'config exposes new modules');
+
+  console.log(JSON.stringify({ checks: passed, multiServer: 'guild selector + per-guild isolation', features: 'moderation, giveaways, reaction roles, automod, welcome, logging, setup, security, utility, embed, engagement, levels, birthdays, suggestions, polls, scheduler, stat channels, role packs, admin gate', discord: 'mocked REST', result: 'passed' }));
   shutdown(0);
 })().catch((err) => { console.error('TEST ERROR:', err.message || err); shutdown(1); });

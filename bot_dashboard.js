@@ -8,7 +8,11 @@
  *
  * Features: server selector, moderation (ban/kick/timeout/warn/purge/slowmode/
  * lock), giveaways, reaction roles, automod, welcome messages, logging,
- * utility lookups and a generic embed sender. No server-specific publishing.
+ * one-click setup with verification + tickets, security suite (raid mode,
+ * anti-nuke, keyword alerts, warning escalation), engagement (auto role, join
+ * DM, starboard, voice role, boosts, AFK, sticky), levels/XP, birthdays,
+ * suggestions, scheduled posts, reminders, native polls, live stat channels,
+ * role presets/role packs for every server type, utility lookups and embeds.
  */
 
 import http from 'http';
@@ -66,9 +70,23 @@ function saveDB(db) {
   }
 }
 
-function guildConfig(db, guildId) {
-  if (!db.guilds[guildId]) {
-    db.guilds[guildId] = {
+/* Default engagement block, also used to backfill older saved state. */
+function defaultEngagement() {
+  return {
+    autoRole: { enabled: false, roleId: '', knownMembers: [] },
+    joinDm: { enabled: false, message: 'Welcome to {server}! Press Open Ticket in the support channel if you need help.' },
+    starboard: { enabled: false, channelId: '', threshold: 3, emoji: '⭐', processed: [] },
+    voiceRole: { enabled: false, roleId: '', inVoice: [] },
+    boosts: { enabled: false, channelId: '', processed: [] },
+    afk: { enabled: false, userId: '', reason: '', until: 0, answered: [] },
+    sticky: { enabled: false, channelId: '', content: '', messageId: '', lastChat: '' }
+  };
+}
+
+/* New guilds start with every module present, and existing saved state gets
+   backfilled so older dashboard_data.json files keep working. */
+function defaultGuild() {
+  return {
       automod: { enabled: false, badWords: [], blockInvites: false, maxMentions: 0, maxEmojis: 0, capsPercent: 0, action: 'delete', timeoutSeconds: 300, exemptRoles: [], channels: [], processed: [] },
       welcome: { enabled: false, channelId: '', message: 'Welcome {user} to **{server}**! You are member #{membercount}.', useEmbed: true, embedColor: '#5865f2', dm: false, dmMessage: 'Welcome to {server}!', knownMembers: [], seeded: false },
       logging: { enabled: false, channelId: '', events: { moderation: true, giveaways: true, reactionRoles: true, automod: true, welcome: true, joins: true } },
@@ -76,6 +94,17 @@ function guildConfig(db, guildId) {
       giveaways: [],
       warnings: [],
       tempbans: [],
+      engagement: defaultEngagement(),
+      schedule: { announcements: [], reminders: [] },
+      autoResponses: [],
+      suggestions: { enabled: false, channelId: '', processed: [] },
+      levels: {
+        enabled: false, minXp: 5, maxXp: 15, cooldownSeconds: 60, channelId: '', announce: true,
+        channels: [], rewards: [], users: {}, seen: []
+      },
+      birthdays: { enabled: false, channelId: '', message: '🎂 Happy birthday {user}! Have an amazing day.', users: [], announced: [] },
+      statChannels: { enabled: false, memberChannelId: '', botChannelId: '', lastRun: 0 },
+      polls: [],
       verification: { enabled: false, channelId: '', roleId: '', gate: false, messageId: '', gatedChannels: [] },
       security: {
         raidMode: false, autoRaid: true, raidThreshold: 10, raidCooldown: 0,
@@ -86,6 +115,18 @@ function guildConfig(db, guildId) {
       },
       audit: []
     };
+}
+
+function guildConfig(db, guildId) {
+  if (!db.guilds[guildId]) db.guilds[guildId] = defaultGuild();
+  else {
+    const def = defaultGuild();
+    for (const key of Object.keys(def)) {
+      if (db.guilds[guildId][key] === undefined) db.guilds[guildId][key] = def[key];
+    }
+    const eng = db.guilds[guildId].engagement;
+    if (!eng || typeof eng !== 'object') db.guilds[guildId].engagement = def.engagement;
+    else for (const key of Object.keys(def.engagement)) if (!eng[key]) eng[key] = def.engagement[key];
   }
   return db.guilds[guildId];
 }
@@ -238,27 +279,254 @@ async function dmPunished(guildId, userId, action, reason, serverName, withAppea
 // Server setup: auto permissions, verification, one-click preset, tickets
 // ---------------------------------------------------------------------------
 const PERM = {
-  KICK: 1n << 1n, AUDIT: 1n << 7n, REACT: 1n << 6n, VIEW: 1n << 10n, SEND: 1n << 11n, MANAGE_MSG: 1n << 13n,
-  EMBED: 1n << 14n, ATTACH: 1n << 15n, HISTORY: 1n << 16n, MENTION: 1n << 17n, EXTERN: 1n << 18n,
-  CONNECT: 1n << 20n, SPEAK: 1n << 21n, MUTE: 1n << 22n, MOVE: 1n << 24n, NICK: 1n << 27n,
-  APPCMD: 1n << 31n, THREAD_CREATE: 1n << 35n, STICKER: 1n << 37n, THREAD_SEND: 1n << 38n, TIMEOUT: 1n << 40n
+  KICK: 1n << 1n, BAN: 1n << 2n, ADMIN: 1n << 3n, MANAGE_CH: 1n << 4n, MANAGE_GUILD: 1n << 5n, REACT: 1n << 6n, AUDIT: 1n << 7n,
+  VIEW: 1n << 10n, SEND: 1n << 11n, MANAGE_MSG: 1n << 13n, EMBED: 1n << 14n, ATTACH: 1n << 15n, HISTORY: 1n << 16n,
+  MENTION: 1n << 17n, EXTERN: 1n << 18n, CONNECT: 1n << 20n, SPEAK: 1n << 21n, MUTE: 1n << 22n, DEAFEN: 1n << 23n,
+  MOVE: 1n << 24n, NICK: 1n << 27n, MANAGE_ROLES: 1n << 28n, APPCMD: 1n << 31n, THREAD_CREATE: 1n << 35n,
+  STICKER: 1n << 37n, THREAD_SEND: 1n << 38n, TIMEOUT: 1n << 40n
 };
+
+const CHAT_BASICS = PERM.VIEW | PERM.SEND | PERM.REACT | PERM.EMBED | PERM.ATTACH | PERM.HISTORY | PERM.EXTERN | PERM.STICKER | PERM.CONNECT | PERM.SPEAK | PERM.APPCMD | PERM.THREAD_CREATE | PERM.THREAD_SEND;
+
+/* Permission presets by role intent. Order matters: the first match wins, so
+   leadership, staff and narrow team roles are checked before generic ones.
+   Covers gaming, community, support, creator, education, business, music, art,
+   developer, roleplay and 18+ servers out of the box. */
+const ROLE_PRESETS = [
+  { id: 'admin', group: 'Leadership', label: 'Administrator', desc: 'Full control of the server', match: /(admin|owner|founder|president|ceo|director|management|manager|leadership|boss|co-?owner|high[\s-]?command)/, perms: () => PERM.ADMIN },
+  { id: 'head', group: 'Leadership', label: 'senior staff (mod + manage roles/channels)', desc: 'Runs the staff team and role structure', match: /(head|senior|lead|supervisor|chief|vice|deputy|coordinator|officer)/, perms: () => CHAT_BASICS | PERM.KICK | PERM.BAN | PERM.TIMEOUT | PERM.MANAGE_MSG | PERM.MENTION | PERM.MUTE | PERM.DEAFEN | PERM.MOVE | PERM.NICK | PERM.AUDIT | PERM.MANAGE_ROLES | PERM.MANAGE_CH },
+  { id: 'security', group: 'Staff', label: 'security team powers', desc: 'Watches raids and handles offenders', match: /(security|guard|protection|raid[\s-]?squad|bouncer|watchdog)/, perms: () => CHAT_BASICS | PERM.KICK | PERM.TIMEOUT | PERM.MANAGE_MSG | PERM.MENTION | PERM.MUTE | PERM.MOVE | PERM.NICK },
+  { id: 'moderator', group: 'Staff', label: 'moderation powers', desc: 'Kick, timeout, warn, purge', match: /(\bmod(erator|s)?\b|staff|helper|trial|trainee|crew|enforcer|janitor)/, perms: () => CHAT_BASICS | PERM.KICK | PERM.TIMEOUT | PERM.MANAGE_MSG | PERM.MENTION | PERM.MUTE | PERM.MOVE | PERM.NICK | PERM.AUDIT },
+  { id: 'support', group: 'Staff', label: 'support team powers', desc: 'Runs tickets and help channels', match: /(support|modmail|mod\s*mail|ticket|helpdesk|help[\s-]?desk|service|dispatch)/, perms: () => CHAT_BASICS | PERM.MANAGE_MSG | PERM.TIMEOUT },
+  { id: 'alumni', group: 'Staff', label: 'alumni (read only)', desc: 'Retired staff who keep read access', match: /(alumni|retired|ex-?staff|former|inactive|on\s*leave|\bloa\b)/, perms: () => PERM.VIEW | PERM.HISTORY },
+  { id: 'media', group: 'Teams', label: 'media team (manage messages)', desc: 'Editors, designers, clippers, VFX', match: /(editor|designer|design|gfx|vfx|animator|animation|artist|thumbnail|clipper|clipping|video|media|creative|photographer|illustrator)/, perms: () => CHAT_BASICS | PERM.MANAGE_MSG | PERM.MENTION },
+  { id: 'events', group: 'Teams', label: 'events/DJ powers (voice control)', desc: 'Hosts events and runs voice stages', match: /(\bdj\b|music|event|host|raffle|stage|karaoke|party)/, perms: () => CHAT_BASICS | PERM.MUTE | PERM.DEAFEN | PERM.MOVE | PERM.MENTION },
+  { id: 'creator', group: 'Teams', label: 'creator perks', desc: 'Streamers, partners and affiliates', match: /(streamer|youtube|youtuber|tiktok|twitch|creator|influencer|partner|affiliate|promoter|content|ambassador|sponsor)/, perms: () => CHAT_BASICS | PERM.MENTION },
+  { id: 'dev', group: 'Teams', label: 'developer team (chat basics)', desc: 'Developers, testers and QA', match: /(dev|developer|programmer|engineer|coder|tech|tester|\bqa\b|beta|modder)/, perms: () => CHAT_BASICS },
+  { id: 'vip', group: 'Perks', label: 'VIP perks', desc: 'Donors, boosters and premium members', match: /(vip|premium|donator|donor|patron|legend|elite|god|gold|diamond|\bog\b|booster|supporter|subscriber|member\+)/, perms: () => CHAT_BASICS | PERM.MENTION },
+  { id: 'muted', group: 'Moderation', label: 'read-only (punishment role)', desc: 'Muted, jailed or quarantined members', match: /(muted|timeout|jail|quarantine|prison|silenced|restricted|grounded|isolation)/, perms: () => PERM.VIEW | PERM.HISTORY },
+  { id: 'gaming', group: 'Community', label: 'gaming squad (chat basics)', desc: 'Clans, teams, squads and rosters', match: /(squad|clan|team|roster|party|duo|squadron|guild\s*member|esports|competitive)/, perms: () => CHAT_BASICS },
+  { id: 'helper', group: 'Community', label: 'community helper (chat basics)', desc: 'Welcomers, mentors, translators', match: /(welcomer|greeter|mentor|guide|translator|translation|tutor|coach|volunteer)/, perms: () => CHAT_BASICS },
+  { id: 'level', group: 'Community', label: 'level role (chat basics)', desc: 'Level, rank and XP rewards', match: /(level|lvl|rank|tier\s*\d|x[lv]?\d)/, perms: () => CHAT_BASICS },
+  { id: 'age', group: 'Access', label: 'age-gated access (chat basics)', desc: '18+ / NSFW channel access', match: /(nsfw|18\+|adult|lewd|explicit|hentai|uncensored)/, perms: () => CHAT_BASICS },
+  { id: 'region', group: 'Access', label: 'region/language role (chat basics)', desc: 'Language and region pickers', match: /(english|spanish|french|german|portuguese|italian|dutch|arabic|hindi|japanese|korean|chinese|russian|turkish|polish|swedish|norwegian|filipino|indonesian|vietnamese|\bregion\b|\bcountry\b)/, perms: () => CHAT_BASICS },
+  { id: 'ping', group: 'Access', label: 'ping role (no extra permissions)', desc: 'Announcement / giveaway / event pings', match: /(ping|pings|notif|updates?|news|announcement|bulletin|follower)/, perms: () => 0n },
+  { id: 'cosmetic', group: 'Cosmetic', label: 'cosmetic/pronoun role (no extra permissions)', desc: 'Colour, pronoun and personality roles', match: /(pronoun|he\/him|she\/her|they\/them|\bhe\b|\bshe\b|\bthey\b|male|female|nonbinary|non-binary|lgbtq?|color|colour|aesthetic|cosmetic|simp|\bcat\b|\bdog\b)/, perms: () => 0n },
+  { id: 'member', group: 'Default', label: 'chat basics', desc: 'Verified members and guests', match: /(member|verified|guest|community|people|explorer|contributor|newcomer|newbie|rookie|regular|veteran|active|loyal|citizen|recruit|cadet|starter|friend|visitor)/, perms: () => CHAT_BASICS }
+];
 
 function rolePresetPermissions(name) {
   const n = String(name || '').toLowerCase();
-  const base = PERM.VIEW | PERM.SEND | PERM.REACT | PERM.EMBED | PERM.ATTACH | PERM.HISTORY | PERM.EXTERN | PERM.STICKER | PERM.CONNECT | PERM.SPEAK | PERM.APPCMD | PERM.THREAD_CREATE | PERM.THREAD_SEND;
-  if (/(admin|owner|founder)/.test(n)) return { perms: '8', label: 'Administrator' };
-  if (/(muted|jail|quarantine|prison)/.test(n)) return { perms: String(PERM.VIEW | PERM.HISTORY), label: 'read-only (punishment role)' };
-  if (/(mod|staff|helper|trial)/.test(n)) return { perms: String(base | PERM.KICK | PERM.TIMEOUT | PERM.MANAGE_MSG | PERM.MENTION | PERM.MUTE | PERM.MOVE | PERM.NICK | PERM.AUDIT), label: 'moderation powers' };
-  if (/(support|modmail|ticket)/.test(n)) return { perms: String(base | PERM.MANAGE_MSG | PERM.TIMEOUT), label: 'support team powers' };
-  if (/(editor)/.test(n)) return { perms: String(base | PERM.MANAGE_MSG | PERM.MENTION), label: 'editor powers (manage messages)' };
-  if (/(vip|booster|premium|donator|legend)/.test(n)) return { perms: String(base | PERM.MENTION), label: 'VIP perks' };
-  if (/(member|verified|guest|community|contributor|explorer|people)/.test(n)) return { perms: String(base), label: 'chat basics' };
+  for (const preset of ROLE_PRESETS) {
+    if (preset.match.test(n)) return { perms: String(preset.perms()), label: preset.label, presetId: preset.id };
+  }
   // Custom role with no keyword match: explain it by shape and optimise to a safe baseline.
-  return { perms: String(base), label: 'custom role → safe baseline (chat basics)' };
+  return { perms: String(CHAT_BASICS), label: 'custom role → safe baseline (chat basics)', presetId: 'baseline' };
+}
+
+/* Role packs: a ready-made role tree per server type, so every kind of server
+   can be set up in one click instead of inventing its own hierarchy. */
+const ROLE_PACKS = [
+  {
+    id: 'gaming', label: 'Gaming / clan', description: 'Owners, mods, game masters, squads and ping roles.',
+    roles: [
+      { name: '👑 Owner', color: '#f1c40f', hoist: true, preset: 'admin' },
+      { name: '🛡️ Admin', color: '#e74c3c', hoist: true, preset: 'admin' },
+      { name: '⚔️ Head Moderator', color: '#e67e22', hoist: true, preset: 'head' },
+      { name: '🔨 Moderator', color: '#3498db', hoist: true, preset: 'moderator' },
+      { name: '🎮 Game Master', color: '#9b59b6', hoist: true, preset: 'events' },
+      { name: '🏆 Competitive', color: '#2ecc71', hoist: false, preset: 'gaming' },
+      { name: '🎉 Event Ping', color: '#95a5a6', hoist: false, preset: 'ping' },
+      { name: '🎮 Member', color: '#5865f2', hoist: false, preset: 'member' },
+      { name: '🤖 Bots', color: '#4f545c', hoist: false, preset: 'ping' }
+    ]
+  },
+  {
+    id: 'esports', label: 'Esports team', description: 'Coach, analyst, starting roster, substitutes and scrim pings.',
+    roles: [
+      { name: '👑 Team Owner', color: '#f1c40f', hoist: true, preset: 'admin' },
+      { name: '🧠 Head Coach', color: '#e67e22', hoist: true, preset: 'head' },
+      { name: '📊 Analyst', color: '#3498db', hoist: false, preset: 'dev' },
+      { name: '🎯 Starting Roster', color: '#2ecc71', hoist: true, preset: 'gaming' },
+      { name: '🔁 Substitute', color: '#95a5a6', hoist: false, preset: 'gaming' },
+      { name: '📣 Scrim Ping', color: '#9b59b6', hoist: false, preset: 'ping' },
+      { name: '🎮 Fan', color: '#5865f2', hoist: false, preset: 'member' }
+    ]
+  },
+  {
+    id: 'community', label: 'Community / general', description: 'Classic community hierarchy with verified members and level roles.',
+    roles: [
+      { name: '👑 Founder', color: '#f1c40f', hoist: true, preset: 'admin' },
+      { name: '🛡️ Administrator', color: '#e74c3c', hoist: true, preset: 'admin' },
+      { name: '⚔️ Head Moderator', color: '#e67e22', hoist: true, preset: 'head' },
+      { name: '🔨 Moderator', color: '#3498db', hoist: true, preset: 'moderator' },
+      { name: '🎫 Support Team', color: '#1abc9c', hoist: true, preset: 'support' },
+      { name: '💡 Helper', color: '#2ecc71', hoist: false, preset: 'helper' },
+      { name: '🚀 Booster', color: '#f47fff', hoist: false, preset: 'vip' },
+      { name: '⭐ Level 10', color: '#f39c12', hoist: false, preset: 'level' },
+      { name: '📣 Announcement Ping', color: '#95a5a6', hoist: false, preset: 'ping' },
+      { name: '✅ Verified', color: '#30d158', hoist: false, preset: 'member' },
+      { name: '👋 Guest', color: '#5865f2', hoist: false, preset: 'member' }
+    ]
+  },
+  {
+    id: 'support', label: 'Support / helpdesk', description: 'Ticket teams, escalation tiers and read-only alumni.',
+    roles: [
+      { name: '👑 Owner', color: '#f1c40f', hoist: true, preset: 'admin' },
+      { name: '🛡️ Support Lead', color: '#e74c3c', hoist: true, preset: 'head' },
+      { name: '🎫 Support Agent', color: '#3498db', hoist: true, preset: 'support' },
+      { name: '🕐 On Call', color: '#1abc9c', hoist: false, preset: 'support' },
+      { name: '🧪 Trial Agent', color: '#95a5a6', hoist: false, preset: 'moderator' },
+      { name: '🎓 Alumni', color: '#7f8c8d', hoist: false, preset: 'alumni' },
+      { name: '👤 Customer', color: '#5865f2', hoist: false, preset: 'member' }
+    ]
+  },
+  {
+    id: 'creators', label: 'Creator / streamer', description: 'Partners, clippers, editors and subscriber tiers.',
+    roles: [
+      { name: '👑 Owner', color: '#f1c40f', hoist: true, preset: 'admin' },
+      { name: '🛡️ Manager', color: '#e74c3c', hoist: true, preset: 'head' },
+      { name: '🔨 Moderator', color: '#3498db', hoist: true, preset: 'moderator' },
+      { name: '🎬 Editor', color: '#9b59b6', hoist: true, preset: 'media' },
+      { name: '✂️ Clipper', color: '#e67e22', hoist: false, preset: 'media' },
+      { name: '🤝 Partner', color: '#2ecc71', hoist: false, preset: 'creator' },
+      { name: '⭐ Subscriber', color: '#f39c12', hoist: false, preset: 'vip' },
+      { name: '📣 Go Live Ping', color: '#95a5a6', hoist: false, preset: 'ping' },
+      { name: '💬 Viewer', color: '#5865f2', hoist: false, preset: 'member' }
+    ]
+  },
+  {
+    id: 'music', label: 'Music / radio', description: 'DJs, request queues, stage hosts and listeners.',
+    roles: [
+      { name: '👑 Station Owner', color: '#f1c40f', hoist: true, preset: 'admin' },
+      { name: '🛡️ Station Manager', color: '#e74c3c', hoist: true, preset: 'head' },
+      { name: '🎧 DJ', color: '#9b59b6', hoist: true, preset: 'events' },
+      { name: '🎤 Host', color: '#e67e22', hoist: true, preset: 'events' },
+      { name: '🎵 Producer', color: '#3498db', hoist: false, preset: 'media' },
+      { name: '📻 Listener', color: '#5865f2', hoist: false, preset: 'member' },
+      { name: '📣 Event Ping', color: '#95a5a6', hoist: false, preset: 'ping' }
+    ]
+  },
+  {
+    id: 'art', label: 'Art / design', description: 'Artists, critics, commissions and portfolio access.',
+    roles: [
+      { name: '👑 Owner', color: '#f1c40f', hoist: true, preset: 'admin' },
+      { name: '🔨 Moderator', color: '#3498db', hoist: true, preset: 'moderator' },
+      { name: '🎨 Artist', color: '#9b59b6', hoist: true, preset: 'media' },
+      { name: '🖌️ Designer', color: '#e67e22', hoist: false, preset: 'media' },
+      { name: '💬 Critic', color: '#2ecc71', hoist: false, preset: 'helper' },
+      { name: '💰 Commissioner', color: '#f39c12', hoist: false, preset: 'vip' },
+      { name: '👀 Viewer', color: '#5865f2', hoist: false, preset: 'member' }
+    ]
+  },
+  {
+    id: 'developers', label: 'Developer / tech', description: 'Maintainers, reviewers, contributors and bug reporters.',
+    roles: [
+      { name: '👑 Maintainer', color: '#f1c40f', hoist: true, preset: 'admin' },
+      { name: '🛡️ Core Team', color: '#e74c3c', hoist: true, preset: 'head' },
+      { name: '🔍 Reviewer', color: '#3498db', hoist: true, preset: 'dev' },
+      { name: '💻 Contributor', color: '#2ecc71', hoist: false, preset: 'dev' },
+      { name: '🧪 Tester', color: '#9b59b6', hoist: false, preset: 'dev' },
+      { name: '🐛 Bug Hunter', color: '#e67e22', hoist: false, preset: 'helper' },
+      { name: '📦 Release Ping', color: '#95a5a6', hoist: false, preset: 'ping' },
+      { name: '👥 User', color: '#5865f2', hoist: false, preset: 'member' }
+    ]
+  },
+  {
+    id: 'education', label: 'Education / study', description: 'Teachers, tutors, students and course channels.',
+    roles: [
+      { name: '👑 Principal', color: '#f1c40f', hoist: true, preset: 'admin' },
+      { name: '🛡️ Head Teacher', color: '#e74c3c', hoist: true, preset: 'head' },
+      { name: '📚 Teacher', color: '#3498db', hoist: true, preset: 'moderator' },
+      { name: '🧑‍🏫 Tutor', color: '#1abc9c', hoist: false, preset: 'helper' },
+      { name: '🎓 Graduate', color: '#2ecc71', hoist: false, preset: 'level' },
+      { name: '📝 Student', color: '#5865f2', hoist: false, preset: 'member' },
+      { name: '📣 Class Ping', color: '#95a5a6', hoist: false, preset: 'ping' }
+    ]
+  },
+  {
+    id: 'business', label: 'Business / team', description: 'Executives, department heads, contractors and clients.',
+    roles: [
+      { name: '👑 CEO', color: '#f1c40f', hoist: true, preset: 'admin' },
+      { name: '🛡️ Director', color: '#e74c3c', hoist: true, preset: 'admin' },
+      { name: '📊 Manager', color: '#e67e22', hoist: true, preset: 'head' },
+      { name: '💼 Employee', color: '#3498db', hoist: false, preset: 'member' },
+      { name: '📦 Contractor', color: '#9b59b6', hoist: false, preset: 'member' },
+      { name: '🤝 Client', color: '#2ecc71', hoist: false, preset: 'vip' },
+      { name: '📣 Company Updates', color: '#95a5a6', hoist: false, preset: 'ping' }
+    ]
+  },
+  {
+    id: 'roleplay', label: 'Roleplay / story', description: 'GMs, lorekeepers, factions and spectators.',
+    roles: [
+      { name: '👑 Server Owner', color: '#f1c40f', hoist: true, preset: 'admin' },
+      { name: '📖 Game Master', color: '#e74c3c', hoist: true, preset: 'events' },
+      { name: '🔨 Moderator', color: '#3498db', hoist: true, preset: 'moderator' },
+      { name: '✍️ Lorekeeper', color: '#9b59b6', hoist: false, preset: 'media' },
+      { name: '⚔️ Faction Leader', color: '#e67e22', hoist: false, preset: 'gaming' },
+      { name: '🧙 Roleplayer', color: '#2ecc71', hoist: false, preset: 'member' },
+      { name: '👀 Spectator', color: '#5865f2', hoist: false, preset: 'alumni' }
+    ]
+  },
+  {
+    id: 'nsfw18', label: '18+ / adult', description: 'Age-gated community with verification and read-only guests.',
+    roles: [
+      { name: '👑 Owner', color: '#f1c40f', hoist: true, preset: 'admin' },
+      { name: '🛡️ Administrator', color: '#e74c3c', hoist: true, preset: 'admin' },
+      { name: '⚔️ Head Moderator', color: '#e67e22', hoist: true, preset: 'head' },
+      { name: '🔨 Moderator', color: '#3498db', hoist: true, preset: 'moderator' },
+      { name: '🔞 18+ Verified', color: '#eb459e', hoist: false, preset: 'age' },
+      { name: '🚀 Booster', color: '#f47fff', hoist: false, preset: 'vip' },
+      { name: '📣 Ping', color: '#95a5a6', hoist: false, preset: 'ping' }
+    ]
+  }
+];
+
+function rolePresetById(id) {
+  return ROLE_PRESETS.find((p) => p.id === id) || null;
+}
+
+/* The bot's own permission set in a guild (from its guild list). */
+async function botGuildPermissions(guildId) {
+  const guilds = await discordFetch('/users/@me/guilds?with_counts=false');
+  const g = (Array.isArray(guilds) ? guilds : []).find((x) => x.id === guildId);
+  return { perms: BigInt((g && g.permissions) || '0'), inGuild: Boolean(g) };
+}
+
+const accessCache = {};
+
+/* What the bot can actually do in a guild. Drives the dashboard's "grant admin"
+   prompt so a missing permission is visible before an action fails. */
+async function botAccess(guildId) {
+  const cached = accessCache[guildId];
+  if (cached && Date.now() - cached.at < 20000) return cached.state;
+  const required = { 'Manage Roles': PERM.MANAGE_ROLES, 'Manage Channels': PERM.MANAGE_CH, 'Kick Members': PERM.KICK, 'Ban Members': PERM.BAN, 'Manage Messages': PERM.MANAGE_MSG, 'Timeout Members': PERM.TIMEOUT, 'Send Messages': PERM.SEND, 'View Channels': PERM.VIEW };
+  let state;
+  try {
+    const { perms, inGuild } = await botGuildPermissions(guildId);
+    const isAdmin = (perms & PERM.ADMIN) === PERM.ADMIN;
+    const missing = Object.entries(required).filter(([, bit]) => (perms & bit) !== bit).map(([name]) => name);
+    state = { inGuild, isAdmin, permissions: perms.toString(), missing: isAdmin ? [] : missing, inviteUrl: BOT_INSTALL_URL };
+  } catch (err) {
+    state = { inGuild: false, isAdmin: false, permissions: '0', missing: Object.keys(required), inviteUrl: BOT_INSTALL_URL, error: err.message };
+  }
+  accessCache[guildId] = { at: Date.now(), state };
+  return state;
+}
+
+/* Guard used by every setup action: one clear, actionable error when the bot
+   lacks Administrator instead of a wall of per-role "Missing Permissions". */
+async function assertBotAdmin(guildId, action) {
+  const access = await botAccess(guildId);
+  if (access.isAdmin) return access;
+  throw Object.assign(new Error(
+    `Kyro Bot doesn't have Administrator in this server, so ${action} can't run. ` +
+    `Open the invite link and approve Administrator to fix it in one click.`
+  ), { status: 403, needsAdmin: true, inviteUrl: BOT_INSTALL_URL, missing: access.missing });
 }
 
 async function applyPermissionPresets(guildId) {
+  await assertBotAdmin(guildId, 'auto permissions');
   const [roles, botId] = await Promise.all([
     discordFetch(`/guilds/${guildId}/roles`),
     getBotUserId()
@@ -290,6 +558,54 @@ async function applyPermissionPresets(guildId) {
   return { applied, skipped };
 }
 
+/* Apply one named preset to one existing role (used by the preset picker). */
+async function applyRolePreset(guildId, roleId, presetId) {
+  await assertBotAdmin(guildId, 'role permission presets');
+  const preset = rolePresetById(presetId);
+  if (!preset) throw new Error(`Unknown role preset "${presetId}".`);
+  const role = (await discordFetch(`/guilds/${guildId}/roles`)).find((r) => r.id === roleId);
+  if (!role) throw new Error('That role no longer exists — refresh the page.');
+  await discordFetch(`/guilds/${guildId}/roles/${role.id}`, {
+    method: 'PATCH', headers: { 'X-Audit-Log-Reason': 'Kyro role preset' },
+    body: JSON.stringify({ permissions: String(preset.perms()) })
+  });
+  await logEvent(guildId, 'security', 'Role preset applied', `**Role:** ${role.name}\n**Preset:** ${preset.label}`, 0x30d158);
+  return { role: role.name, preset: preset.label };
+}
+
+/* Create a ready-made role tree for a server type. Existing role names are
+   reused instead of duplicated, so the pack is safe to re-run. */
+async function createRolePack(guildId, packId) {
+  await assertBotAdmin(guildId, 'role packs');
+  const pack = ROLE_PACKS.find((p) => p.id === packId);
+  if (!pack) throw new Error(`Unknown role pack "${packId}".`);
+  const roles = await discordFetch(`/guilds/${guildId}/roles`);
+  const existing = new Set((Array.isArray(roles) ? roles : []).map((r) => String(r.name).toLowerCase()));
+  const created = [], skipped = [];
+  for (const entry of pack.roles) {
+    if (existing.has(entry.name.toLowerCase())) { skipped.push(`${entry.name} — already exists`); continue; }
+    const preset = rolePresetById(entry.preset) || rolePresetById('member');
+    try {
+      await discordFetch(`/guilds/${guildId}/roles`, {
+        method: 'POST', headers: { 'X-Audit-Log-Reason': `Kyro role pack: ${pack.label}` },
+        body: JSON.stringify({
+          name: entry.name,
+          color: hexToInt(entry.color),
+          hoist: Boolean(entry.hoist),
+          mentionable: Boolean(entry.mentionable),
+          permissions: String(preset.perms())
+        })
+      });
+      created.push(`${entry.name} → ${preset.label}`);
+    } catch (err) {
+      skipped.push(`${entry.name} — failed: ${err.message}`);
+    }
+  }
+  accessCache[guildId] = null;
+  await logEvent(guildId, 'security', 'Role pack created', `**Pack:** ${pack.label}\n**Created:** ${created.length}\n**Skipped:** ${skipped.length}`, 0x2997ff);
+  return { pack: pack.label, created, skipped };
+}
+
 async function ensureChannel(guildId, wantedName, options = {}) {
   const clean = wantedName.toLowerCase();
   const channels = await discordFetch(`/guilds/${guildId}/channels`);
@@ -303,6 +619,7 @@ async function ensureChannel(guildId, wantedName, options = {}) {
 }
 
 async function setupVerification(guildId, opts = {}) {
+  await assertBotAdmin(guildId, 'verification setup');
   const db = loadDB();
   const g = guildConfig(db, guildId);
   g.verification = g.verification || { enabled: false, channelId: '', roleId: '', gate: false, messageId: '', gatedChannels: [] };
@@ -424,6 +741,7 @@ async function clearVerificationGate(guildId) {
 
 /* One-click preset: channels + welcome + logging + automod + verification + permissions */
 async function runAutoSetup(guildId, opts = {}) {
+  await assertBotAdmin(guildId, 'one-click setup');
   const db = loadDB();
   const g = guildConfig(db, guildId);
   const steps = [];
@@ -485,6 +803,7 @@ async function runAutoSetup(guildId, opts = {}) {
 
 /* Global lockdown: deny @everyone send everywhere (raid mode core move). */
 async function toggleGlobalLockdown(guildId, on) {
+  await assertBotAdmin(guildId, 'lockdown');
   const channels = await discordFetch(`/guilds/${guildId}/channels`);
   let touched = 0;
   for (const ch of channels) {
@@ -1135,9 +1454,417 @@ async function runKeywordAlerts(guildId, g) {
   if (hitAny) saveDB(loadDB());
 }
 
+// ---------------------------------------------------------------------------
+// Engagement suite: auto-role, join DM, starboard, voice role, boosts,
+// AFK, sticky messages, auto-responses, scheduled posts, suggestions
+// ---------------------------------------------------------------------------
+const BOOST_TYPES = new Set([7, 8, 9, 10]);
+
+/* One shared message scan feeding starboard, auto-responses, AFK and boosts. */
+async function scanGuildMessages(guildId, g, channelIds) {
+  const eng = g.engagement || (g.engagement = {});
+  const sb = eng.starboard || {};
+  const resp = Array.isArray(g.autoResponses) ? g.autoResponses : [];
+  const afk = eng.afk || {};
+  const boosts = eng.boosts || {};
+  const lv = g.levels || {};
+  const sug = g.suggestions || {};
+  const starHits = [];
+  let hitSomething = false;
+  for (const channelId of channelIds) {
+    let msgs = [];
+    try { msgs = await discordFetch(`/channels/${channelId}/messages?limit=10`); } catch (e) { continue; }
+    for (const msg of msgs) {
+      if (!msg.id) continue;
+      // 1. Starboard: reaction count above threshold on a non-bot message
+      if (sb.enabled && sb.channelId && msg.author && !msg.author.bot && !(sb.processed || []).includes(msg.id)) {
+        const wanted = String(sb.emoji || '⭐');
+        const reaction = (msg.reactions || []).find((r) => r.emoji.name === wanted && !r.me);
+        if (reaction && reaction.count >= (Number(sb.threshold) || 3)) {
+          starHits.push({ msg, channel: channelId });
+          sb.processed = (sb.processed || []).concat(msg.id).slice(-300);
+          hitSomething = true;
+        }
+      }
+      // 2. Auto-responses: trigger word → canned reply (once per message)
+      if (resp.length && msg.author && !msg.author.bot) {
+        const hit = resp.find((r) => r.trigger && new RegExp(`\\b${r.trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(String(msg.content || '')));
+        if (hit && !(g.respondedIds || []).includes(msg.id)) {
+          try {
+            await discordFetch(`/channels/${channelId}/messages`, { method: 'POST', body: JSON.stringify({ content: hit.reply, message_reference: { message_id: msg.id }, allowed_mentions: { parse: [] } }) });
+            g.respondedIds = (g.respondedIds || []).concat(msg.id).slice(-200);
+            hitSomething = true;
+          } catch (e) {}
+        }
+      }
+      // 3. AFK: someone mentions the AFK member → tell them why
+      if (afk.enabled && afk.userId && msg.author && msg.author.id !== afk.userId && !(afk.answered || []).includes(msg.id)) {
+        const mentions = String(msg.content || '').includes(`<@${afk.userId}>`);
+        if (mentions) {
+          try {
+            await discordFetch(`/channels/${channelId}/messages`, { method: 'POST', body: JSON.stringify({ content: `📭 <@${afk.userId}> is AFK${afk.reason ? `: ${afk.reason}` : ''}.`, allowed_mentions: { parse: [] }, message_reference: { message_id: msg.id } }) });
+            afk.answered = (afk.answered || []).concat(msg.id).slice(-200);
+            hitSomething = true;
+          } catch (e) {}
+        }
+      }
+      // 4. Levels: award XP per new message with a per-member cooldown
+      if (lv.enabled && msg.author && !msg.author.bot && msg.id) {
+        lv.users = lv.users || {};
+        lv.seen = Array.isArray(lv.seen) ? lv.seen : [];
+        if (!lv.seen.includes(msg.id)) {
+          lv.seen.push(msg.id);
+          if (lv.seen.length > 600) lv.seen = lv.seen.slice(-600);
+          const who = msg.author.id;
+          const st = (lv.users[who] = lv.users[who] || { xp: 0, level: 0, last: 0 });
+          if (Date.now() - Number(st.last || 0) >= (Number(lv.cooldownSeconds) || 60) * 1000) {
+            st.last = Date.now();
+            st.xp = Number(st.xp || 0) + randomBetween(lv.minXp, lv.maxXp);
+            hitSomething = true; // persist the new XP even without a level-up
+            const newLevel = levelForXp(st.xp);
+            if (newLevel > Number(st.level || 0)) {
+              st.level = newLevel;
+              await announceLevelUp(guildId, g, who, newLevel);
+            }
+          }
+        }
+      }
+      // 5. Suggestion channel: repost member messages as votable embeds
+      if (sug.enabled && sug.channelId === channelId && msg.author && !msg.author.bot && msg.id) {
+        sug.processed = Array.isArray(sug.processed) ? sug.processed : [];
+        if (!sug.processed.includes(msg.id)) {
+          sug.processed.push(msg.id);
+          if (sug.processed.length > 300) sug.processed = sug.processed.slice(-300);
+          try {
+            const posted = await discordFetch(`/channels/${channelId}/messages`, {
+              method: 'POST',
+              body: JSON.stringify({
+                embeds: [{
+                  author: { name: msg.author.global_name || msg.author.username || 'Suggestion' },
+                  description: String(msg.content || '').slice(0, 3500) || '_(no text)_',
+                  color: 0x30d158,
+                  footer: { text: '💡 Vote with 👍 / 👎' },
+                  timestamp: msg.timestamp
+                }]
+              })
+            });
+            for (const emoji of ['👍', '👎']) {
+              try { await discordFetch(`/channels/${channelId}/messages/${posted.id}/reactions/${encodeURIComponent(emoji)}/@me`, { method: 'PUT' }); } catch (e) {}
+            }
+            try { await discordFetch(`/channels/${channelId}/messages/${msg.id}`, { method: 'DELETE' }); } catch (e) {}
+            hitSomething = true;
+          } catch (e) {}
+        }
+      }
+      // 6. Boost detection in the announcements/welcome channel
+      if (boosts.enabled && boosts.channelId && channelId === boosts.channelId && BOOST_TYPES.has(msg.type) && !(boosts.processed || []).includes(msg.id)) {
+        try {
+          await discordFetch(`/channels/${boosts.channelId}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({
+              embeds: [{
+                title: '🚀 New Server Boost!',
+                description: `**${msg.author && msg.author.username ? msg.author.username : 'Someone'}** just boosted the server!\nThank you — perks unlocked for everyone 💜`,
+                color: 0xf47fff,
+                timestamp: new Date().toISOString()
+              }]
+            })
+          });
+          boosts.processed = (boosts.processed || []).concat(msg.id).slice(-100);
+          hitSomething = true;
+        } catch (e) {}
+      }
+    }
+    // 7. Sticky message: re-post after someone chats
+    const sticky = eng.sticky;
+    if (sticky && sticky.enabled && sticky.channelId === channelId && sticky.content) {
+      const latest = msgs[0];
+      if (latest && !BOOST_TYPES.has(latest.type)) {
+        const botPosted = latest.author && latest.author.id === botUserId && latest.id === sticky.messageId;
+        const userChatted = latest.author && latest.author.id !== botUserId;
+        if (userChatted && latest.id !== sticky.lastChat) {
+          sticky.lastChat = latest.id;
+          if (sticky.messageId) { try { await discordFetch(`/channels/${channelId}/messages/${sticky.messageId}`, { method: 'DELETE' }); } catch (e) {} }
+          try {
+            const posted = await discordFetch(`/channels/${channelId}/messages`, { method: 'POST', body: JSON.stringify({ content: sticky.content, allowed_mentions: { parse: [] } }) });
+            sticky.messageId = posted.id;
+            hitSomething = true;
+          } catch (e) {}
+        } else if (botPosted) {
+          sticky.lastChat = '';
+        }
+      }
+    }
+  }
+  // Starboard posts are made after the scan so the embed is one call per hit
+  for (const hit of starHits) {
+    try {
+      await discordFetch(`/channels/${sb.channelId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({
+          embeds: [{
+            author: { name: 'Starboard' },
+            title: `⭐ ${hit.msg.reactions.find((r) => r.emoji.name === String(sb.emoji || '⭐')).count} stars`,
+            description: `${hit.msg.content ? hit.msg.content.slice(0, 1000) : '_(no text)_'}\n\n[Jump to message](https://discord.com/channels/${guildId}/${hit.channel}/${hit.msg.id})`,
+            color: 0xffd700,
+            footer: { text: `posted by ${hit.msg.author ? hit.msg.author.username : 'unknown'}` },
+            timestamp: hit.msg.timestamp
+          }]
+        })
+      });
+    } catch (e) {}
+  }
+  return hitSomething;
+}
+
+/* Auto-role + join DM: watch for members that joined since the last tick. */
+async function runEngagementGuild(guildId, g) {
+  const eng = g.engagement || (g.engagement = {});
+  let touched = false;
+  const needsMemberScan = (eng.autoRole && eng.autoRole.enabled) || (eng.joinDm && eng.joinDm.enabled);
+  if (needsMemberScan) {
+    const members = await discordFetch(`/guilds/${guildId}/members?limit=1000`);
+    const cutoff = Date.now() - 15 * 60 * 1000;
+    const fresh = (Array.isArray(members) ? members : []).filter((m) => m.joined_at && Date.parse(m.joined_at) >= cutoff);
+    for (const m of fresh) {
+      if (!m.user || !m.user.id) continue;
+      if ((eng.autoRole.knownMembers || []).includes(m.user.id)) continue;
+      eng.autoRole.knownMembers = (eng.autoRole.knownMembers || []).concat(m.user.id).slice(-1000);
+      touched = true;
+      if (eng.autoRole.enabled && eng.autoRole.roleId) {
+        try { await discordFetch(`/guilds/${guildId}/members/${m.user.id}/roles/${eng.autoRole.roleId}`, { method: 'PUT', headers: { 'X-Audit-Log-Reason': 'Kyro auto-role' } }); } catch (e) {}
+      }
+      if (eng.joinDm.enabled && eng.joinDm.message) {
+        try {
+          const dm = await discordFetch(`/users/${m.user.id}/channels`, { method: 'POST', body: JSON.stringify({ recipient_id: m.user.id }) });
+          await discordFetch(`/channels/${dm.id}/messages`, { method: 'POST', body: JSON.stringify({ content: String(eng.joinDm.message).replace('{server}', g._serverName || 'the server').slice(0, 2000) }) });
+        } catch (e) {}
+      }
+    }
+  }
+  // Voice role: grant while connected, remove when they leave
+  const vr = eng.voiceRole;
+  if (vr && vr.enabled && vr.roleId) {
+    try {
+      const states = await discordFetch(`/guilds/${guildId}/voice-states`);
+      const connected = (Array.isArray(states) ? states : []).filter((s) => s.channel_id).map((s) => s.user_id);
+      const had = vr.inVoice || [];
+      for (const uidToAdd of connected) {
+        if (had.includes(uidToAdd)) continue;
+        try { await discordFetch(`/guilds/${guildId}/members/${uidToAdd}/roles/${vr.roleId}`, { method: 'PUT', headers: { 'X-Audit-Log-Reason': 'Kyro voice role' } }); } catch (e) {}
+      }
+      for (const uidToClear of had) {
+        if (connected.includes(uidToClear)) continue;
+        try { await discordFetch(`/guilds/${guildId}/members/${uidToClear}/roles/${vr.roleId}`, { method: 'DELETE', headers: { 'X-Audit-Log-Reason': 'Kyro voice role' } }); } catch (e) {}
+      }
+      if (connected.length !== had.length || connected.some((x) => !had.includes(x))) {
+        vr.inVoice = connected;
+        touched = true;
+      }
+    } catch (e) {}
+  }
+  return touched;
+}
+
+/* Due scheduled announcements + reminders. Returns true when something fired. */
+async function runSchedule(db, guildId, g) {
+  const sch = g.schedule || (g.schedule = { announcements: [], reminders: [] });
+  const now = Date.now();
+  let fired = false;
+  const dueAnn = (sch.announcements || []).filter((a) => Number(a.at) <= now);
+  for (const a of dueAnn) {
+    fired = true;
+    try {
+      await discordFetch(`/channels/${a.channelId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({
+          content: a.mentionEveryone ? '@everyone' : undefined,
+          embeds: [{ title: a.title, description: a.description, color: 0x2997ff, footer: { text: 'Kyro • Scheduled announcement' }, timestamp: new Date().toISOString() }],
+          allowed_mentions: { parse: a.mentionEveryone ? ['everyone'] : [] }
+        })
+      });
+      await logEvent(guildId, 'moderation', 'Scheduled announcement sent', `**Channel:** <#${a.channelId}>\n**Title:** ${a.title}`, 0x2997ff);
+    } catch (e) {}
+  }
+  sch.announcements = (sch.announcements || []).filter((a) => Number(a.at) > now);
+  const dueRem = (sch.reminders || []).filter((r) => Number(r.at) <= now);
+  for (const r of dueRem) {
+    fired = true;
+    try {
+      const dm = await discordFetch(`/users/${r.userId}/channels`, { method: 'POST', body: JSON.stringify({ recipient_id: r.userId }) });
+      await discordFetch(`/channels/${dm.id}/messages`, { method: 'POST', body: JSON.stringify({ content: `⏰ **Reminder:** ${r.text}` }) });
+    } catch (e) {}
+  }
+  sch.reminders = (sch.reminders || []).filter((r) => Number(r.at) > now);
+  if (fired) saveDB(db);
+  return fired;
+}
+
+/* ---------------------------------------------------------------------------
+   Community suite: levels, birthdays, stat channels, suggestions, polls
+   --------------------------------------------------------------------------- */
+const randomBetween = (min, max) => {
+  const lo = Math.max(1, Number(min) || 5);
+  const hi = Math.max(lo, Number(max) || 15);
+  return Math.floor(Math.random() * (hi - lo + 1)) + lo;
+};
+
+/* Quadratic curve: level 1 at 50 XP, level 10 at 5,000 XP, level 100 at 500k. */
+const levelForXp = (xp) => Math.floor(Math.sqrt(Math.max(0, Number(xp) || 0) / 50));
+const xpForLevel = (level) => Math.max(1, Number(level) || 1) ** 2 * 50;
+
+async function announceLevelUp(guildId, g, userId, level) {
+  const lv = g.levels;
+  for (const reward of lv.rewards || []) {
+    if (Number(reward.level) !== Number(level) || !reward.roleId) continue;
+    try {
+      await discordFetch(`/guilds/${guildId}/members/${userId}/roles/${reward.roleId}`, {
+        method: 'PUT', headers: { 'X-Audit-Log-Reason': `Level ${level} reward` }
+      });
+    } catch (e) {}
+  }
+  if (!lv.announce || !lv.channelId) return;
+  const st = (lv.users && lv.users[userId]) || { xp: 0 };
+  try {
+    await discordFetch(`/channels/${lv.channelId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        embeds: [{
+          description: `🎉 <@${userId}> just reached **level ${level}**! (${st.xp} XP)`,
+          color: 0xf39c12,
+          footer: { text: `Next level at ${xpForLevel(level + 1)} XP` }
+        }],
+        allowed_mentions: { parse: ['users'] }
+      })
+    });
+  } catch (e) {}
+}
+
+/* Today's birthdays, announced once per member per year. */
+async function runBirthdaysGuild(db, guildId, g) {
+  const bd = g.birthdays;
+  if (!bd.enabled || !bd.channelId || !Array.isArray(bd.users) || !bd.users.length) return false;
+  const now = new Date();
+  const today = `${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
+  const yearKey = String(now.getUTCFullYear());
+  bd.announced = Array.isArray(bd.announced) ? bd.announced : [];
+  let fired = false;
+  for (const entry of bd.users) {
+    if (!entry || !entry.userId || entry.date !== today) continue;
+    const key = `${yearKey}:${entry.userId}`;
+    if (bd.announced.includes(key)) continue;
+    bd.announced.push(key);
+    if (bd.announced.length > 500) bd.announced = bd.announced.slice(-500);
+    fired = true;
+    const text = String(bd.message || '🎂 Happy birthday {user}!').replace(/\{user\}/g, `<@${entry.userId}>`).replace(/\{username\}/g, entry.username || 'member');
+    try {
+      await discordFetch(`/channels/${bd.channelId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ content: text.slice(0, 2000), allowed_mentions: { parse: ['users'] } })
+      });
+      await logEvent(guildId, 'joins', 'Birthday announced', `**Member:** <@${entry.userId}>`, 0xff9f0a);
+    } catch (e) {}
+  }
+  return fired;
+}
+
+/* Rename the configured voice channels to the live member/bot counts. */
+async function runStatChannelsGuild(guildId, g) {
+  const sc = g.statChannels;
+  if (!sc.enabled) return false;
+  if (Date.now() - Number(sc.lastRun || 0) < 5 * 60 * 1000) return false;
+  sc.lastRun = Date.now();
+  let guild;
+  try { guild = await discordFetch(`/guilds/${guildId}?with_counts=true`); } catch (e) { return false; }
+  let bots = 0;
+  try {
+    const members = await discordFetch(`/guilds/${guildId}/members?limit=1000`);
+    bots = (Array.isArray(members) ? members : []).filter((m) => m.user && m.user.bot).length;
+  } catch (e) {}
+  const total = Number(guild.approximate_member_count || 0);
+  const humans = Math.max(0, total - bots);
+  const renames = [
+    { id: sc.memberChannelId, name: `👥 Members: ${total}` },
+    { id: sc.botChannelId, name: `🤖 Bots: ${bots} · Humans: ${humans}` }
+  ];
+  let touched = false;
+  for (const r of renames) {
+    if (!r.id) continue;
+    try { await discordFetch(`/channels/${r.id}`, { method: 'PATCH', body: JSON.stringify({ name: r.name }) }); touched = true; } catch (e) {}
+  }
+  return touched;
+}
+
+/* Native Discord poll (no bot gateway needed). */
+async function createPoll(guildId, body) {
+  const channelId = String(body.channelId || '').trim();
+  const question = String(body.question || '').trim();
+  const answers = (Array.isArray(body.options) ? body.options : []).map((o) => String(o || '').trim()).filter(Boolean).slice(0, 10);
+  if (!channelId) throw new Error('A channel is required.');
+  if (!question) throw new Error('A poll question is required.');
+  if (answers.length < 2) throw new Error('Add at least two poll options.');
+  const hours = Math.min(Math.max(Number(body.hours) || 24, 1), 168);
+  const msg = await discordFetch(`/channels/${channelId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({
+      content: String(body.content || '').slice(0, 2000) || undefined,
+      poll: {
+        question: { text: question.slice(0, 300) },
+        answers: answers.map((text) => ({ poll_media: { text: text.slice(0, 55) } })),
+        duration: hours,
+        allow_multiselect: Boolean(body.multiple)
+      }
+    })
+  });
+  const db = loadDB();
+  const g = guildConfig(db, guildId);
+  g.polls = Array.isArray(g.polls) ? g.polls : [];
+  const poll = { id: uid(), channel: channelId, message_id: msg.id, question, options: answers, hours, multiple: Boolean(body.multiple), created_at: new Date().toISOString() };
+  g.polls.unshift(poll);
+  g.polls = g.polls.slice(0, 50);
+  saveDB(db);
+  await logEvent(guildId, 'moderation', 'Poll posted', `**Channel:** <#${channelId}>\n**Question:** ${question}\n**Options:** ${answers.length}`, 0x64d2ff);
+  return poll;
+}
+
+/* Suggestion channel panel. Members just write in the channel; the poller
+   converts each message into a votable embed, so no gateway is required. */
+async function postSuggestionPanel(guildId, channelId) {
+  const msg = await discordFetch(`/channels/${channelId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({
+      embeds: [{
+        title: '💡 Suggestions',
+        description: 'Send a message in this channel with your idea — the bot reposts it with 👍 / 👎 so everyone can vote.\nKeep it short and constructive.',
+        color: 0x30d158,
+        footer: { text: 'Kyro Staff Bot' }
+      }]
+    })
+  });
+  const db = loadDB();
+  const g = guildConfig(db, guildId);
+  g.suggestions = g.suggestions || { enabled: true, channelId: '', processed: [] };
+  g.suggestions.enabled = true;
+  g.suggestions.channelId = channelId;
+  saveDB(db);
+  return msg;
+}
+
+/* Channels the engagement/level/suggestion scanners should read: the AutoMod
+   channel list plus every channel a feature is explicitly pointed at. */
+function scanChannelSet(g) {
+  const set = new Set();
+  for (const id of (g.automod && g.automod.channels) || []) set.add(id);
+  const eng = g.engagement || {};
+  if (eng.sticky && eng.sticky.channelId) set.add(eng.sticky.channelId);
+  if (g.suggestions && g.suggestions.channelId) set.add(g.suggestions.channelId);
+  for (const id of (g.levels && g.levels.channels) || []) set.add(id);
+  return [...set].filter(Boolean).slice(0, 30);
+}
+
 // Background poller
 // ---------------------------------------------------------------------------
-const lastRun = { giveaways: 0, reactionRoles: 0, automod: 0, welcome: 0, tempbans: 0, security: 0 };
+const lastRun = { giveaways: 0, reactionRoles: 0, automod: 0, welcome: 0, tempbans: 0, security: 0, engagement: 0, schedule: 0, birthdays: 0, stats: 0 };
 let polling = false;
 
 async function pollTick() {
@@ -1208,6 +1935,47 @@ async function pollTick() {
       }
     }
 
+    // Engagement suite: auto-role, join DMs, voice roles, starboard, levels,
+    // stickies, auto-responses, AFK, boosts and suggestion voting.
+    if (now - lastRun.engagement > 30000) {
+      lastRun.engagement = now;
+      for (const guildId of guildIds) {
+        const g = guildConfig(db, guildId);
+        try { if (await runEngagementGuild(guildId, g)) changed = true; } catch (e) {}
+        try { if (await scanGuildMessages(guildId, g, scanChannelSet(g))) changed = true; } catch (e) {}
+      }
+    }
+
+    // Scheduled announcements + reminders.
+    if (now - lastRun.schedule > 15000) {
+      lastRun.schedule = now;
+      for (const guildId of guildIds) {
+        const g = guildConfig(db, guildId);
+        try { if (await runSchedule(db, guildId, g)) changed = true; } catch (e) {}
+      }
+    }
+
+    // Birthday announcements (once per member per year).
+    if (now - lastRun.birthdays > 60000) {
+      lastRun.birthdays = now;
+      for (const guildId of guildIds) {
+        const g = guildConfig(db, guildId);
+        try { if (await runBirthdaysGuild(db, guildId, g)) changed = true; } catch (e) {}
+      }
+    }
+
+    // Live member/bot counters in voice channel names.
+    if (now - lastRun.stats > 60000) {
+      lastRun.stats = now;
+      for (const guildId of guildIds) {
+        const g = guildConfig(db, guildId);
+        try {
+          await runStatChannelsGuild(guildId, g);
+          if (g.statChannels && g.statChannels.enabled) changed = true; // persist the 5-minute throttle
+        } catch (e) {}
+      }
+    }
+
     // Big-team security suite — heavier checks, run about every 45 seconds.
     if (now - lastRun.security > 45000) {
       lastRun.security = now;
@@ -1259,6 +2027,16 @@ function openLocalDashboard() {
   exec(startCmd, (err) => { if (err) console.error('Failed to auto-open browser:', err.message); });
 }
 
+/* Turns Discord's bare "Missing Permissions" into an actionable explanation. */
+function permErrorHint(err) {
+  const msg = String((err && err.message) || '');
+  if (err && err.needsAdmin) return err.message;
+  if (err && (err.status === 403 || /missing permissions|missing perms|permission/i.test(msg))) {
+    return 'The Kyro bot is missing Manage Roles / Manage Channels. Fix it: Server Settings → Roles → drag "Kyro Bot" above the roles it manages, or re-add the bot with Administrator: ' + BOT_INSTALL_URL;
+  }
+  return null;
+}
+
 const server = http.createServer(async (req, res) => {
   // Loopback admin tool: reject any Host that isn't localhost (DNS-rebinding guard).
   const host = (req.headers.host || '').toLowerCase();
@@ -1288,12 +2066,17 @@ const server = http.createServer(async (req, res) => {
     // Multi-server selector
     if (req.method === 'GET' && p === '/api/guilds') {
       const guilds = await discordFetch('/users/@me/guilds?with_counts=true');
-      const list = (Array.isArray(guilds) ? guilds : []).map((g) => ({
-        id: g.id, name: g.name, icon: g.icon, owner: g.owner,
-        member_count: g.approximate_member_count || null,
-        permissions: g.permissions
-      }));
-      return sendJSON(res, 200, { guilds: list });
+      const list = (Array.isArray(guilds) ? guilds : []).map((g) => {
+        const perms = BigInt(g.permissions || '0');
+        return {
+          id: g.id, name: g.name, icon: g.icon, owner: g.owner,
+          member_count: g.approximate_member_count || null,
+          permissions: g.permissions,
+          is_admin: (perms & PERM.ADMIN) === PERM.ADMIN,
+          invite_url: BOT_INSTALL_URL
+        };
+      });
+      return sendJSON(res, 200, { guilds: list, installUrl: BOT_INSTALL_URL });
     }
 
     if (req.method === 'GET' && p === '/api/guild') {
@@ -1324,8 +2107,295 @@ const server = http.createServer(async (req, res) => {
         automod: g.automod, welcome: g.welcome, logging: g.logging,
         reactionRoles: g.reactionRoles, giveaways: g.giveaways,
         warnings: g.warnings, audit: g.audit, tempbans: g.tempbans,
-        verification: g.verification, security: g.security
+        verification: g.verification, security: g.security,
+        engagement: g.engagement, schedule: g.schedule, autoResponses: g.autoResponses,
+        suggestions: g.suggestions, levels: g.levels, birthdays: g.birthdays,
+        statChannels: g.statChannels, polls: g.polls,
+        rolePacks: ROLE_PACKS.map((p) => ({ id: p.id, label: p.label, description: p.description, roles: p.roles.length })),
+        installUrl: BOT_INSTALL_URL
       });
+    }
+
+    // ---- Bot admin access (invite / re-grant) ----
+    if (req.method === 'GET' && p === '/api/bot/access') {
+      if (!guildId) return sendJSON(res, 400, { error: 'guild is required' });
+      const access = await botAccess(guildId);
+      return sendJSON(res, 200, { ...access, required: ['Administrator'] });
+    }
+
+    if (req.method === 'POST' && p === '/api/bot/grant') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      accessCache[gid] = null;
+      const access = await botAccess(gid);
+      return sendJSON(res, 200, {
+        ok: true,
+        isAdmin: access.isAdmin,
+        inviteUrl: BOT_INSTALL_URL,
+        message: access.isAdmin
+          ? 'Kyro Bot already has Administrator in this server.'
+          : 'Open the invite link, pick this server and approve Administrator. Nothing else changes.'
+      });
+    }
+
+    // ---- Role presets & packs ----
+    if (req.method === 'GET' && p === '/api/roles/presets') {
+      const presets = ROLE_PRESETS.map((x) => ({ id: x.id, group: x.group, label: x.label, desc: x.desc }));
+      let roles = [];
+      if (guildId) {
+        try {
+          const list = await discordFetch(`/guilds/${guildId}/roles`);
+          roles = (Array.isArray(list) ? list : []).filter((r) => r.name !== '@everyone' && !r.managed)
+            .map((r) => ({ id: r.id, name: r.name, ...rolePresetPermissions(r.name) }));
+        } catch (e) {}
+      }
+      return sendJSON(res, 200, { presets, roles, packs: ROLE_PACKS.map((x) => ({ id: x.id, label: x.label, description: x.description })) });
+    }
+
+    if (req.method === 'POST' && p === '/api/roles/presets/apply') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      if (!body.roleId) return sendJSON(res, 400, { error: 'roleId is required' });
+      const out = await applyRolePreset(gid, body.roleId, body.presetId);
+      return sendJSON(res, 200, { ok: true, ...out });
+    }
+
+    if (req.method === 'GET' && p === '/api/roles/packs') {
+      return sendJSON(res, 200, { packs: ROLE_PACKS });
+    }
+
+    if (req.method === 'POST' && p === '/api/roles/packs/create') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const out = await createRolePack(gid, body.packId);
+      return sendJSON(res, 200, out);
+    }
+
+    // ---- Engagement suite ----
+    if (req.method === 'POST' && p === '/api/engagement') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      const eng = g.engagement;
+      if (body.autoRole) {
+        eng.autoRole = {
+          enabled: Boolean(body.autoRole.enabled), roleId: String(body.autoRole.roleId || ''),
+          knownMembers: eng.autoRole.knownMembers || []
+        };
+      }
+      if (body.joinDm) {
+        eng.joinDm = { enabled: Boolean(body.joinDm.enabled), message: String(body.joinDm.message || '').slice(0, 1500) };
+      }
+      if (body.starboard) {
+        eng.starboard = {
+          enabled: Boolean(body.starboard.enabled), channelId: String(body.starboard.channelId || ''),
+          threshold: Math.min(Math.max(Number(body.starboard.threshold) || 3, 1), 50),
+          emoji: String(body.starboard.emoji || '⭐').slice(0, 16),
+          processed: eng.starboard.processed || []
+        };
+      }
+      if (body.voiceRole) {
+        eng.voiceRole = {
+          enabled: Boolean(body.voiceRole.enabled), roleId: String(body.voiceRole.roleId || ''),
+          inVoice: eng.voiceRole.inVoice || []
+        };
+      }
+      if (body.boosts) {
+        eng.boosts = { enabled: Boolean(body.boosts.enabled), channelId: String(body.boosts.channelId || ''), processed: eng.boosts.processed || [] };
+      }
+      if (body.afk) {
+        eng.afk = {
+          enabled: Boolean(body.afk.enabled), userId: String(body.afk.userId || '').trim(),
+          reason: String(body.afk.reason || '').slice(0, 200), until: Number(body.afk.until) || 0,
+          answered: eng.afk.answered || []
+        };
+      }
+      if (body.sticky) {
+        eng.sticky = {
+          enabled: Boolean(body.sticky.enabled), channelId: String(body.sticky.channelId || ''),
+          content: String(body.sticky.content || '').slice(0, 2000),
+          messageId: body.sticky.channelId === eng.sticky.channelId ? eng.sticky.messageId : '',
+          lastChat: ''
+        };
+      }
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true, engagement: eng });
+    }
+
+    // ---- Levels ----
+    if (req.method === 'POST' && p === '/api/levels') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      const lv = g.levels;
+      if (body.enabled !== undefined) lv.enabled = Boolean(body.enabled);
+      if (body.minXp !== undefined) lv.minXp = Math.min(Math.max(Number(body.minXp) || 5, 1), 500);
+      if (body.maxXp !== undefined) lv.maxXp = Math.max(lv.minXp, Math.min(Number(body.maxXp) || 15, 1000));
+      if (body.cooldownSeconds !== undefined) lv.cooldownSeconds = Math.min(Math.max(Number(body.cooldownSeconds) || 60, 0), 86400);
+      if (body.channelId !== undefined) lv.channelId = String(body.channelId || '');
+      if (body.announce !== undefined) lv.announce = Boolean(body.announce);
+      if (Array.isArray(body.channels)) lv.channels = body.channels.map(String).slice(0, 30);
+      if (Array.isArray(body.rewards)) {
+        lv.rewards = body.rewards
+          .filter((r) => r && r.roleId)
+          .map((r) => ({ level: Math.min(Math.max(Number(r.level) || 1, 1), 500), roleId: String(r.roleId) }))
+          .slice(0, 25);
+      }
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true, levels: { ...lv, users: undefined } });
+    }
+
+    if (req.method === 'GET' && p === '/api/levels') {
+      if (!guildId) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, guildId);
+      const lv = g.levels;
+      const leaderboard = Object.entries(lv.users || {})
+        .map(([userId, st]) => ({ userId, xp: Number(st.xp) || 0, level: Number(st.level) || 0 }))
+        .sort((a, b) => b.xp - a.xp)
+        .slice(0, 25)
+        .map((row) => ({ ...row, nextLevelXp: xpForLevel(row.level + 1) }));
+      return sendJSON(res, 200, { levels: { ...lv, users: undefined, rankingSize: Object.keys(lv.users || {}).length }, leaderboard });
+    }
+
+    // ---- Birthdays ----
+    if (req.method === 'POST' && p === '/api/birthdays') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      const bd = g.birthdays;
+      if (body.enabled !== undefined) bd.enabled = Boolean(body.enabled);
+      if (body.channelId !== undefined) bd.channelId = String(body.channelId || '');
+      if (body.message !== undefined) bd.message = String(body.message || '').slice(0, 500);
+      if (Array.isArray(body.users)) {
+        bd.users = body.users
+          .filter((u) => u && /^\d{17,20}$/.test(String(u.userId || '')) && /^\d{2}-\d{2}$/.test(String(u.date || '')))
+          .map((u) => ({ userId: String(u.userId), date: String(u.date), username: String(u.username || '') }))
+          .slice(0, 500);
+      }
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true, birthdays: bd });
+    }
+
+    // ---- Live stat channels ----
+    if (req.method === 'POST' && p === '/api/stat-channels') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      g.statChannels = {
+        enabled: Boolean(body.enabled),
+        memberChannelId: String(body.memberChannelId || ''),
+        botChannelId: String(body.botChannelId || ''),
+        lastRun: 0
+      };
+      saveDB(db);
+      let note = 'Saved. Counters refresh every ~5 minutes while the bot is running.';
+      if (g.statChannels.enabled) {
+        try {
+          const touched = await runStatChannelsGuild(gid, { ...g, statChannels: { ...g.statChannels, lastRun: 0 } });
+          if (touched) note += ' Counters updated now.';
+        } catch (e) {}
+      }
+      return sendJSON(res, 200, { ok: true, statChannels: g.statChannels, note });
+    }
+
+    // ---- Polls ----
+    if (req.method === 'POST' && p === '/api/poll') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const poll = await createPoll(gid, body);
+      return sendJSON(res, 200, { ok: true, poll });
+    }
+
+    // ---- Scheduled announcements & reminders ----
+    if (req.method === 'POST' && p === '/api/schedule') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      const sch = g.schedule;
+      const at = Date.now() + Math.min(Math.max(Number(body.inMinutes) || 10, 1), 60 * 24 * 60) * 60000;
+      if (body.type === 'reminder') {
+        const userId = String(body.userId || '').trim();
+        const text = String(body.text || '').trim();
+        if (!/^[A-Za-z0-9_-]{1,32}$/.test(userId)) return sendJSON(res, 400, { error: 'A valid user ID is required for a reminder.' });
+        if (!text) return sendJSON(res, 400, { error: 'Reminder text is required.' });
+        sch.reminders = (sch.reminders || []).concat({ id: uid(), userId, text: text.slice(0, 500), at });
+      } else {
+        const channelId = String(body.channelId || '').trim();
+        const title = String(body.title || '').trim();
+        const description = String(body.description || '').trim();
+        if (!/^[A-Za-z0-9_-]{1,32}$/.test(channelId)) return sendJSON(res, 400, { error: 'Pick a channel for the announcement.' });
+        if (!title && !description) return sendJSON(res, 400, { error: 'Add an announcement title or description.' });
+        sch.announcements = (sch.announcements || []).concat({
+          id: uid(), channelId, title: title.slice(0, 256), description: description.slice(0, 3500),
+          mentionEveryone: Boolean(body.mentionEveryone), at
+        });
+      }
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true, schedule: sch });
+    }
+
+    if (req.method === 'POST' && p === '/api/schedule/delete') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      g.schedule.announcements = (g.schedule.announcements || []).filter((a) => a.id !== body.id);
+      g.schedule.reminders = (g.schedule.reminders || []).filter((r) => r.id !== body.id);
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true, schedule: g.schedule });
+    }
+
+    // ---- Auto-responses ----
+    if (req.method === 'POST' && p === '/api/autoresponses') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      g.autoResponses = (Array.isArray(body.responses) ? body.responses : [])
+        .filter((r) => r && String(r.trigger || '').trim() && String(r.reply || '').trim())
+        .map((r) => ({ trigger: String(r.trigger).trim().slice(0, 60), reply: String(r.reply).trim().slice(0, 1500) }))
+        .slice(0, 40);
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true, autoResponses: g.autoResponses });
+    }
+
+    // ---- Suggestions panel ----
+    if (req.method === 'POST' && p === '/api/suggestions/post') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      const channelId = String(body.channelId || '').trim();
+      if (!gid || !channelId) return sendJSON(res, 400, { error: 'guild and channelId are required' });
+      const msg = await postSuggestionPanel(gid, channelId);
+      return sendJSON(res, 200, { ok: true, message_id: msg.id, note: 'Members just write their idea — the bot reposts it with 👍 / 👎.' });
+    }
+
+    if (req.method === 'POST' && p === '/api/suggestions/config') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      g.suggestions.enabled = Boolean(body.enabled);
+      if (body.channelId !== undefined) g.suggestions.channelId = String(body.channelId || '');
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true, suggestions: g.suggestions });
     }
 
     if (req.method === 'POST' && p === '/api/moderate') {
@@ -1545,15 +2615,6 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, { ok: true, message_id: msg.id });
     }
 
-/* Turns Discord's bare "Missing Permissions" into an actionable explanation. */
-function permErrorHint(err) {
-  const msg = String((err && err.message) || '');
-  if (err && (err.status === 403 || /missing permissions|missing perms|permission/i.test(msg))) {
-    return 'The Kyro bot is missing Manage Roles / Manage Channels. Fix it: Server Settings → Roles → drag "Kyro Bot" above the roles it manages, or re-add the bot with Administrator → https://discord.com/oauth2/authorize?client_id=1570702041993711706&permissions=8&scope=bot%20applications.commands';
-  }
-  return null;
-}
-
     // ---- Setup & Security endpoints ----
     if (req.method === 'POST' && p === '/api/permissions/apply') {
       const body = await readBody(req);
@@ -1573,7 +2634,7 @@ function permErrorHint(err) {
         return sendJSON(res, 200, { steps });
       } catch (err) {
         const hint = permErrorHint(err);
-        return sendJSON(res, hint ? 403 : 500, { error: hint || (err.message || 'Verification setup failed.') });
+        return sendJSON(res, hint ? 403 : 500, { error: hint || (err.message || 'Verification setup failed.'), needsAdmin: Boolean(err.needsAdmin), inviteUrl: BOT_INSTALL_URL });
       }
     }
 
@@ -1595,7 +2656,7 @@ function permErrorHint(err) {
         return sendJSON(res, 200, { steps });
       } catch (err) {
         const hint = permErrorHint(err);
-        return sendJSON(res, hint ? 403 : 500, { error: hint || (err.message || 'Auto setup failed.') });
+        return sendJSON(res, hint ? 403 : 500, { error: hint || (err.message || 'Auto setup failed.'), needsAdmin: Boolean(err.needsAdmin), inviteUrl: BOT_INSTALL_URL });
       }
     }
 
@@ -1671,7 +2732,9 @@ function permErrorHint(err) {
     return sendJSON(res, 404, { error: 'Not found' });
   } catch (err) {
     const status = err.status && err.status >= 400 && err.status < 600 ? err.status : 500;
-    return sendJSON(res, status, { error: err.message || 'Server error' });
+    const payload = { error: err.message || 'Server error' };
+    if (err.needsAdmin) { payload.needsAdmin = true; payload.inviteUrl = err.inviteUrl || BOT_INSTALL_URL; payload.missing = err.missing || []; }
+    return sendJSON(res, status, payload);
   }
 });
 
@@ -1689,8 +2752,9 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log('  Kyro Staff Bot — Multi-Server Command Center');
   console.log(`  http://localhost:${PORT}`);
   console.log(`  Bot token: ${BOT_TOKEN ? 'loaded' : 'MISSING — set DISCORD_BOT_TOKEN in .env'}`);
-  console.log('  Features: moderation, giveaways, reaction roles,');
-  console.log('            automod, welcome, logging, utility, embeds');
+  console.log('  Features: moderation, giveaways, reaction roles, automod, welcome,');
+  console.log('            logging, setup, security, engagement, levels, community,');
+  console.log('            scheduler, polls, role packs, utility, embeds');
   console.log('=======================================================');
   if (!process.env.DASHBOARD_DISABLE_POLLER) {
     setInterval(pollTick, 5000);

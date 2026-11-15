@@ -191,10 +191,65 @@ function fail(status, code, message) {
   return Object.assign(new Error(message), { status, code });
 }
 
-async function jsonBody(request) {
-  const body = await request.json().catch(() => null);
+/* A capped JSON reader. Without this, any endpoint could be handed a body
+   large enough to burn a Worker's memory before a single field is validated. */
+async function jsonBody(request, maxBytes = 64 * 1024) {
+  const declared = Number(request.headers.get('content-length') || 0);
+  if (declared > maxBytes) throw fail(413, 'body_too_large', 'Request body is too large.');
+  const text = await request.text();
+  if (new TextEncoder().encode(text).length > maxBytes) throw fail(413, 'body_too_large', 'Request body is too large.');
+  let body = null;
+  try { body = JSON.parse(text); } catch { body = null; }
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw fail(400, 'bad_body', 'Send a JSON object.');
   return body;
+}
+
+/* Absolute http(s) only, no credentials. This is what keeps a contributor from
+   storing `javascript:alert(1)` as a download/image URL and turning a
+   "Download" click on the public site into script execution. */
+function safeHttpUrl(value, max = 500) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return '';
+  if (raw.length > max) throw fail(400, 'bad_url', 'That URL is too long.');
+  let parsed;
+  try { parsed = new URL(raw); } catch { throw fail(400, 'bad_url', 'Use a full http:// or https:// URL.'); }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw fail(400, 'bad_url', 'Only http:// and https:// URLs are allowed.');
+  if (parsed.username || parsed.password) throw fail(400, 'bad_url', 'URLs with embedded login details are not allowed.');
+  if (parsed.href.length > max) throw fail(400, 'bad_url', 'That URL is too long.');
+  return parsed.href;
+}
+
+/* Identity that can be moved without a code change. Defaults match the Kyro
+   server so existing deploys keep working; set the env vars to override. */
+const DEFAULT_OWNER_ID = '1052909930073567232';
+const ownerId = (env) => String((env && env.KYRO_OWNER_ID) || DEFAULT_OWNER_ID);
+const envRoleId = (env, key, fallback) => String((env && env[key]) || fallback);
+
+/* Discord channel ids are configuration, not code. Each one can be moved with a
+   deploy variable; the fallbacks keep an unconfigured worker behaving as before. */
+const channelId = (env, key, fallback) => {
+  const value = String((env && env[key]) || '').trim();
+  return /^\d{17,20}$/.test(value) ? value : fallback;
+};
+const incomingChannelId = (env) => channelId(env, 'DISCORD_INCOMING_CHANNEL_ID', '1539962334729211934');
+const auditChannelId = (env) => channelId(env, 'DISCORD_AUDIT_CHANNEL_ID', '1571403237788221611');
+const alertChannelId = (env) => channelId(env, 'DISCORD_ALERT_CHANNEL_ID', '1570713380778541147');
+
+/* What may be uploaded as an item image. SVG is deliberately absent: it is a
+   script container, and Discord serves it back from a host we do not control. */
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+function sniffImage(bytes) {
+  if (!bytes || bytes.length < 12) return '';
+  const at = (i) => String.fromCharCode(bytes[i]);
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) return 'image/gif';
+  if (at(0) + at(1) + at(2) + at(3) === 'RIFF' && at(8) + at(9) + at(10) + at(11) === 'WEBP') return 'image/webp';
+  return '';
+}
+const IMAGE_EXTENSIONS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+function isOwnerSession(session, env) {
+  return Boolean(session && (session.isOwner || String(session.id) === ownerId(env) || String(session.role || '').toLowerCase() === 'owner'));
 }
 
 /* Control characters and newline runs have no business in a one-line card. */
@@ -219,6 +274,28 @@ async function mutateDoc(env, key, fallback, fn) {
   const next = fn(value);
   await env.KYRO_DATA.put(key, JSON.stringify(next));
   return next;
+}
+
+/* Cheap per-member write limit for content endpoints, so one signed-in member
+   cannot flood the board, the review queue or the media channel. KV is
+   eventually consistent, so this is a speed bump, not a lock — enough to stop
+   scripted spam, and it fails open if KV is unavailable. */
+async function limitWrites(env, bucket, id, max = 30, windowSec = 600) {
+  if (!env.KYRO_DATA || !id) return;
+  const key = `kyro.rate.${bucket}.${id}`;
+  const now = Date.now();
+  const since = now - windowSec * 1000;
+  let hits = [];
+  try {
+    const stored = await env.KYRO_DATA.get(key, { type: 'json' });
+    hits = Array.isArray(stored) ? stored.filter(t => Number(t) > since) : [];
+  } catch { return; }
+  if (hits.length >= max) {
+    const retry = Math.max(1, Math.ceil(((Number(hits[0]) || now) + windowSec * 1000 - now) / 1000));
+    throw fail(429, 'rate_limited', `Slow down — try again in ${retry}s.`);
+  }
+  hits.push(now);
+  try { await env.KYRO_DATA.put(key, JSON.stringify(hits), { expirationTtl: windowSec }); } catch {}
 }
 
 function requestTitleKey(title) {
@@ -481,6 +558,7 @@ async function handleRequests(request, url, env, cors) {
   if (request.method !== 'POST') return json({ error: 'Use GET or POST.' }, 405, cors);
   const input = await jsonBody(request);
   const session = await requireMember(bearerToken(request, url) || input.token, env);
+  await limitWrites(env, 'requests', session.id);
   if (typeof input.title !== 'string') throw fail(400, 'bad_title', 'Give the request a title.');
   const title = cleanText(input.title, 90);
   if (title.length < 3) throw fail(400, 'bad_title', 'Give the request a title of at least 3 characters.');
@@ -576,6 +654,7 @@ async function handleFeedback(request, url, env, cors) {
 
   const input = await jsonBody(request);
   const session = await requireMember(bearerToken(request, url) || input.token, env);
+  await limitWrites(env, 'feedback', session.id);
 
   const rating = Number(input.rating);
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
@@ -690,7 +769,7 @@ async function handleInvite(request, url, env, cors) {
       }
 
       // If user is owner sxii123, return the official 5ch7XeNg98
-      if (session.id === '1052909930073567232') {
+      if (String(session.id) === ownerId(env)) {
         return json({ invite_url: 'https://discord.gg/5ch7XeNg98', code: '5ch7XeNg98' }, 200, cors);
       }
 
@@ -839,7 +918,7 @@ async function readSession(accessToken, env) {
   
   let roleName = 'Member';
   let isOwner = Boolean(guild && guild.owner === true);
-  if (user.id === '1052909930073567232') {
+  if (String(user.id) === ownerId(env)) {
     isOwner = true;
     roleName = 'Owner';
   } else if (guild && env.DISCORD_BOT_TOKEN) {
@@ -850,14 +929,18 @@ async function readSession(accessToken, env) {
       if (memberRes.ok) {
         const member = await memberRes.json();
         const mRoles = member.roles || [];
-        if (mRoles.includes('1539968441094512710')) roleName = 'Owner';
-        else if (mRoles.includes('1542090972765360208')) roleName = 'Mod+';
-        else if (mRoles.includes('1571073124328276078')) roleName = 'Contributor';
-        else if (mRoles.includes('1571073534103527504')) roleName = 'Support';
-        else if (mRoles.includes('1542127783440818226')) roleName = 'Member';
-        else if (mRoles.includes('1542128056439799839')) roleName = 'Editor';
-        else if (mRoles.includes('1542128525509927003')) roleName = 'Explorer';
-        else if (mRoles.includes('1548284444270395416')) roleName = 'Gumroad';
+        const roleTiers = [
+          ['DISCORD_OWNER_ROLE_ID', '1539968441094512710', 'Owner'],
+          ['DISCORD_MOD_ROLE_ID', '1542090972765360208', 'Mod+'],
+          ['DISCORD_CONTRIBUTOR_ROLE_ID', '1571073124328276078', 'Contributor'],
+          ['DISCORD_SUPPORT_ROLE_ID', '1571073534103527504', 'Support'],
+          ['DISCORD_MEMBER_ROLE_ID', '1542127783440818226', 'Member'],
+          ['DISCORD_EDITOR_ROLE_ID', '1542128056439799839', 'Editor'],
+          ['DISCORD_EXPLORER_ROLE_ID', '1542128525509927003', 'Explorer'],
+          ['DISCORD_GUMROAD_ROLE_ID', '1548284444270395416', 'Gumroad']
+        ];
+        const tier = roleTiers.find(([key, fallback]) => mRoles.includes(envRoleId(env, key, fallback)));
+        if (tier) roleName = tier[2];
       }
     } catch (e) {
       console.warn('[kyro-auth] Guild member lookup failed:', e);
@@ -920,34 +1003,44 @@ async function handleVaultImageUpload(request, url, env, cors) {
   const token = bearerToken(request, url);
   const session = await requireMember(token, env);
   const role = (session.role || '').toLowerCase();
-  const isContributor = session.isOwner || session.id === '1052909930073567232' || role === 'owner' || role === 'contributor' || role === 'mod+';
+  const isContributor = isOwnerSession(session, env) || role === 'contributor' || role === 'mod+';
   if (!isContributor) throw fail(403, 'forbidden', 'Only Contributors or the Server Owner can upload images.');
-
-  if (!env.DISCORD_BOT_TOKEN) throw fail(500, 'no_bot_token', 'Discord bot token is not configured.');
+  await limitWrites(env, 'uploads', session.id, 15);
 
   const contentType = request.headers.get('content-type') || '';
-  let imageBlob = null;
-  let filename = 'resource_image.png';
+  let bytes = null;
 
   if (contentType.includes('application/json')) {
-    const body = await jsonBody(request);
-    if (!body.image) throw fail(400, 'no_image', 'No base64 image data provided.');
-    const match = body.image.match(/^data:(image\/[a-zA-Z+]+);base64,(.+)$/);
+    const body = await jsonBody(request, 12 * 1024 * 1024);
+    if (!body.image || typeof body.image !== 'string') throw fail(400, 'no_image', 'No base64 image data provided.');
+    const match = body.image.match(/^data:(image\/[a-zA-Z+.-]+);base64,([A-Za-z0-9+/=\s]+)$/);
     if (!match) throw fail(400, 'bad_base64', 'Invalid image data URI.');
-    const mime = match[1];
-    const b64 = match[2];
-    const binary = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-    imageBlob = new Blob([binary], { type: mime });
-    filename = body.filename || `image_${Date.now()}.${mime.split('/')[1] || 'png'}`;
+    // Refuse oversized data before decoding it: atob builds the whole buffer.
+    if (match[2].length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 8) throw fail(413, 'image_too_large', 'Images must be 8 MB or smaller.');
+    try { bytes = Uint8Array.from(atob(match[2].replace(/\s+/g, '')), c => c.charCodeAt(0)); } catch { throw fail(400, 'bad_base64', 'Invalid image data URI.'); }
   } else if (contentType.includes('multipart/form-data')) {
+    if (Number(request.headers.get('content-length') || 0) > MAX_IMAGE_BYTES + 64 * 1024) {
+      throw fail(413, 'image_too_large', 'Images must be 8 MB or smaller.');
+    }
     const formData = await request.formData();
     const file = formData.get('file') || formData.get('image');
-    if (!file) throw fail(400, 'no_file', 'No file found in form data.');
-    imageBlob = file;
-    filename = file.name || 'uploaded_image.png';
+    if (!file || typeof file === 'string') throw fail(400, 'no_file', 'No file found in form data.');
+    if (Number(file.size || 0) > MAX_IMAGE_BYTES) throw fail(413, 'image_too_large', 'Images must be 8 MB or smaller.');
+    bytes = new Uint8Array(await file.arrayBuffer());
   } else {
     throw fail(400, 'bad_content_type', 'Send JSON base64 or multipart form data.');
   }
+
+  if (!bytes || !bytes.length) throw fail(400, 'empty_image', 'That image file is empty.');
+  if (bytes.length > MAX_IMAGE_BYTES) throw fail(413, 'image_too_large', 'Images must be 8 MB or smaller.');
+  // The declared type is not trusted either: the bytes have to be a real image.
+  const mime = sniffImage(bytes);
+  if (!IMAGE_EXTENSIONS[mime]) throw fail(415, 'bad_image_type', 'Upload a PNG, JPEG, GIF or WebP image.');
+  const imageBlob = new Blob([bytes], { type: mime });
+  const filename = `image_${Date.now().toString(36)}.${IMAGE_EXTENSIONS[mime]}`;
+
+  // The payload is proven to be a real image before we spend a bot call on it.
+  if (!env.DISCORD_BOT_TOKEN) throw fail(500, 'no_bot_token', 'Discord bot token is not configured.');
 
   // Upload silently to hidden backend storage channel (1571185513401159720) to generate permanent Discord CDN attachment URL
   const channelId = env.DISCORD_MEDIA_CHANNEL_ID || '1571185513401159720';
@@ -981,7 +1074,10 @@ async function handleVaultPublic(request, url, env, cors) {
   const hidden = hiddenTokens(hiddenDoc?.value?.ids);
   const hiddenSet = new Set(hidden);
   const items = (Array.isArray(doc?.value?.items) ? doc.value.items : [])
-    .filter(item => !hiddenSet.has(String(item.id || '').toLowerCase()) && !hiddenSet.has(String(item.slug || '').toLowerCase()));
+    .filter(item => !hiddenSet.has(String(item.id || '').toLowerCase()) && !hiddenSet.has(String(item.slug || '').toLowerCase()))
+    // The public vault is anonymous: who voted, who uploaded and the internal
+    // Discord message id are none of a visitor's business.
+    .map(({ voters, by, discord_msg_id, vote_offset, updated_at, ...item }) => item);
   return json({ items, hidden }, 200, cors);
 }
 
@@ -1019,10 +1115,11 @@ async function handleVaultSubmissions(request, url, env, cors) {
   const token = bearerToken(request, url);
   const session = await requireMember(token, env);
   const role = (session.role || '').toLowerCase();
-  const isOwner = session.isOwner || session.id === '1052909930073567232' || role === 'owner';
+  const isOwner = isOwnerSession(session, env);
   const isContributor = isOwner || role === 'contributor' || role === 'mod+';
 
   if (!isContributor) throw fail(403, 'forbidden', 'Only Contributors or the Server Owner can upload resources to the Kyro Vault.');
+  if (request.method === 'POST') await limitWrites(env, 'submissions', session.id, 15);
 
   if (request.method === 'GET') {
     const doc = (await readDoc(env, VAULT_SUBMISSIONS_KEY, { submissions: [] })).value;
@@ -1050,8 +1147,8 @@ async function handleVaultSubmissions(request, url, env, cors) {
     const kind = input.kind === 'software' ? 'software' : 'tool';
     const os = ['windows', 'macos', 'both'].includes(input.os) ? input.os : 'windows';
     const category = cleanText(input.category || 'Adobe After Effects', 60);
-    const downloadUrl = cleanText(input.download_url, 500);
-    const imageUrl = cleanText(input.image_url, 500);
+    const downloadUrl = safeHttpUrl(input.download_url, 500);
+    const imageUrl = safeHttpUrl(input.image_url, 500);
     const size = cleanText(input.size || 'Vault Build', 40);
     const creator = cleanText(input.creator || session.username, 60);
     const details = cleanText(input.details || input.desc, 2000);
@@ -1100,8 +1197,8 @@ async function handleVaultSubmissions(request, url, env, cors) {
       await createNotification(env, session.id, 'Upload Submitted', `Your resource "${submission.title}" has been submitted and is waiting for owner approval.`, 'pending');
 
       // Owner notification: New request accept or deny
-      const ownerId = '1052909930073567232';
-      await createNotification(env, ownerId, 'New Resource Request', `New submission: "${submission.title}" by ${session.username}. Review it in Vault Uploads.`, 'request');
+      const ownerUserId = ownerId(env);
+      await createNotification(env, ownerUserId, 'New Resource Request', `New submission: "${submission.title}" by ${session.username}. Review it in Vault Uploads.`, 'request');
 
       // Notify Owner in Discord via Direct Message or staff channel
       if (env.DISCORD_BOT_TOKEN) {
@@ -1110,7 +1207,7 @@ async function handleVaultSubmissions(request, url, env, cors) {
           const dmRes = await fetch('https://discord.com/api/v10/users/@me/channels', {
             method: 'POST',
             headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
-            body: JSON.stringify({ recipient_id: ownerId })
+            body: JSON.stringify({ recipient_id: ownerUserId })
           });
           if (dmRes.ok) {
             const dmChannel = await dmRes.json();
@@ -1152,7 +1249,7 @@ async function handleVaultSubmissionReview(request, url, env, cors) {
   if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
   const token = bearerToken(request, url);
   const session = await requireMember(token, env);
-  const isOwner = session.isOwner || session.id === '1052909930073567232' || (session.role || '').toLowerCase() === 'owner';
+  const isOwner = isOwnerSession(session, env);
   if (!isOwner) throw fail(403, 'forbidden', 'Only the Kyro Server Owner can approve or reject contributor submissions.');
 
   const input = await jsonBody(request);
@@ -1312,9 +1409,10 @@ async function handleIncomingReleases(request, url, env, cors) {
     const token = bearerToken(request, url);
     const session = await requireMember(token, env);
     const role = (session.role || '').toLowerCase();
-    const isOwner = session.isOwner || session.id === '1052909930073567232' || role === 'owner';
+    const isOwner = isOwnerSession(session, env);
     const isContributor = isOwner || role === 'contributor' || role === 'mod+';
     if (!isContributor) throw fail(403, 'forbidden', 'Only Contributors or the Server Owner can add Incoming releases.');
+    await limitWrites(env, 'incoming', session.id, 15);
 
     const input = await jsonBody(request);
     const title = cleanText(input.title, 120);
@@ -1324,8 +1422,8 @@ async function handleIncomingReleases(request, url, env, cors) {
     const kind = input.kind === 'software' ? 'software' : 'tool';
     const os = ['windows', 'macos', 'both'].includes(input.os) ? input.os : 'both';
     const category = cleanText(input.category || 'Adobe After Effects', 60);
-    const downloadUrl = String(input.download_url || '').trim();
-    const imageUrl = String(input.image_url || '').trim();
+    const downloadUrl = safeHttpUrl(input.download_url, 500);
+    const imageUrl = safeHttpUrl(input.image_url, 500);
     const size = cleanText(input.size || 'Vault Build', 40);
     const creator = cleanText(input.creator || session.username, 60);
     const details = cleanText(input.details || '', 1500);
@@ -1358,7 +1456,7 @@ async function handleIncomingReleases(request, url, env, cors) {
     let discordMsgId = null;
     if (env.DISCORD_BOT_TOKEN) {
       try {
-        const incommingChannel = '1539962334729211934';
+        const incommingChannel = incomingChannelId(env);
         const osLabel = os === 'both' ? 'Windows & macOS' : os === 'macos' ? 'macOS' : 'Windows';
         const embed = {
           author: { name: 'Kyro Incoming Release · Community Approval', icon_url: KYRO_ICON },
@@ -1378,8 +1476,10 @@ async function handleIncomingReleases(request, url, env, cors) {
           method: 'POST',
           headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
           body: JSON.stringify({
-            content: `🚀 **New Incoming Resource Waiting for Approval!** — @everyone`,
-            allowed_mentions: { parse: ['everyone'] },
+            // Only the owner's own drops may ping the server; a contributor
+            // cannot use the incoming flow as an @everyone button.
+            content: `🚀 **New Incoming Resource Waiting for Approval!**${isOwner ? ' — @everyone' : ''}`,
+            allowed_mentions: isOwner ? { parse: ['everyone'] } : { parse: [] },
             embeds: [embed],
             components: [
               {
@@ -1416,7 +1516,7 @@ async function handleIncomingReleases(request, url, env, cors) {
   if (request.method === 'PATCH') {
     const token = bearerToken(request, url);
     const session = await requireMember(token, env);
-    const isOwner = session.isOwner || session.id === '1052909930073567232' || (session.role || '').toLowerCase() === 'owner';
+    const isOwner = isOwnerSession(session, env);
     if (!isOwner) throw fail(403, 'forbidden', 'Only the Server Owner can edit incoming releases.');
 
     const input = await jsonBody(request);
@@ -1441,19 +1541,24 @@ async function handleIncomingReleases(request, url, env, cors) {
       if (input.category !== undefined) found.category = cleanText(input.category, 60) || found.category;
       if (input.size !== undefined) found.size = cleanText(input.size, 40) || found.size;
       if (input.creator !== undefined) found.creator = cleanText(input.creator, 60) || found.creator;
-      if (input.image_url !== undefined) {
-        const nextImage = String(input.image_url || '').trim();
-        found.image_url = /^https?:\/\//i.test(nextImage) ? nextImage : '';
-      }
-      if (input.download_url !== undefined) found.download_url = String(input.download_url || '').trim();
+      if (input.image_url !== undefined) found.image_url = safeHttpUrl(input.image_url, 500);
+      if (input.download_url !== undefined) found.download_url = safeHttpUrl(input.download_url, 500);
       if (input.password !== undefined || input.pass !== undefined) {
         found.pass = cleanText(input.password !== undefined ? input.password : input.pass, 60) || undefined;
       }
       if (input.vote_limit !== undefined) {
-        found.vote_limit = Math.max(1, Math.min(1000000000, parseInt(input.vote_limit, 10) || 5));
+        found.vote_limit = Math.max(1, Math.min(1000, parseInt(input.vote_limit, 10) || 5));
       }
       if (input.votes !== undefined) {
+        // Owner edits set the displayed total; store what is left after the real
+        // member votes as an offset so voting stays consistent afterwards.
+        let countedVotes = 0;
+        for (const value of Object.values(found.voters && typeof found.voters === 'object' ? found.voters : {})) {
+          const n = Number(value);
+          countedVotes += n === 1 ? 1 : n === -1 ? -1 : 0;
+        }
         found.votes = Math.max(0, Math.min(1000000000, parseInt(input.votes, 10) || 0));
+        found.vote_offset = found.votes - countedVotes;
       }
       if (input.released !== undefined) {
         found.released = Boolean(input.released);
@@ -1491,7 +1596,7 @@ async function handleIncomingReleases(request, url, env, cors) {
   if (request.method === 'DELETE') {
     const token = bearerToken(request, url);
     const session = await requireMember(token, env);
-    const isOwner = session.isOwner || session.id === '1052909930073567232' || (session.role || '').toLowerCase() === 'owner';
+    const isOwner = isOwnerSession(session, env);
     if (!isOwner) throw fail(403, 'forbidden', 'Only Server Owner can delete incoming items.');
 
     const input = await jsonBody(request);
@@ -1504,7 +1609,7 @@ async function handleIncomingReleases(request, url, env, cors) {
     });
 
     if (deleted && deleted.discord_msg_id && env.DISCORD_BOT_TOKEN) {
-      fetch(`https://discord.com/api/v10/channels/1539962334729211934/messages/${deleted.discord_msg_id}`, {
+      fetch(`https://discord.com/api/v10/channels/${incomingChannelId(env)}/messages/${deleted.discord_msg_id}`, {
         method: 'DELETE',
         headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
       }).catch(() => {});
@@ -1516,14 +1621,30 @@ async function handleIncomingReleases(request, url, env, cors) {
   return json({ error: 'Use GET, POST, PATCH, or DELETE.' }, 405, cors);
 }
 
+/* Community vote: one +1 / -1 per member, nothing else.
+
+   The old handler trusted whatever number arrived (delta:999999 released an
+   item instantly, delta:-999 drove the total negative). This one only accepts
+   1 or -1, clamps the stored per-member vote to -1/0/1, rebuilds the displayed
+   total from the real member votes (plus an owner-only offset) so previously
+   poisoned totals heal, never goes below zero, and releases only when that
+   honest total actually reaches the goal. */
 async function handleIncomingVote(request, url, env, cors) {
   if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
   const token = bearerToken(request, url);
   const session = await requireMember(token, env);
   const input = await jsonBody(request);
-  const id = input.id;
-  const delta = Number(input.delta) || 1; // 1 for "Speed It Up (+1)", -1 for "Hold Off (-1)"
+  const id = String(input.id || '').trim();
   if (!id) throw fail(400, 'bad_id', 'Resource ID is required.');
+
+  // THE FIX: exactly +1 or -1. 0, 999999, -999, "1e9", null and NaN are all
+  // refused before any stored state is touched.
+  const delta = Number(input.delta);
+  if (delta !== 1 && delta !== -1) {
+    throw fail(400, 'bad_delta', 'delta must be 1 or -1');
+  }
+  // A contributor could otherwise set the goal to 1 vote, vote for their own
+  // item and publish it to the vault and #announcements without review.
 
   let targetItem = null;
   let reachedGoal = false;
@@ -1533,23 +1654,38 @@ async function handleIncomingVote(request, url, env, cors) {
     const found = list.find(i => i.id === id);
     if (!found) return { items: list };
 
-    found.voters = found.voters || {};
-    const prev = found.voters[session.id] || 0;
-
-    if (prev === delta) {
-      // Toggle vote off if clicking same button again
-      delete found.voters[session.id];
-      found.votes = (found.votes || 0) - delta;
-    } else {
-      // Switch or apply vote
-      found.voters[session.id] = delta;
-      found.votes = (found.votes || 0) - prev + delta;
+    if (String(found.by || '') && String(found.by) === String(session.id)) {
+      throw fail(403, 'self_vote', 'You cannot vote on your own incoming release.');
     }
 
-    // Check if vote limit reached
-    if (!found.released && found.votes >= (found.vote_limit || 5)) {
+    found.voters = found.voters && typeof found.voters === 'object' ? found.voters : {};
+
+    const clampVote = (value) => { const n = Number(value); return n === 1 ? 1 : n === -1 ? -1 : 0; };
+
+    // Current vote is always -1, 0 or 1, even if an old payload stored junk.
+    const prev = clampVote(found.voters[session.id]);
+    // Clicking the same button again removes the vote.
+    const next = prev === delta ? 0 : delta;
+    if (next === 0) delete found.voters[session.id];
+    else found.voters[session.id] = next;
+
+    // Rebuild the tally from the per-member map, so a total poisoned by the old
+    // handler (e.g. 1000000 or -998) is corrected on the next genuine vote.
+    let counted = 0;
+    for (const value of Object.values(found.voters)) counted += clampVote(value);
+
+    // Owner edits are kept as an offset, never as a trusted raw total.
+    const offset = Number(found.vote_offset);
+    const safeOffset = Number.isFinite(offset) ? Math.trunc(offset) : 0;
+    let votes = counted + safeOffset;
+    if (!Number.isFinite(votes) || votes < 0) votes = 0;
+    found.votes = votes;
+
+    // Release only once the honest total reaches the goal.
+    if (!found.released && votes >= Math.max(1, Number(found.vote_limit) || 5)) {
       found.released = true;
       found.released_at = new Date().toISOString();
+      found.released_by = 'community';
       reachedGoal = true;
     }
 
@@ -1586,7 +1722,7 @@ async function publishIncomingRelease(env, item) {
   // Update the Discord message in #incomming to show "Now Live"
   if (item.discord_msg_id && env.DISCORD_BOT_TOKEN) {
     try {
-      const incommingChannel = '1539962334729211934';
+      const incommingChannel = incomingChannelId(env);
       await fetch(`https://discord.com/api/v10/channels/${incommingChannel}/messages/${item.discord_msg_id}`, {
         method: 'PATCH',
         headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
@@ -1635,7 +1771,7 @@ async function syncIncomingDiscordEmbed(env, item) {
   if (!item.discord_msg_id || !env.DISCORD_BOT_TOKEN) return;
   const osLabel = item.os === 'both' ? 'Windows & macOS' : item.os === 'macos' ? 'macOS' : 'Windows';
   try {
-    await fetch(`https://discord.com/api/v10/channels/1539962334729211934/messages/${item.discord_msg_id}`, {
+    await fetch(`https://discord.com/api/v10/channels/${incomingChannelId(env)}/messages/${item.discord_msg_id}`, {
       method: 'PATCH',
       headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -1660,7 +1796,7 @@ async function syncIncomingDiscordEmbed(env, item) {
 async function handleVaultSubmissionManage(request, url, env, cors) {
   const token = bearerToken(request, url);
   const session = await requireMember(token, env);
-  const isOwner = session.isOwner || session.id === '1052909930073567232' || (session.role || '').toLowerCase() === 'owner';
+  const isOwner = isOwnerSession(session, env);
   if (!isOwner) throw fail(403, 'forbidden', 'Only the Kyro Server Owner can edit or delete vault uploads.');
 
   if (request.method === 'DELETE') {
@@ -2057,7 +2193,7 @@ async function hasEarlyAccess(env, userId) {
 async function handleEarlyAccess(request, url, env, cors) {
   const token = bearerToken(request, url);
   const session = await requireMember(token, env);
-  const isOwner = session.isOwner || session.id === '1052909930073567232' || (session.role || '').toLowerCase() === 'owner';
+  const isOwner = isOwnerSession(session, env);
 
   if (request.method === 'GET') {
     const users = await earlyAccessUsers(env);
@@ -2110,7 +2246,7 @@ async function handleVaultPublish(request, url, env, cors) {
   const session = await requireMember(token, env);
   
   // Owner only can publish directly from website
-  const isOwner = session.isOwner || session.id === '1052909930073567232' || (session.role || '').toLowerCase() === 'owner';
+  const isOwner = isOwnerSession(session, env);
   if (!isOwner) throw fail(403, 'forbidden', 'Only the Kyro Server Owner can publish resources to Discord.');
 
   const item = await jsonBody(request);
@@ -2310,17 +2446,17 @@ async function logBotAudit(env, action, byUser, details) {
   }
 }
 
-function checkAdminOrOwner(session) {
+function checkAdminOrOwner(session, env) {
   if (!session || !session.inServer) throw fail(401, 'unauthorized', 'Sign in with Discord to access Kyro dashboard.');
   const role = (session.role || '').toLowerCase();
-  const allowed = session.isOwner || session.id === '1052909930073567232' || role === 'owner' || role === 'mod+';
+  const allowed = isOwnerSession(session, env) || role === 'mod+';
   if (!allowed) throw fail(403, 'forbidden', 'Only Mod+ or the Server Owner have access to the Kyro Bot Dashboard.');
 }
 
 async function handleDashboardSettings(request, url, env, cors) {
   const token = bearerToken(request, url);
   const session = await requireMember(token, env);
-  checkAdminOrOwner(session);
+  checkAdminOrOwner(session, env);
 
   const defaultConfig = {
     modules: {
@@ -2369,7 +2505,7 @@ async function handleDashboardLockdown(request, url, env, cors) {
   if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
   const token = bearerToken(request, url);
   const session = await requireMember(token, env);
-  checkAdminOrOwner(session);
+  checkAdminOrOwner(session, env);
 
   const input = await jsonBody(request);
   const lockdownState = Boolean(input.lockdown);
@@ -2418,21 +2554,23 @@ async function handleDashboardEmbed(request, url, env, cors) {
   if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
   const token = bearerToken(request, url);
   const session = await requireMember(token, env);
-  checkAdminOrOwner(session);
+  checkAdminOrOwner(session, env);
 
   const input = await jsonBody(request);
-  const channelId = input.channel_id || env.DISCORD_PUBLIC_APPS_CHANNEL_ID || '1542135796369457182';
+  const channelId = String(input.channel_id || env.DISCORD_PUBLIC_APPS_CHANNEL_ID || '1542135796369457182');
+  // Never interpolate this straight into a Discord API path from the client.
+  if (!/^\d{17,20}$/.test(channelId)) throw fail(400, 'bad_channel', 'Provide a valid Discord channel ID.');
+  const colorValue = Number(input.color);
   const embed = {
     title: cleanText(input.title, 250) || 'Kyro Announcement',
     description: cleanText(input.description, 4000) || '',
-    color: Number(input.color) || 0x5865f2,
+    color: Number.isInteger(colorValue) && colorValue >= 0 && colorValue <= 0xffffff ? colorValue : 0x5865f2,
     footer: { text: 'Sent via Kyro Bot Web Dashboard · kyro.new.tg' },
     timestamp: new Date().toISOString()
   };
 
-  if (input.image_url && /^https?:\/\//.test(input.image_url)) {
-    embed.image = { url: input.image_url };
-  }
+  const embedImage = safeHttpUrl(input.image_url, 500);
+  if (embedImage) embed.image = { url: embedImage };
 
   if (env.DISCORD_BOT_TOKEN) {
     const postRes = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
@@ -2456,7 +2594,7 @@ async function handleDashboardEmbed(request, url, env, cors) {
 async function handleDashboardAudit(request, url, env, cors) {
   const token = bearerToken(request, url);
   const session = await requireMember(token, env);
-  checkAdminOrOwner(session);
+  checkAdminOrOwner(session, env);
 
   const doc = (await readDoc(env, DASHBOARD_AUDIT_KEY, { logs: [] })).value;
   return json({ logs: doc.logs || [] }, 200, cors);
@@ -2467,7 +2605,7 @@ async function handleDashboardModerate(request, url, env, cors) {
   if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
   const token = bearerToken(request, url);
   const session = await requireMember(token, env);
-  checkAdminOrOwner(session);
+  checkAdminOrOwner(session, env);
 
   if (!env.DISCORD_BOT_TOKEN) throw fail(500, 'no_bot_token', 'Discord bot token is not configured.');
 
@@ -2574,18 +2712,18 @@ async function handleDashboardModerate(request, url, env, cors) {
 }
 
 /* -------------------------------- Automatic Alert Section Member Monitor (Join ✅ / Leave ❌ Ban) ------------------------------- */
-const ALERT_CHANNEL_ID = '1570713380778541147'; // #alert channel
 const SAPPHIRE_BOT_ID = '678344927997853742'; // Sapphire join/leave alert author
 const CHECK_EMOJI = '%E2%9C%85'; // ✅
 const CROSS_EMOJI = '%E2%9D%8C'; // ❌
 
 async function runAlertSectionMemberMonitor(env) {
   if (!env.DISCORD_BOT_TOKEN) return { processed: 0 };
+  const alertChannel = alertChannelId(env);
   const guildId = String(env.DISCORD_GUILD_ID || env.KYRO_GUILD_ID);
 
   try {
     // 1. Fetch recent join alert messages from Sapphire in #alert
-    const msgsRes = await fetch(`https://discord.com/api/v10/channels/${ALERT_CHANNEL_ID}/messages?limit=25`, {
+    const msgsRes = await fetch(`https://discord.com/api/v10/channels/${alertChannel}/messages?limit=25`, {
       headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
     });
     if (!msgsRes.ok) return { error: 'Failed to read alert channel' };
@@ -2601,7 +2739,7 @@ async function runAlertSectionMemberMonitor(env) {
       const targetUser = msg.mentions?.[0];
       if (!targetUser || !targetUser.id) continue;
       // Do not ban bot or server owner
-      if (targetUser.id === '1052909930073567232' || targetUser.id === '1571036271839682601' || targetUser.bot) continue;
+      if (String(targetUser.id) === ownerId(env) || targetUser.id === String(env.KYRO_MONITOR_BOT_ID || '1571036271839682601') || targetUser.bot) continue;
 
       const reactions = msg.reactions || [];
       const hasCross = reactions.some(r => r.emoji.name === '❌');
@@ -2616,7 +2754,7 @@ async function runAlertSectionMemberMonitor(env) {
         // User is IN server: ensure ✅ is added if not yet reacted
         const myCheck = reactions.find(r => r.emoji.name === '✅')?.me;
         if (!myCheck) {
-          await fetch(`https://discord.com/api/v10/channels/${ALERT_CHANNEL_ID}/messages/${msg.id}/reactions/${CHECK_EMOJI}/@me`, {
+          await fetch(`https://discord.com/api/v10/channels/${alertChannel}/messages/${msg.id}/reactions/${CHECK_EMOJI}/@me`, {
             method: 'PUT',
             headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
           });
@@ -2627,13 +2765,13 @@ async function runAlertSectionMemberMonitor(env) {
         // Per server rule: "Don't join and leave this bot for resources, you will get banned."
         if (!hasCross) {
           // Remove ✅ reaction if present
-          await fetch(`https://discord.com/api/v10/channels/${ALERT_CHANNEL_ID}/messages/${msg.id}/reactions/${CHECK_EMOJI}/@me`, {
+          await fetch(`https://discord.com/api/v10/channels/${alertChannel}/messages/${msg.id}/reactions/${CHECK_EMOJI}/@me`, {
             method: 'DELETE',
             headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
           }).catch(() => {});
 
           // Add ❌ reaction
-          await fetch(`https://discord.com/api/v10/channels/${ALERT_CHANNEL_ID}/messages/${msg.id}/reactions/${CROSS_EMOJI}/@me`, {
+          await fetch(`https://discord.com/api/v10/channels/${alertChannel}/messages/${msg.id}/reactions/${CROSS_EMOJI}/@me`, {
             method: 'PUT',
             headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
           });
@@ -2650,14 +2788,14 @@ async function runAlertSectionMemberMonitor(env) {
           });
 
           // Log to private audit channel
-          const auditChannel = '1571403237788221611';
+          const auditChannel = auditChannelId(env);
           await fetch(`https://discord.com/api/v10/channels/${auditChannel}/messages`, {
             method: 'POST',
             headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
             body: JSON.stringify({
               embeds: [{
                 title: '🛡️ Auto-Enforcement: Member Banned for Leaving',
-                description: `User **${targetUser.username}** (<@${targetUser.id}>) left the server after joining.\nMarked with ❌ in <#${ALERT_CHANNEL_ID}> and automatically banned per server rule.`,
+                description: `User **${targetUser.username}** (<@${targetUser.id}>) left the server after joining.\nMarked with ❌ in <#${alertChannel}> and automatically banned per server rule.`,
                 color: 0xef4444,
                 timestamp: new Date().toISOString()
               }]
@@ -2699,7 +2837,7 @@ async function runAlertSectionMemberMonitor(env) {
 async function handleAlertMonitorTrigger(request, url, env, cors) {
   const token = bearerToken(request, url);
   const session = await requireMember(token, env);
-  checkAdminOrOwner(session);
+  checkAdminOrOwner(session, env);
 
   const res = await runAlertSectionMemberMonitor(env);
   return json(res, 200, cors);

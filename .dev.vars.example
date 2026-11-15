@@ -13,6 +13,14 @@ KYRO_ALLOWED_ORIGINS=https://kyro.new.tg
 # Non-secret Discord IDs are configured in wrangler.jsonc.
 # Interactions endpoint: https://kyro-auth.kyro-ownr.workers.dev/api/discord/interactions
 
+# Optional identity + channel overrides. Defaults match the Kyro server, so these
+# only matter if the server, owner or channels change.
+# KYRO_OWNER_ID=1052909930073567232
+# DISCORD_INCOMING_CHANNEL_ID=1539962334729211934
+# DISCORD_AUDIT_CHANNEL_ID=1571403237788221611
+# DISCORD_ALERT_CHANNEL_ID=1570713380778541147
+# DISCORD_MEDIA_CHANNEL_ID=1571185513401159720
+
 # Optional: set to "false" to close applications again without a redeploy.
 # KYRO_APPLICATIONS_OPEN=false
 # Optional: let an applicant see their own private review channel.

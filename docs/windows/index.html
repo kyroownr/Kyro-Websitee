@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Windows — Kyro</title>
+  <meta name="description" content="Free After Effects software, tools and plugins for Windows editors — verified through the Kyro Discord." />
+  <meta name="theme-color" content="#08090d" />
+
+  <!-- Absolute og:url / og:image: link crawlers resolve them outside the page. -->
+  <link rel="canonical" href="https://kyro.new.tg/windows" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Kyro" />
+  <meta property="og:url" content="https://kyro.new.tg/windows" />
+  <meta property="og:title" content="Windows — Kyro" />
+  <meta property="og:description" content="Free After Effects software, tools and plugins for Windows editors — verified through the Kyro Discord." />
+  <meta property="og:image" content="https://kyro.new.tg/assets/kyro-preview.png" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Kyro — free tools and resources for editors" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Windows — Kyro" />
+  <meta name="twitter:description" content="Free After Effects software, tools and plugins for Windows editors — verified through the Kyro Discord." />
+  <meta name="twitter:image" content="https://kyro.new.tg/assets/kyro-preview.png" />
+
+  <link rel="icon" type="image/png" href="/assets/kyro-icon.png" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://kyro-auth.kyro-ownr.workers.dev" crossorigin />
+  <link rel="dns-prefetch" href="https://discord.com" />
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="all" />
+  <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
+
+  <link rel="stylesheet" href="/css/styles.css?v=3.2" />
+</head>
+<body data-page="category" data-category="windows">
+
+  <header class="site-nav">
+    <div class="nav-inner">
+      <a class="nav-logo" href="/" aria-label="Kyro — home">
+        <img class="nav-logo-mark" src="/assets/kyro-icon.png" alt="" width="26" height="26" />
+        <span class="nav-logo-text">Kyro</span>
+      </a>
+
+      <nav class="nav-right" aria-label="Site">
+        <button type="button" class="nav-link" id="paletteOpen">Search</button>
+        <a class="nav-link" href="/incoming">Incoming</a>
+        <a class="nav-link" href="/guide">Guide</a>
+        <a class="nav-link" href="/about">About</a>
+        <a class="nav-link" href="#discordCard">Community</a>
+        <button type="button" class="nav-link" id="requestsOpen">Requests</button>
+
+        <button type="button" class="nav-icon-btn" id="savedBtn" aria-label="Open saved vault" title="Saved Vault">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M18 21 12 16.5 6 21V4.8A1.8 1.8 0 0 1 7.8 3h8.4A1.8 1.8 0 0 1 18 4.8z"/></svg>
+          <span class="count-badge mono" id="savedCount" hidden>0</span>
+        </button>
+
+        <!-- Rendered by app.js: Login button when logged out, profile pill when logged in -->
+        <div class="nav-auth" id="authSlot"></div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <!-- ============ Category head (filled by app.js) ============ -->
+    <header class="page-head">
+      <p class="section-label">Browse</p>
+      <h1 class="page-title" id="catTitle">Windows</h1>
+      <p class="page-lede" id="catDesc">Software, tools, and plugins for Windows editors.</p>
+      <p class="page-meta" id="catCount"></p>
+      <nav class="cat-nav" id="catNav" aria-label="Categories"></nav>
+    </header>
+
+    <!-- ============ Access status strip (rendered by app.js) ============ -->
+    <section class="access-strip" id="accessStrip" aria-live="polite"></section>
+
+    <!-- ============ Two shelves: the editor, then what runs inside it ==== -->
+    <details class="section software-section" id="softwareSection">
+      <summary class="software-toggle" aria-controls="softwareContent">
+        <span class="section-label">Software</span>
+        <span class="section-note mono" id="softwareNote"></span>
+        <svg class="software-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+      </summary>
+      <div id="softwareContent">
+        <div class="grid" id="softwareGrid"></div>
+        <div class="empty" id="softwareEmpty" hidden>
+          <p>No editors listed for Windows yet.</p>
+          <a class="btn btn-ghost" href="/#discordCard">Ask in the Kyro Discord</a>
+        </div>
+      </div>
+    </details>
+
+    <details class="section tools-section" id="toolsSection">
+      <summary class="tools-toggle" aria-controls="toolsContent">
+        <span class="section-label">Tools</span>
+        <span class="section-note mono" id="toolsNote"></span>
+        <svg class="tools-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+      </summary>
+      <div id="toolsContent">
+        <div class="grid" id="toolsGrid"></div>
+        <div class="empty" id="toolsEmpty" hidden>
+          <p>Nothing in this category yet.</p>
+          <a class="btn btn-ghost" href="/">Show everything</a>
+        </div>
+      </div>
+    </details>
+
+    <!-- ============ Split community banner (rendered by app.js) ============ -->
+    <section class="banner" id="discordCard" aria-label="Kyro Discord"></section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell">
+      <div class="footer-main">
+        <div class="footer-left">
+          <span class="brand-word mono">KYRO <span class="brand-heart" aria-hidden="true">&lt;3</span></span>
+          <span class="stamp-badge mono" id="siteUpdated">—</span>
+        </div>
+        <div class="footer-links">
+          <a href="/">Vault</a>
+          <a href="/about">About</a>
+          <a href="https://discord.gg/5ch7XeNg98" target="_blank" rel="noopener noreferrer" id="footerInvite">Invite ↗</a>
+        </div>
+      </div>
+      <div class="footer-meta mono">
+        <p>© 2026, Est. Nov 2026 · Kyro</p>
+        <p><span id="footerDomain">kyro.new.tg</span></p>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ============ Command palette (Ctrl+K) ============ -->
+  <div class="overlay overlay-top" id="paletteOverlay" hidden>
+    <div class="palette" role="dialog" aria-modal="true" aria-label="Quick search">
+      <div class="palette-input">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
+        <input type="text" id="paletteInput" placeholder="Search the Kyro Vault — titles, tags, file formats…" autocomplete="off" spellcheck="false" aria-controls="paletteResults" />
+        <kbd class="mono">Esc</kbd>
+      </div>
+      <div class="palette-results" id="paletteResults" role="listbox" aria-label="Search results"></div>
+      <div class="palette-foot mono">
+        <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+        <span><kbd>Enter</kbd> inspect</span>
+        <span><kbd>Ctrl K</kbd> toggle</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Resource detail modal ============ -->
+  <div class="overlay" id="modalOverlay" hidden>
+    <div class="modal" id="modalBox" role="dialog" aria-modal="true" aria-label="Resource details"></div>
+  </div>
+
+  <!-- ============ Saved Vault drawer ============ -->
+  <div class="scrim" id="drawerScrim" hidden></div>
+  <aside class="drawer" id="vaultDrawer" aria-hidden="true" aria-label="Saved vault">
+    <div class="drawer-head">
+      <div>
+        <h3 class="drawer-title">Saved Vault</h3>
+        <p class="drawer-sub mono" id="vaultCount">0 assets</p>
+      </div>
+      <button type="button" class="close-x" id="drawerClose" aria-label="Close vault"></button>
+    </div>
+    <div class="vault-list" id="vaultList"></div>
+    <div class="drawer-foot">
+      <button class="btn btn-ghost danger" id="vaultClear" type="button">Clear all</button>
+    </div>
+  </aside>
+
+  <!-- ============ Requests / wishlist drawer ============ -->
+  <aside class="drawer" id="requestsDrawer" aria-hidden="true" aria-label="Tool requests">
+    <div class="drawer-head">
+      <div>
+        <h3 class="drawer-title">Requests</h3>
+        <p class="drawer-sub mono" id="requestCount">loading…</p>
+      </div>
+      <div class="req-head-actions">
+        <button type="button" class="btn btn-ghost btn-sm mono" id="reqNewRequest" aria-expanded="false" aria-controls="reqCompose reqGate">+ New Request</button>
+        <button type="button" class="close-x" id="requestsClose" aria-label="Close requests"></button>
+      </div>
+    </div>
+
+    <div class="req-scroll">
+      <div class="req-controls">
+        <div class="cat-row" id="reqSort" role="group" aria-label="Sort requests">
+          <button type="button" class="cat-chip mono" data-req-sort="top" aria-pressed="true">TOP VOTED</button>
+          <button type="button" class="cat-chip mono" data-req-sort="newest" aria-pressed="false">NEWEST</button>
+          <button type="button" class="cat-chip mono" data-req-sort="added" aria-pressed="false">ADDED</button>
+        </div>
+        <div class="cat-row" id="reqFilters" role="group" aria-label="Filter requests">
+          <button type="button" class="cat-chip mono" data-req-filter="all" aria-pressed="true">ALL</button>
+          <button type="button" class="cat-chip mono" data-req-filter="extension" aria-pressed="false">EXTENSION</button>
+          <button type="button" class="cat-chip mono" data-req-filter="script" aria-pressed="false">SCRIPT</button>
+          <button type="button" class="cat-chip mono" data-req-filter="preset" aria-pressed="false">PRESET</button>
+          <button type="button" class="cat-chip mono" data-req-filter="project" aria-pressed="false">PROJECT</button>
+          <button type="button" class="cat-chip mono" data-req-filter="soundfx" aria-pressed="false">SOUND FX</button>
+        </div>
+      </div>
+
+      <div class="req-compose" id="reqCompose" inert>
+        <div class="req-compose-inner">
+          <form class="req-fields" id="reqForm">
+            <label class="field">
+              <span class="field-label mono">Title</span>
+              <input class="field-input" type="text" id="reqTitle" minlength="3" maxlength="90" placeholder="What should the vault add next?" autocomplete="off" required />
+            </label>
+            <div class="req-similar" id="reqSimilar" aria-live="polite" hidden></div>
+            <div class="field">
+              <span class="field-label mono" id="reqCatLabel">Category</span>
+              <div class="cat-row" id="reqCategories" role="group" aria-labelledby="reqCatLabel"></div>
+            </div>
+            <div class="field">
+              <span class="field-label mono" id="reqOsLabel">OS</span>
+              <div class="cat-row" id="reqOs" role="group" aria-labelledby="reqOsLabel">
+                <button type="button" class="cat-chip mono" data-req-os="windows" aria-pressed="false">WINDOWS</button>
+                <button type="button" class="cat-chip mono" data-req-os="macos" aria-pressed="false">MACOS</button>
+                <button type="button" class="cat-chip mono" data-req-os="both" aria-pressed="false">BOTH</button>
+              </div>
+            </div>
+            <div class="field">
+              <span class="field-label mono" id="reqAeLabel">AE Versions</span>
+              <div class="cat-row" id="reqAeVersions" role="group" aria-labelledby="reqAeLabel">
+                <button type="button" class="cat-chip mono" data-req-ae="2024" aria-pressed="false">2024</button>
+                <button type="button" class="cat-chip mono" data-req-ae="2025" aria-pressed="false">2025</button>
+                <button type="button" class="cat-chip mono" data-req-ae="2026" aria-pressed="false">2026</button>
+                <button type="button" class="cat-chip mono" data-req-ae="any" aria-pressed="true">ANY</button>
+              </div>
+            </div>
+            <label class="field">
+              <span class="field-label mono">Reference Link (Optional)</span>
+              <input class="field-input" type="url" id="reqReference" maxlength="500" placeholder="Product page or demo URL" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span class="field-label mono">Short Description</span>
+              <textarea class="field-input" id="reqDesc" rows="3" maxlength="280" placeholder="What it should do, and why you want it."></textarea>
+            </label>
+            <button type="submit" class="btn btn-primary" id="reqSubmit">Submit Request</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="req-gate" id="reqGate" hidden></div>
+      <div class="req-list" id="requestList" aria-live="polite"></div>
+    </div>
+  </aside>
+
+  <!-- ============ Feedback drawer ============ -->
+  <aside class="drawer" id="feedbackDrawer" aria-hidden="true" aria-label="Community feedback">
+    <div class="drawer-head">
+      <div>
+        <h3 class="drawer-title">Feedback</h3>
+        <p class="drawer-sub mono" id="feedbackCount">loading…</p>
+      </div>
+      <div class="req-head-actions">
+        <button type="button" class="btn btn-ghost btn-sm mono" id="feedbackNewBtn" aria-expanded="false" aria-controls="feedbackCompose feedbackGate">+ Give Feedback</button>
+        <button type="button" class="close-x" id="feedbackClose" aria-label="Close feedback"></button>
+      </div>
+    </div>
+
+    <div class="req-scroll">
+      <div class="req-compose" id="feedbackCompose" inert>
+        <div class="req-compose-inner">
+          <form class="req-fields" id="feedbackForm">
+            <div class="field">
+              <span class="field-label mono">Rating (1 to 5 Stars)</span>
+              <div class="cat-row" id="feedbackRatingGroup" role="radiogroup" aria-label="Rating">
+                <button type="button" class="cat-chip mono" data-rating="5" aria-pressed="true">★★★★★ (5)</button>
+                <button type="button" class="cat-chip mono" data-rating="4" aria-pressed="false">★★★★☆ (4)</button>
+                <button type="button" class="cat-chip mono" data-rating="3" aria-pressed="false">★★★☆☆ (3)</button>
+                <button type="button" class="cat-chip mono" data-rating="2" aria-pressed="false">★★☆☆☆ (2)</button>
+                <button type="button" class="cat-chip mono" data-rating="1" aria-pressed="false">★☆☆☆☆ (1)</button>
+              </div>
+            </div>
+
+            <label class="field">
+              <span class="field-label mono">What do you think of the website?</span>
+              <textarea class="field-input" id="feedbackText" rows="3" minlength="5" maxlength="1000" placeholder="Share your experience, thoughts, or overall feedback..." required></textarea>
+            </label>
+
+            <label class="field">
+              <span class="field-label mono">What improvements do you want? (Optional)</span>
+              <textarea class="field-input" id="feedbackImprovements" rows="3" maxlength="1000" placeholder="Features, design changes, new tools or improvements you want to see..."></textarea>
+            </label>
+
+            <label class="field" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+              <input type="checkbox" id="feedbackAnonymous" />
+              <span class="field-label mono" style="margin-bottom:0;">Post anonymously (hide username &amp; profile picture)</span>
+            </label>
+
+            <button type="submit" class="btn btn-primary" id="feedbackSubmit">Post Feedback</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="req-gate" id="feedbackGate" hidden></div>
+      <div class="req-list" id="feedbackList" aria-live="polite"></div>
+    </div>
+  </aside>
+
+  <dialog class="application-status" id="applicationsStatus" aria-labelledby="applicationsStatusTitle">
+    <h2 id="applicationsStatusTitle">Applications</h2>
+    <p id="applicationsStatusText" aria-live="polite">Checking application status…</p>
+    <div class="application-actions">
+      <a class="btn btn-primary application-pill" href="/apply">Go to Applications</a>
+      <form method="dialog"><button type="submit" class="btn btn-ghost application-pill">Close</button></form>
+    </div>
+  </dialog>
+
+  <!-- ============ Account Settings Modal (Apple Style) ============ -->
+  <div class="account-modal-overlay" id="accountModalOverlay" hidden>
+    <div class="account-modal" id="accountModal" role="dialog" aria-modal="true" aria-label="Account Settings">
+      <button type="button" class="acc-close" id="accountModalClose" aria-label="Close settings">✕</button>
+      
+      <!-- Sidebar Navigation -->
+      <aside class="acc-sidebar">
+        <div class="acc-sidebar-title">Account</div>
+        <nav class="acc-nav">
+          <button type="button" class="acc-tab is-active" data-acc-tab="applications">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            Applications
+          </button>
+          <button type="button" class="acc-tab" data-acc-tab="requests">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+            Your Requests
+          </button>
+          <button type="button" class="acc-tab" data-acc-tab="vault">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
+            Saved Vault
+          </button>
+          <button type="button" class="acc-tab" data-acc-tab="downloads">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download History
+          </button>
+          <button type="button" class="acc-tab" data-acc-tab="settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            Settings
+          </button>
+          <button type="button" class="acc-tab" data-acc-tab="uploads" id="accUploadsTab" style="display:none;color:#38bdf8;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Vault Uploads
+          </button>
+          <button type="button" class="acc-tab" data-acc-tab="notifications" id="accNotifsTab">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            Notifications
+            <span class="count-badge mono" id="accNotifsCount" style="margin-left:auto;display:none;background:#38bdf8;color:#000;font-size:0.7rem;padding:1px 6px;border-radius:10px;font-weight:700;">0</span>
+          </button>
+        </nav>
+      </aside>
+
+      <!-- Main Panel Area -->
+      <main class="acc-main">
+        <!-- Top Profile Card (matches SS 1 & 2) -->
+        <div class="acc-user-card" id="accUserCard">
+          <div class="acc-user-avatar" id="accUserAvatar">K</div>
+          <div class="acc-user-info">
+            <h2 class="acc-user-name" id="accUserName">Guest</h2>
+            <div class="acc-user-meta" id="accUserMeta">@guest · Not signed in</div>
+          </div>
+        </div>
+
+        <!-- Tab 1: Applications -->
+        <div class="acc-panel is-active" id="accPanelApplications">
+          <h3 class="acc-heading">Applications</h3>
+          <div id="accApplicationsContent">
+            <div class="acc-empty-box">
+              <p class="acc-empty-text">You haven't applied yet.</p>
+              <a class="acc-action-pill" href="/apply">Browse application forms →</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: Your Requests -->
+        <div class="acc-panel" id="accPanelRequests">
+          <h3 class="acc-heading">Your Requests</h3>
+          <p class="acc-subheading">Track and manage the resources you've requested.</p>
+          <div id="accRequestsContent">
+            <div class="acc-empty-box">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" style="margin-bottom:12px;opacity:0.6;"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+              <p class="acc-empty-text">No requests submitted yet.</p>
+              <button type="button" class="acc-action-pill" id="accOpenRequestsBtn">Browse requests</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 3: Saved Vault -->
+        <div class="acc-panel" id="accPanelVault">
+          <h3 class="acc-heading">Saved Vault</h3>
+          <p class="acc-subheading">Quick access to plugins, tools, and software you bookmarked.</p>
+          <div class="vault-list" id="accVaultList" style="padding:0;"></div>
+        </div>
+
+        <!-- Tab 4: Download History -->
+        <div class="acc-panel" id="accPanelDownloads">
+          <h3 class="acc-heading">Download History</h3>
+          <p class="acc-subheading">Assets unlocked and downloaded in this browser session.</p>
+          <div class="vault-list" id="accDownloadsList" style="padding:0;"></div>
+        </div>
+
+        <!-- Tab 5: Settings (from SS 3) -->
+        <div class="acc-panel" id="accPanelSettings">
+          <!-- Cookie Preferences -->
+          <div class="acc-settings-group">
+            <div class="acc-group-title">
+              <span>Cookie Preferences</span>
+              <a href="#" id="accCookiePolicyLink">View Policy</a>
+            </div>
+            <p class="acc-group-desc">We use cookies to provide essential functionality, enhance your experience, and understand how you use our platform. You can customize your preferences below and change them at any time.</p>
+            
+            <div class="acc-row-item">
+              <div class="acc-row-info">
+                <div class="acc-row-title">Essential Cookies</div>
+                <div class="acc-row-sub">Session and auth; always active for the site to function.</div>
+              </div>
+              <span class="mono" style="font-size:0.75rem;color:var(--dim);margin-right:8px;">Always Active</span>
+              <label class="apple-switch"><input type="checkbox" checked disabled><span class="apple-slider"></span></label>
+            </div>
+
+            <div class="acc-row-item">
+              <div class="acc-row-info">
+                <div class="acc-row-title">Functional Cookies</div>
+                <div class="acc-row-sub">Theme, Wiki unlocks, Password hub access.</div>
+              </div>
+              <label class="apple-switch"><input type="checkbox" id="prefFunctional" checked><span class="apple-slider"></span></label>
+            </div>
+
+            <div class="acc-row-item">
+              <div class="acc-row-info">
+                <div class="acc-row-title">Analytics Cookies</div>
+                <div class="acc-row-sub">Page views and navigation patterns.</div>
+              </div>
+              <label class="apple-switch"><input type="checkbox" id="prefAnalytics" checked><span class="apple-slider"></span></label>
+            </div>
+
+            <button type="button" class="btn btn-danger btn-sm" id="accResetCookies" style="margin-top:10px;">Reset All Preferences</button>
+          </div>
+
+          <!-- Discord -->
+          <div class="acc-settings-group">
+            <div class="acc-group-title"><span>Discord</span></div>
+            <p class="acc-group-desc">Sync verification checks the verified role on your linked Discord account and updates this site. It does not add Premium or Protection in Discord.</p>
+            <button type="button" class="btn btn-ghost btn-sm" id="accSyncDiscord" style="margin-bottom:12px;">🔄 Sync verification</button>
+            <p class="acc-group-desc">No active Premium or Protection membership to claim.</p>
+          </div>
+
+          <!-- Requests Preferences -->
+          <div class="acc-settings-group">
+            <div class="acc-group-title"><span>Requests</span></div>
+            <p class="acc-group-desc">Default preferences for the Requests section. Anonymous default, Discord DMs, timezone, and date format.</p>
+            
+            <div class="acc-row-item">
+              <div class="acc-row-info">
+                <div class="acc-row-title">Anonymous by default</div>
+                <div class="acc-row-sub">Submit new requests anonymously by default</div>
+              </div>
+              <label class="apple-switch"><input type="checkbox" id="prefAnon"><span class="apple-slider"></span></label>
+            </div>
+
+            <div class="acc-row-item">
+              <div class="acc-row-info">
+                <div class="acc-row-title">Discord DM (request completed)</div>
+                <div class="acc-row-sub">Get a Discord DM when your request is completed</div>
+              </div>
+              <label class="apple-switch"><input type="checkbox" id="prefDm" checked><span class="apple-slider"></span></label>
+            </div>
+
+            <div class="acc-row-item">
+              <div class="acc-row-info">
+                <div class="acc-row-title">Timezone</div>
+                <div class="acc-row-sub">Display dates in your timezone</div>
+              </div>
+              <select class="acc-select" id="prefTimezone">
+                <option value="auto">Auto (browser)</option>
+                <option value="utc">UTC</option>
+                <option value="est">EST (UTC-5)</option>
+                <option value="pst">PST (UTC-8)</option>
+              </select>
+            </div>
+
+            <div class="acc-row-item">
+              <div class="acc-row-info">
+                <div class="acc-row-title">Date format</div>
+                <div class="acc-row-sub">How dates are displayed</div>
+              </div>
+              <select class="acc-select" id="prefDateFormat">
+                <option value="relative">Relative (e.g. 2 hours ago)</option>
+                <option value="absolute">Absolute (YYYY-MM-DD)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Data & Privacy -->
+          <div class="acc-settings-group">
+            <div class="acc-group-title"><span>Data &amp; Privacy</span></div>
+            <p class="acc-group-desc">Request a copy of your data (GDPR data portability). Our team will process your request and notify you when your export is ready.</p>
+            <button type="button" class="btn btn-ghost btn-sm" id="accExportData">Request Export Data</button>
+          </div>
+        </div>
+
+        <!-- Tab 6: Contributor & Owner Uploads -->
+        <div class="acc-panel" id="accPanelUploads">
+          <h3 class="acc-heading">Vault Uploads &amp; Contributions</h3>
+          <p class="acc-subheading">Contributors and Server Owners can submit new tools, plugins, presets, and packs. Contributor uploads are reviewed and approved by the Owner before publishing to Discord and the Vault.</p>
+
+          <!-- Upload Form -->
+          <div class="acc-settings-group" style="margin-top:14px;">
+            <div class="acc-group-title"><span>Submit New Resource</span></div>
+            <form id="vaultUploadForm" style="display:flex;flex-direction:column;gap:12px;margin-top:10px;">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Resource Title *</label>
+                  <input type="text" id="vUpTitle" placeholder="e.g. Qwix Plugin or Edit Pack" required style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                </div>
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Website Slug *</label>
+                  <input type="text" id="vUpSlug" placeholder="e.g. qwix-plugin" required style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                </div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;">
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Resource Type</label>
+                  <select id="vUpKind" class="acc-select" style="width:100%;">
+                    <option value="tool" selected>Tool / Plugin / Pack</option>
+                    <option value="software">Software (Editor)</option>
+                  </select>
+                </div>
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Platform</label>
+                  <select id="vUpOs" class="acc-select" style="width:100%;">
+                    <option value="windows">Windows</option>
+                    <option value="macos">macOS</option>
+                    <option value="both" selected>Windows &amp; macOS</option>
+                  </select>
+                </div>
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Category</label>
+                  <input type="text" id="vUpCategory" placeholder="e.g. Adobe After Effects" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                </div>
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Approx Size</label>
+                  <input type="text" id="vUpSize" placeholder="e.g. 1.49 MB" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                </div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Download URL *</label>
+                  <input type="url" id="vUpDownloadUrl" placeholder="https://..." required style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                </div>
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Archive Password (Optional)</label>
+                  <input type="text" id="vUpPassword" placeholder="e.g. kyro (leave blank if none)" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                </div>
+              </div>
+
+              <div>
+                <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Banner / Screenshot Image URL (or upload below)</label>
+                <input type="url" id="vUpImageUrl" placeholder="https://... (or drop image below)" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+              </div>
+
+              <!-- Drag, Drop, Paste or Select Picture Box -->
+              <div>
+                <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Upload Picture (Drag &amp; Drop, Select from PC, or Paste)</label>
+                <div id="vUpDropzone" style="border:2px dashed rgba(255,255,255,0.15);border-radius:10px;padding:20px;text-align:center;background:rgba(255,255,255,0.02);cursor:pointer;transition:border-color 0.2s, background 0.2s;">
+                  <input type="file" id="vUpFileInput" accept="image/*" style="display:none;">
+                  <div id="vUpDropzoneText" style="display:flex;flex-direction:column;align-items:center;gap:6px;color:#cbd5e1;font-size:0.88rem;">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="opacity:0.7;"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                    <span><strong>Click to choose picture from PC</strong>, or drag &amp; drop here</span>
+                    <span style="font-size:0.78rem;color:var(--dim);">You can also press <kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:4px;font-family:inherit;">Ctrl+V</kbd> anywhere on this form to paste a screenshot</span>
+                  </div>
+                  <div id="vUpPreviewWrap" style="display:none;margin-top:10px;position:relative;display:none;justify-content:center;">
+                    <img id="vUpImgPreview" src="" alt="Preview" style="max-height:160px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);box-shadow:0 4px 12px rgba(0,0,0,0.5);">
+                    <button type="button" id="vUpRemoveImg" style="position:absolute;top:-8px;right:-8px;background:#ef4444;color:#fff;border:none;border-radius:50%;width:22px;height:22px;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Description / Effects / Notes</label>
+                <textarea id="vUpDetails" rows="3" placeholder="Describe the resource features, installation, or what effects are included..." style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;resize:vertical;"></textarea>
+              </div>
+
+              <!-- Ready to Release (Community Approval) vs Normal Upload & Countdown -->
+              <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;">
+                  <div>
+                    <strong style="color:#38bdf8;font-size:0.88rem;display:flex;align-items:center;gap:6px;">
+                      <span>🗳️</span> Ready to Release (Community Vote Gate)
+                    </strong>
+                    <div style="font-size:0.75rem;color:var(--dim);">Posts to #incomming. Community votes +1 to reach your limit before it releases live!</div>
+                  </div>
+                  <label style="display:flex;align-items:center;cursor:pointer;gap:6px;font-size:0.82rem;color:#cbd5e1;">
+                    <input type="checkbox" id="vUpIsIncoming" style="cursor:pointer;width:16px;height:16px;">
+                    Enable Community Vote Gate
+                  </label>
+                </div>
+                <div id="vUpIncomingOptions" style="display:none;grid-template-columns:1fr 1fr;gap:10px;">
+                  <div>
+                    <label style="display:block;font-size:0.75rem;color:var(--dim);margin-bottom:2px;">Vote Limit to Unlock *</label>
+                    <input type="number" id="vUpVoteLimit" value="5" min="1" max="500" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:6px 10px;color:#fff;font-size:0.85rem;">
+                  </div>
+                </div>
+                <div>
+                  <label style="display:block;font-size:0.75rem;color:var(--dim);margin-bottom:2px;">Optional Release Countdown (Date &amp; Time)</label>
+                  <input type="datetime-local" id="vUpReleaseAt" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:6px 10px;color:#fff;font-size:0.85rem;">
+                  <div style="font-size:0.7rem;color:var(--dim);margin-top:2px;">Leave empty for immediate release when approved.</div>
+                </div>
+              </div>
+
+              <button type="submit" class="btn btn-primary" id="vUpSubmitBtn" style="align-self:flex-start;">Submit Upload to Vault</button>
+            </form>
+          </div>
+
+          <!-- Pending & Approved Submissions List -->
+          <div class="acc-settings-group" style="margin-top:14px;">
+            <div class="acc-group-title"><span id="vUpListTitle">Submissions &amp; Approvals</span></div>
+            <div id="vUpListContent" style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">
+              <div class="acc-row-sub">Loading submissions…</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 7: Notifications -->
+        <div class="acc-panel" id="accPanelNotifications">
+          <h3 class="acc-heading">Notification Center</h3>
+          <p class="acc-subheading">Updates on your uploads, review confirmations, and requests.</p>
+          <div id="accNotifsContent" style="display:flex;flex-direction:column;gap:8px;margin-top:14px;">
+            <div class="acc-row-sub">Checking notifications…</div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ============ Owner Edit Resource Modal ============ -->
+  <div class="overlay" id="ownerEditModalOverlay" hidden>
+    <div class="modal" id="ownerEditModalBox" role="dialog" aria-modal="true" aria-label="Edit Resource" style="max-width:540px;background:#0d1117;border:1px solid rgba(255,255,255,0.1);padding:24px;border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,0.6);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h3 style="font-size:1.15rem;font-weight:700;color:#fff;display:flex;align-items:center;gap:8px;">
+          <span>⚙️</span> Edit Resource Post
+        </h3>
+        <button type="button" class="close-x" id="ownerEditModalClose" aria-label="Close modal"></button>
+      </div>
+      <form id="ownerEditModalForm" style="display:flex;flex-direction:column;gap:12px;">
+        <input type="hidden" id="oemId">
+        <div>
+          <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Resource Title</label>
+          <input type="text" class="input" id="oemTitle" required style="width:100%;box-sizing:border-box;">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div>
+            <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Approx Size</label>
+            <input type="text" class="input" id="oemSize" placeholder="e.g. 4.88MB" style="width:100%;box-sizing:border-box;">
+          </div>
+          <div>
+            <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Category</label>
+            <input type="text" class="input" id="oemCategory" placeholder="e.g. Adobe After Effects" style="width:100%;box-sizing:border-box;">
+          </div>
+        </div>
+        <div>
+          <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Download URL</label>
+          <input type="url" class="input" id="oemDownloadUrl" required style="width:100%;box-sizing:border-box;">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div>
+            <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Archive Password (Optional)</label>
+            <input type="text" class="input" id="oemPassword" placeholder="e.g. Kyro" style="width:100%;box-sizing:border-box;">
+          </div>
+          <div>
+            <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Banner Image URL</label>
+            <input type="url" class="input" id="oemImageUrl" placeholder="https://..." style="width:100%;box-sizing:border-box;">
+          </div>
+        </div>
+        <div>
+          <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Description / Effects / Notes</label>
+          <textarea class="input" id="oemDetails" rows="4" style="width:100%;box-sizing:border-box;resize:vertical;font-family:inherit;line-height:1.4;"></textarea>
+        </div>
+        <!-- Countdown Adjust Controls -->
+        <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px;">
+          <label style="font-size:0.75rem;color:#38bdf8;display:block;margin-bottom:4px;font-weight:600;">⏳ Release Countdown (Increase/Decrease Target Time)</label>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="datetime-local" class="input" id="oemReleaseAt" style="flex:1;box-sizing:border-box;">
+            <button type="button" class="btn btn-ghost btn-sm" id="oemClearCountdown" title="Remove countdown and release immediately">Clear</button>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-ghost btn-sm" data-oem-adjust="-3600" style="padding:2px 6px;font-size:0.75rem;">-1 Hour</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-oem-adjust="3600" style="padding:2px 6px;font-size:0.75rem;">+1 Hour</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-oem-adjust="-86400" style="padding:2px 6px;font-size:0.75rem;">-1 Day</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-oem-adjust="86400" style="padding:2px 6px;font-size:0.75rem;">+1 Day</button>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px;">
+          <button type="button" class="btn btn-ghost" id="oemCancelBtn">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="oemSaveBtn">Save &amp; Update Live Post</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast stack (downloads, access notices) -->
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <!-- Modular scripts: data → preview engine → app wiring -->
+  <script defer src="/js/data.js?v=2.3"></script>
+  <script defer src="/js/preview.js?v=2.3"></script>
+  <script defer src="/js/app.js?v=2.3"></script>
+  <script defer src="/js/applications.js?v=2.3"></script>
+</body>
+</html>

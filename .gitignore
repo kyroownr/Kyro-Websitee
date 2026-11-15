@@ -9,6 +9,12 @@
 !.env.example
 !.dev.vars.example
 
+# Hardened worker build — regenerate with `npm run build:hardened`
+dist/
+
+# docs/ is the published site mirror and is committed on purpose.
+_site/
+
 # Local tooling and OS noise
 node_modules/
 *.log

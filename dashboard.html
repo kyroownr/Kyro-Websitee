@@ -186,6 +186,17 @@
   .toggle-txt{font-size:.88rem;font-weight:600}
   .toggle-txt small{display:block;color:var(--dim2);font-weight:500;font-size:.74rem;margin-top:2px}
 
+  /* Admin permission banner */
+  .admin-banner{display:flex;gap:14px;align-items:center;flex-wrap:wrap;background:rgba(255,159,10,.10);
+    border-bottom:1px solid rgba(255,159,10,.35);padding:12px 26px;font-size:.86rem}
+  .admin-banner[hidden]{display:none}
+  .admin-banner .ab-main{flex:1;min-width:240px;color:#ffce7a;font-weight:600;line-height:1.45}
+  .admin-banner .ab-main b{color:#fff}
+  a.btn{text-decoration:none}
+  .preset-select{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
+  .preset-select select{flex:1;min-width:200px}
+  .kv-2{display:grid;grid-template-columns:1fr 1fr;gap:0 15px}
+
   @media(max-width:900px){
     .sidebar{position:fixed;left:0;top:0;bottom:0;z-index:60;transform:translateX(-100%);transition:.25s;box-shadow:var(--shadow)}
     .sidebar.open{transform:none}
@@ -231,6 +242,12 @@
       <div class="nav-item" data-tab="automod"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9 5v6c0 5-4 8-9 9-5-1-9-4-9-9V7z"/><path d="M9 12l2 2 4-4"/></svg>AutoMod</div>
       <div class="nav-item" data-tab="welcome"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>Welcome</div>
       <div class="nav-item" data-tab="logging"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>Logging</div>
+      <div class="nav-label">Community</div>
+      <div class="nav-item" data-tab="engagement"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="9"/></svg>Engagement</div>
+      <div class="nav-item" data-tab="levels"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Levels &amp; XP</div>
+      <div class="nav-item" data-tab="community"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>Community</div>
+      <div class="nav-item" data-tab="automation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Scheduled &amp; Replies</div>
+      <div class="nav-item" data-tab="polls"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 20v-6M12 20V4M18 20v-9"/></svg>Polls</div>
       <div class="nav-label">Setup</div>
       <div class="nav-item" data-tab="setup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9 5v6c0 5-4 8-9 9-5-1-9-4-9-9V7z"/><path d="M12 8v4M12 16h.01"/></svg>Server Setup</div>
       <div class="nav-item" data-tab="security"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>Security</div>
@@ -242,8 +259,8 @@
     <div class="sidebar-foot">
       <div><span class="dot" id="tokenDot"></span><span id="tokenState">checking…</span></div>
       <div style="margin-top:6px">Loopback only · <span class="mono">localhost</span></div>
-      <div style="margin-top:8px"><a href="https://discord.com/oauth2/authorize?client_id=1570702041993711706&amp;permissions=8&amp;scope=bot%20applications.commands" target="_blank" rel="noopener noreferrer" style="color:#8fb4ff;text-decoration:none;">Grant Kyro Admin →</a></div>
-      <div style="margin-top:4px;color:var(--dim2)">Installs with full permissions so moderation and role actions never fail.</div>
+      <div style="margin-top:8px"><a data-install-link href="https://discord.com/oauth2/authorize?client_id=1570702041993711706&amp;permissions=8&amp;scope=bot%20applications.commands" target="_blank" rel="noopener noreferrer" style="color:#8fb4ff;text-decoration:none;">Grant Kyro Admin →</a></div>
+      <div style="margin-top:4px;color:var(--dim2)">The invite always asks for Administrator, so no action fails on a missing permission.</div>
     </div>
   </aside>
 
@@ -253,15 +270,20 @@
       <div class="topbar-title" id="topTitle">Overview</div>
       <div class="topbar-stats" id="topStats"></div>
     </div>
+    <div class="admin-banner" id="adminBanner" hidden>
+      <div class="ab-main" id="adminBannerText"><b>Kyro Bot needs Administrator in this server.</b> Moderation, role and setup actions will fail until it is granted.</div>
+      <a class="btn sm" id="adminInviteBtn" data-install-link href="https://discord.com/oauth2/authorize?client_id=1570702041993711706&amp;permissions=8&amp;scope=bot%20applications.commands" target="_blank" rel="noopener noreferrer">Grant Administrator</a>
+      <button class="btn ghost sm" id="adminRecheck">Re-check permissions</button>
+    </div>
     <div class="content" id="content">
 
       <!-- OVERVIEW -->
       <section class="panel active" data-panel="overview">
         <div class="panel-head"><h2>Server Overview</h2><p>Live snapshot of the selected server — channels, roles and key stats.</p></div>
-        <div class="card" style="border-left:3px solid #30D158">
+        <div class="card" id="botAccessCard" style="border-left:3px solid #30D158">
           <div class="card-title">⚙️ Bot permissions</div>
-          <div class="card-desc">Moderation, role and announcement actions need the Kyro bot to sit high in the role list with full permissions. If anything errors with "Missing Permissions" or "role hierarchy", re-invite with Administrator:</div>
-          <a href="https://discord.com/oauth2/authorize?client_id=1570702041993711706&amp;permissions=8&amp;scope=bot%20applications.commands" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin-top:10px;padding:9px 16px;border-radius:9px;background:#2997FF;color:#fff;font-weight:700;font-size:.88rem;text-decoration:none;">Add to Discord with Administrator →</a>
+          <div class="card-desc" id="botAccessDesc">Checking the bot's permissions in this server…</div>
+          <div id="botAccessBody"></div>
         </div>
         <div id="overviewBody"><div class="empty">Select a server from the sidebar to begin.</div></div>
       </section>
@@ -492,10 +514,32 @@
         </div>
         <div class="card">
           <div class="card-title">🛡️ Auto Permissions</div>
-          <div class="card-desc">Rewrites role permissions to best practice: <b>Admin/Owner</b> → Administrator · <b>Mod/Staff/Helper</b> → moderation powers · <b>Support</b> → ticket handling · <b>Editor</b> → manage messages · <b>Member/Verified/Guest/Contributor/Explorer</b> → chat basics · <b>Muted/Jail</b> → read-only. Any other custom role is explained and optimised to a safe baseline (chat basics). Bot/integration roles and roles above the bot are protected.</div>
+          <div class="card-desc">Rewrites role permissions to best practice across <b>20 presets</b>: ownership and leadership, head/mod/security staff, support and helpdesk, media, events/DJ, creators, developers and testers, VIP/donors, level and gaming-squad roles, language/region, ping-only and cosmetic roles, age-gated access, alumni and punishment roles, and general members. Anything unmatched is optimised to a safe chat baseline. Bot/integration roles, <b>@everyone</b> and roles above the bot are protected. Requires Administrator — the dashboard asks for it up front.</div>
           <div class="btn-row"><button class="btn" id="apRun">Apply best permissions</button></div>
           <div class="status" id="apStatus"></div>
           <div class="list" id="apResult"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">🎭 Role packs</div>
+          <div class="card-desc">Installs a ready-made role hierarchy for a server type — gaming, community, support, creator, music, art, developers, education, business, roleplay or 18+. Existing roles are reused, so it is safe to re-run.</div>
+          <div class="grid g2">
+            <div class="field"><label>Server type</label><select id="rpPack"></select></div>
+            <div class="field"><label>&nbsp;</label><button class="btn" id="rpCreate">Create role pack</button></div>
+          </div>
+          <div class="hint" id="rpPackDesc"></div>
+          <div class="status" id="rpStatus"></div>
+          <div class="list" id="rpResult"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">🧩 Role preset picker</div>
+          <div class="card-desc">Give any single role a ready-made permission set without touching the rest of the server. Presets cover leadership, staff, support, media, events, creators, VIPs, level roles, ping roles, cosmetics and punishment roles.</div>
+          <div class="grid g2">
+            <div class="field"><label>Role</label><select id="psRole"></select></div>
+            <div class="field"><label>Preset</label><select id="psPreset"></select></div>
+          </div>
+          <div class="btn-row"><button class="btn" id="psApply">Apply preset</button></div>
+          <div class="status" id="psStatus"></div>
+          <div class="list" id="psResult"></div>
         </div>
         <div class="card">
           <div class="card-title">✅ Verification</div>
@@ -519,6 +563,195 @@
           </div>
           <div class="btn-row"><button class="btn" id="tkPost">Post ticket button</button></div>
           <div class="status" id="tkStatus"></div>
+        </div>
+      </section>
+
+      <!-- ENGAGEMENT -->
+      <section class="panel" data-panel="engagement">
+        <div class="panel-head"><h2>Engagement</h2><p>Auto roles, join DMs, starboard, voice roles, boost announcements, AFK and sticky messages — all run by the background poller.</p></div>
+        <div class="card">
+          <div class="card-title">🎭 Auto role on join</div>
+          <div class="card-desc">Every new member gets this role automatically. Requires the Server Members intent.</div>
+          <div class="toggle-row"><div class="toggle-txt">Enable auto role</div><label class="switch"><input type="checkbox" id="egArEnabled"><span class="slider"></span></label></div>
+          <div class="field" style="margin-top:14px"><label>Role</label><select id="egArRole"></select></div>
+          <div class="btn-row"><button class="btn sm" id="egArSave">Save auto role</button></div>
+          <div class="status" id="egArStatus"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">✉️ Join DM</div>
+          <div class="card-desc">Sends a private welcome message the moment someone joins. <span class="mono">{server}</span> is replaced with the server name.</div>
+          <div class="toggle-row"><div class="toggle-txt">Send join DM</div><label class="switch"><input type="checkbox" id="egJdEnabled"><span class="slider"></span></label></div>
+          <div class="field" style="margin-top:14px"><label>Message</label><textarea id="egJdMessage" rows="3"></textarea></div>
+          <div class="btn-row"><button class="btn sm" id="egJdSave">Save join DM</button></div>
+          <div class="status" id="egJdStatus"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">⭐ Starboard</div>
+          <div class="card-desc">Reposts messages that reach the reaction threshold into a highlight channel.</div>
+          <div class="toggle-row"><div class="toggle-txt">Enable starboard</div><label class="switch"><input type="checkbox" id="egSbEnabled"><span class="slider"></span></label></div>
+          <div class="grid g3" style="margin-top:14px">
+            <div class="field"><label>Starboard channel</label><select id="egSbChannel"></select></div>
+            <div class="field"><label>Emoji</label><input id="egSbEmoji" placeholder="⭐" maxlength="8"></div>
+            <div class="field"><label>Threshold</label><input id="egSbThreshold" type="number" min="1" max="50" value="3"></div>
+          </div>
+          <div class="btn-row"><button class="btn sm" id="egSbSave">Save starboard</button></div>
+          <div class="status" id="egSbStatus"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">🔊 Voice role</div>
+          <div class="card-desc">Grants a role while a member is connected to voice and removes it when they leave.</div>
+          <div class="toggle-row"><div class="toggle-txt">Enable voice role</div><label class="switch"><input type="checkbox" id="egVrEnabled"><span class="slider"></span></label></div>
+          <div class="field" style="margin-top:14px"><label>Role</label><select id="egVrRole"></select></div>
+          <div class="btn-row"><button class="btn sm" id="egVrSave">Save voice role</button></div>
+          <div class="status" id="egVrStatus"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">🚀 Boost announcements</div>
+          <div class="card-desc">Celebrates new boosts in the channel you pick.</div>
+          <div class="toggle-row"><div class="toggle-txt">Announce boosts</div><label class="switch"><input type="checkbox" id="egBpEnabled"><span class="slider"></span></label></div>
+          <div class="field" style="margin-top:14px"><label>Announcement channel</label><select id="egBpChannel"></select></div>
+          <div class="btn-row"><button class="btn sm" id="egBpSave">Save boosts</button></div>
+          <div class="status" id="egBpStatus"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">📭 AFK notice</div>
+          <div class="card-desc">When someone mentions the AFK member, the bot explains why they are away.</div>
+          <div class="toggle-row"><div class="toggle-txt">Enable AFK notice</div><label class="switch"><input type="checkbox" id="egAfkEnabled"><span class="slider"></span></label></div>
+          <div class="grid g2" style="margin-top:14px">
+            <div class="field"><label>Member ID</label><input id="egAfkUser" class="mono" placeholder="1052909930073567232"></div>
+            <div class="field"><label>Reason</label><input id="egAfkReason" placeholder="Sleeping, at work…"></div>
+          </div>
+          <div class="btn-row"><button class="btn sm" id="egAfkSave">Save AFK</button></div>
+          <div class="status" id="egAfkStatus"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">📌 Sticky message</div>
+          <div class="card-desc">Keeps one message pinned to the bottom of a channel by reposting it after members chat.</div>
+          <div class="toggle-row"><div class="toggle-txt">Enable sticky message</div><label class="switch"><input type="checkbox" id="egStEnabled"><span class="slider"></span></label></div>
+          <div class="field" style="margin-top:14px"><label>Channel</label><select id="egStChannel"></select></div>
+          <div class="field"><label>Message</label><textarea id="egStContent" rows="3" placeholder="Read #rules before posting."></textarea></div>
+          <div class="btn-row"><button class="btn sm" id="egStSave">Save sticky</button></div>
+          <div class="status" id="egStStatus"></div>
+        </div>
+      </section>
+
+      <!-- LEVELS -->
+      <section class="panel" data-panel="levels">
+        <div class="panel-head"><h2>Levels &amp; XP</h2><p>Members earn XP for chatting, level up, and unlock reward roles. XP is tracked from the channels the bot already scans.</p></div>
+        <div class="card">
+          <div class="toggle-row"><div class="toggle-txt">Enable leveling<small>Awards XP per message with a per-member cooldown</small></div><label class="switch"><input type="checkbox" id="lvEnabled"><span class="slider"></span></label></div>
+          <div class="grid g3" style="margin-top:16px">
+            <div class="field"><label>Min XP / message</label><input id="lvMinXp" type="number" min="1" value="5"></div>
+            <div class="field"><label>Max XP / message</label><input id="lvMaxXp" type="number" min="1" value="15"></div>
+            <div class="field"><label>Cooldown (seconds)</label><input id="lvCooldown" type="number" min="0" value="60"></div>
+          </div>
+          <div class="grid g2">
+            <div class="field"><label>Level-up announcements channel</label><select id="lvChannel"></select></div>
+            <div class="field"><label>&nbsp;</label><label class="check"><input type="checkbox" id="lvAnnounce"> Announce level-ups</label></div>
+          </div>
+          <div class="field"><label>Channels that award XP (blank = the AutoMod channel list)</label><div class="check-grid" id="lvChannels"></div></div>
+          <div class="field"><label>Level reward roles — one per line as <span class="mono">level=roleId</span></label><textarea id="lvRewards" rows="3" placeholder="5=123456789012345678&#10;10=987654321098765432"></textarea></div>
+          <div class="btn-row"><button class="btn" id="lvSave">Save leveling</button></div>
+          <div class="status" id="lvStatus"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">🏆 XP leaderboard</div>
+          <div class="btn-row" style="margin-bottom:12px"><button class="btn ghost sm" id="lvRefresh">Refresh leaderboard</button></div>
+          <div class="list" id="lvBoard"></div>
+        </div>
+      </section>
+
+      <!-- COMMUNITY -->
+      <section class="panel" data-panel="community">
+        <div class="panel-head"><h2>Community</h2><p>Birthday shout-outs and a member-driven suggestion board with live 👍 / 👎 voting.</p></div>
+        <div class="card">
+          <div class="card-title">🎂 Birthdays</div>
+          <div class="card-desc">Announces each member's birthday once a year in the channel below.</div>
+          <div class="toggle-row"><div class="toggle-txt">Enable birthdays</div><label class="switch"><input type="checkbox" id="bdEnabled"><span class="slider"></span></label></div>
+          <div class="field" style="margin-top:14px"><label>Announcement channel</label><select id="bdChannel"></select></div>
+          <div class="field"><label>Message (<span class="mono">{user}</span> / <span class="mono">{username}</span>)</label><input id="bdMessage" placeholder="🎂 Happy birthday {user}!"></div>
+          <div class="field"><label>Members — one per line as <span class="mono">userId=MM-DD</span></label><textarea id="bdUsers" rows="3" placeholder="1052909930073567232=04-18"></textarea></div>
+          <div class="btn-row"><button class="btn sm" id="bdSave">Save birthdays</button></div>
+          <div class="status" id="bdStatus"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">💡 Suggestions board</div>
+          <div class="card-desc">Posts an explainer in the suggestions channel. Members write their idea as a normal message and the bot reposts it as a votable embed with 👍 / 👎.</div>
+          <div class="field"><label>Suggestions channel</label><select id="sgChannel"></select></div>
+          <div class="toggle-row"><div class="toggle-txt">Convert messages into suggestions</div><label class="switch"><input type="checkbox" id="sgEnabled"><span class="slider"></span></label></div>
+          <div class="btn-row" style="margin-top:14px">
+            <button class="btn" id="sgPost">Post suggestion panel</button>
+            <button class="btn ghost sm" id="sgSave">Save settings</button>
+          </div>
+          <div class="status" id="sgStatus"></div>
+        </div>
+      </section>
+
+      <!-- AUTOMATION -->
+      <section class="panel" data-panel="automation">
+        <div class="panel-head"><h2>Scheduled &amp; Replies</h2><p>Auto-responders, timed announcements and reminders, plus live member/bot counters in voice channels.</p></div>
+        <div class="card">
+          <div class="card-title">🤖 Auto-responses</div>
+          <div class="card-desc">When a member's message contains the trigger as a whole word, the bot replies once. Max 40 entries.</div>
+          <div id="acRows"></div>
+          <div class="btn-row"><button class="btn ghost sm" id="acAddRow">+ Add response</button></div>
+          <div class="btn-row"><button class="btn" id="acSave">Save auto-responses</button></div>
+          <div class="status" id="acStatus"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">🗓️ Scheduled announcement</div>
+          <div class="grid g2">
+            <div class="field"><label>Channel</label><select id="scChannel"></select></div>
+            <div class="field"><label>Send in (minutes)</label><input id="scMins" type="number" min="1" value="30"></div>
+          </div>
+          <div class="field"><label>Title</label><input id="scTitle" placeholder="Movie night"></div>
+          <div class="field"><label>Description</label><textarea id="scDesc" rows="3" placeholder="Starting at 8pm in the voice lounge."></textarea></div>
+          <label class="check"><input type="checkbox" id="scMention"> Mention @everyone</label>
+          <div class="btn-row"><button class="btn" id="scAdd">Schedule announcement</button></div>
+          <div class="status" id="scStatus"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">⏰ Scheduled reminder</div>
+          <div class="grid g2">
+            <div class="field"><label>Member ID</label><input id="scUser" class="mono" placeholder="1052909930073567232"></div>
+            <div class="field"><label>Send in (minutes)</label><input id="scRemMins" type="number" min="1" value="60"></div>
+          </div>
+          <div class="field"><label>Reminder text</label><input id="scRemText" placeholder="Submit your contest entry"></div>
+          <div class="btn-row"><button class="btn" id="scRemAdd">Schedule reminder</button></div>
+          <div class="status" id="scRemStatus"></div>
+          <div class="list" id="scList"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">📊 Live stat channels</div>
+          <div class="card-desc">Renames the chosen voice channels with the live member and bot counts every ~5 minutes.</div>
+          <div class="toggle-row"><div class="toggle-txt">Enable stat channels</div><label class="switch"><input type="checkbox" id="stcEnabled"><span class="slider"></span></label></div>
+          <div class="grid g2" style="margin-top:14px">
+            <div class="field"><label>Member counter channel</label><select id="stcMember"></select></div>
+            <div class="field"><label>Bot counter channel</label><select id="stcBot"></select></div>
+          </div>
+          <div class="btn-row"><button class="btn sm" id="stcSave">Save counters</button></div>
+          <div class="status" id="stcStatus"></div>
+        </div>
+      </section>
+
+      <!-- POLLS -->
+      <section class="panel" data-panel="polls">
+        <div class="panel-head"><h2>Polls</h2><p>Native Discord polls — no buttons or gateway needed. Members vote right in the message.</p></div>
+        <div class="card">
+          <div class="card-title">Create a poll</div>
+          <div class="grid g2">
+            <div class="field"><label>Channel</label><select id="plChannel"></select></div>
+            <div class="field"><label>Duration (hours, 1–168)</label><input id="plHours" type="number" min="1" max="168" value="24"></div>
+          </div>
+          <div class="field"><label>Question</label><input id="plQuestion" placeholder="Which game should we play on Friday?"></div>
+          <div class="field"><label>Options — one per line (2–10)</label><textarea id="plOptions" rows="4" placeholder="Valorant&#10;Minecraft&#10;Rocket League"></textarea></div>
+          <label class="check"><input type="checkbox" id="plMultiple"> Allow multiple choices</label>
+          <div class="btn-row"><button class="btn" id="plSend">Send poll</button></div>
+          <div class="status" id="plStatus"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Recent polls</div>
+          <div class="list" id="plList"></div>
         </div>
       </section>
 
@@ -673,7 +906,7 @@
   'use strict';
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
-  const state = { guilds: [], guild: null, data: null, config: null, tab: 'overview' };
+  const state = { guilds: [], guild: null, data: null, config: null, tab: 'overview', access: null, presets: null, packs: null };
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function iconUrl(guild){ return guild && guild.icon ? `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png?size=64` : ''; }
@@ -685,7 +918,12 @@
   async function api(path, opts){
     const res = await fetch(path, opts);
     const data = await res.json().catch(()=>({}));
-    if(!res.ok) throw new Error(data.error || ('HTTP '+res.status));
+    if(!res.ok){
+      if(data && data.needsAdmin) showAdminBanner(data);
+      const err = new Error(data.error || ('HTTP '+res.status));
+      err.needsAdmin = Boolean(data && data.needsAdmin);
+      throw err;
+    }
     return data;
   }
   function post(path, body){ return api(path, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }); }
@@ -702,7 +940,7 @@
   function clearStatus(el){ el.className='status'; el.textContent=''; }
 
   // ---- Navigation ----
-  const TAB_TITLES = { overview:'Overview', moderation:'Moderation', giveaways:'Giveaways', reactionroles:'Reaction Roles', automod:'AutoMod', welcome:'Welcome', logging:'Logging', setup:'Server Setup', security:'Security', utility:'Utility', embed:'Embed Sender' };
+  const TAB_TITLES = { overview:'Overview', moderation:'Moderation', giveaways:'Giveaways', reactionroles:'Reaction Roles', automod:'AutoMod', welcome:'Welcome', logging:'Logging', engagement:'Engagement', levels:'Levels & XP', community:'Community', automation:'Scheduled & Replies', polls:'Polls', setup:'Server Setup', security:'Security', utility:'Utility', embed:'Embed Sender' };
   function switchTab(name){
     state.tab = name;
     $$('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.tab===name));
@@ -765,8 +1003,52 @@
       renderTopStats();
       populateSelectors();
       renderTab(state.tab);
+      loadBotAccess();
     } catch(err){ toast('Failed to load server: '+err.message, 'error'); }
   }
+
+  // ---- Admin permission banner ----
+  function setInstallLinks(url){
+    if(!url) return;
+    $$('[data-install-link]').forEach(a=>a.setAttribute('href',url));
+  }
+  function showAdminBanner(info){
+    const el = $('#adminBanner'); if(!el) return;
+    el.hidden = false;
+    if(info && info.inviteUrl) $('#adminInviteBtn').href = info.inviteUrl;
+    const missing = info && Array.isArray(info.missing) ? info.missing : [];
+    if(missing.length) $('#adminBannerText').innerHTML = '<b>Kyro Bot needs Administrator in this server.</b> Missing: '+esc(missing.join(', '))+'. Moderation, role and setup actions will fail until it is granted.';
+  }
+  function hideAdminBanner(){ const el = $('#adminBanner'); if(el) el.hidden = true; }
+  async function loadBotAccess(){
+    if(!state.guild) return;
+    try{
+      const a = await api('/api/bot/access'+gquery());
+      state.access = a;
+      setInstallLinks(a.inviteUrl);
+      if(a.isAdmin) hideAdminBanner(); else showAdminBanner(a);
+      renderBotAccessCard();
+    }catch(e){}
+  }
+  function renderBotAccessCard(){
+    if(!$('#botAccessCard')) return;
+    const a = state.access || {};
+    const ok = Boolean(a.isAdmin);
+    $('#botAccessCard').style.borderLeftColor = ok ? 'var(--green)' : 'var(--amber)';
+    $('#botAccessDesc').innerHTML = ok
+      ? 'Kyro Bot has <b>Administrator</b> in this server, so every moderation, role and setup action works. New servers are always invited with Administrator.'
+      : 'Kyro Bot is missing Administrator here'+(a.missing&&a.missing.length?(' — missing <b>'+esc(a.missing.join(', '))+'</b>'):'')+'. Grant it once and every feature works immediately.';
+    $('#botAccessBody').innerHTML = ok
+      ? '<span class="tag green">Administrator granted</span>'
+      : '<a class="btn sm" data-install-link target="_blank" rel="noopener noreferrer" href="'+(a.inviteUrl||'#')+'">Re-invite with Administrator →</a>';
+  }
+  $('#adminRecheck').addEventListener('click', async ()=>{
+    try{
+      const r = await post('/api/bot/grant',{ guild: state.guild ? state.guild.id : '' });
+      toast(r.isAdmin ? 'Administrator confirmed' : 'Still missing Administrator', r.isAdmin?'success':'error');
+      await loadBotAccess();
+    }catch(err){ toast(err.message,'error'); }
+  });
   function renderTopStats(){
     const g = state.data && state.data.guild;
     if(!g){ $('#topStats').innerHTML=''; return; }
@@ -780,6 +1062,7 @@
   // ---- Selectors ----
   const TEXT_TYPES = [0,5,10,11,12,15];
   function textChannels(){ return (state.data?state.data.channels:[]).filter(c=>TEXT_TYPES.includes(c.type)); }
+  function voiceChannels(){ return (state.data?state.data.channels:[]).filter(c=>c.type===2||c.type===13); }
   function chanOptions(selected){
     return textChannels().map(c=>`<option value="${c.id}" ${c.id===selected?'selected':''}>#${esc(c.name)}</option>`).join('');
   }
@@ -788,12 +1071,20 @@
   }
   function populateSelectors(){
     const cfg = state.config || {};
-    ['#chanSelect','#gvChannel','#rrChannel','#wChannel','#logChannel','#emChannel','#vfChannel','#tkChannel'].forEach(sel=>{
+    ['#chanSelect','#gvChannel','#rrChannel','#wChannel','#logChannel','#emChannel','#vfChannel','#tkChannel','#egSbChannel','#egBpChannel','#egStChannel','#lvChannel','#bdChannel','#sgChannel','#scChannel','#plChannel'].forEach(sel=>{
       const el = $(sel); if(!el) return;
       const cur = el.value;
       el.innerHTML = '<option value="">Select channel…</option>' + chanOptions(cur);
     });
-    if($('#modRole')) $('#modRole').innerHTML = '<option value="">Select role…</option>' + roleOptions($('#modRole').value);
+    ['#stcMember','#stcBot'].forEach(sel=>{
+      const el = $(sel); if(!el) return;
+      el.innerHTML = '<option value="">Select voice channel…</option>' + voiceChannels().map(c=>`<option value="${c.id}" ${c.id===el.value?'selected':''}>🔊 ${esc(c.name)}</option>`).join('');
+    });
+    ['#modRole','#egArRole','#egVrRole','#psRole'].forEach(sel=>{
+      const el = $(sel); if(!el) return;
+      el.innerHTML = '<option value="">Select role…</option>' + roleOptions(el.value);
+    });
+    loadPresetOptions();
     // welcome / logging channel preselect
     if(cfg.welcome && $('#wChannel')) $('#wChannel').value = cfg.welcome.channelId || '';
     if(cfg.logging && $('#logChannel')) $('#logChannel').value = cfg.logging.channelId || '';
@@ -810,6 +1101,11 @@
     else if(name==='automod') renderAutomod();
     else if(name==='welcome') renderWelcome();
     else if(name==='logging') renderLogging();
+    else if(name==='engagement') renderEngagement();
+    else if(name==='levels') renderLevels();
+    else if(name==='community') renderCommunity();
+    else if(name==='automation') renderAutomation();
+    else if(name==='polls') renderPolls();
     else if(name==='setup') renderSetup();
     else if(name==='security') renderSecurity();
     else if(name==='embed') updateEmbedPreview();
@@ -1023,6 +1319,8 @@
   // ---- Server Setup ----
   function renderSetup(){
     if($('#vfChannel') && $('#vfChannel').options[0]) $('#vfChannel').options[0].textContent = 'Find or create ✅┃verify';
+    loadPresetOptions();
+    updatePackDesc();
   }
 
   // ---- Security ----
@@ -1208,6 +1506,240 @@
     }catch(err){ $('#msList').innerHTML='<div class="empty">'+esc(err.message)+'</div>'; }
   }
 
+  // ---- Role packs & presets ----
+  async function loadPresetOptions(){
+    try{
+      if(!state.presets){
+        const r = await api('/api/roles/presets'+gquery());
+        state.presets = r.presets || [];
+        state.packs = r.packs || [];
+      }
+      const sel = $('#psPreset');
+      if(sel && !sel.options.length){
+        const groups = {};
+        state.presets.forEach(p=>{ (groups[p.group] = groups[p.group]||[]).push(p); });
+        sel.innerHTML = Object.keys(groups).map(g=>'<optgroup label="'+esc(g)+'">'+groups[g].map(p=>'<option value="'+p.id+'">'+esc(p.label)+'</option>').join('')+'</optgroup>').join('');
+      }
+      const packSel = $('#rpPack');
+      if(packSel && !packSel.options.length){
+        const packs = (state.packs && state.packs.length) ? state.packs : ((state.config&&state.config.rolePacks)||[]);
+        packSel.innerHTML = packs.map(p=>'<option value="'+p.id+'">'+esc(p.label)+'</option>').join('');
+        updatePackDesc();
+      }
+    }catch(e){}
+  }
+  function updatePackDesc(){
+    const sel = $('#rpPack'); if(!sel) return;
+    const packs = (state.packs && state.packs.length) ? state.packs : ((state.config&&state.config.rolePacks)||[]);
+    const p = packs.find(x=>x.id===sel.value);
+    $('#rpPackDesc').textContent = p ? p.description : '';
+  }
+  if($('#rpPack')) $('#rpPack').addEventListener('change', updatePackDesc);
+  if($('#rpCreate')) $('#rpCreate').addEventListener('click', async ()=>{
+    clearStatus($('#rpStatus')); $('#rpResult').innerHTML='<div class="loading">Creating roles…</div>';
+    $('#rpCreate').disabled = true;
+    try{
+      const r = await post('/api/roles/packs/create',{ guild:state.guild.id, packId:$('#rpPack').value });
+      const rows=[...r.created.map(x=>`<div class="list-item"><div class="li-main"><div class="li-title">${esc(x)}</div></div><span class="tag green">created</span></div>`),
+        ...r.skipped.map(x=>`<div class="list-item"><div class="li-main"><div class="li-title">${esc(x)}</div></div><span class="tag gray">skipped</span></div>`)];
+      $('#rpResult').innerHTML = rows.join('') || '<div class="empty">Nothing to create.</div>';
+      setStatus($('#rpStatus'), r.created.length+' role'+(r.created.length===1?'':'s')+' created.', r.created.length?'success':'');
+      toast('Role pack: '+r.created.length+' created', r.created.length?'success':'');
+      state.presets = null; refreshGuild();
+    }catch(err){ $('#rpResult').innerHTML=''; setStatus($('#rpStatus'), err.message,'error'); }
+    finally{ $('#rpCreate').disabled=false; }
+  });
+  if($('#psApply')) $('#psApply').addEventListener('click', async ()=>{
+    clearStatus($('#psStatus'));
+    if(!$('#psRole').value){ setStatus($('#psStatus'),'Pick a role first.','error'); return; }
+    $('#psApply').disabled = true;
+    try{
+      const r = await post('/api/roles/presets/apply',{ guild:state.guild.id, roleId:$('#psRole').value, presetId:$('#psPreset').value });
+      $('#psResult').innerHTML = `<div class="list-item"><div class="li-main"><div class="li-title">${esc(r.role)} → ${esc(r.preset)}</div></div><span class="tag green">updated</span></div>`;
+      setStatus($('#psStatus'),'Preset applied.','success'); toast('Preset applied','success');
+    }catch(err){ setStatus($('#psStatus'), err.message,'error'); }
+    finally{ $('#psApply').disabled=false; }
+  });
+
+  // ---- Engagement ----
+  function engCfg(){ return (state.config&&state.config.engagement)||{}; }
+  function renderEngagement(){
+    const e = engCfg();
+    const ar=e.autoRole||{}, jd=e.joinDm||{}, sb=e.starboard||{}, vr=e.voiceRole||{}, bp=e.boosts||{}, ak=e.afk||{}, st=e.sticky||{};
+    $('#egArEnabled').checked=!!ar.enabled; $('#egArRole').value=ar.roleId||'';
+    $('#egJdEnabled').checked=!!jd.enabled; $('#egJdMessage').value=jd.message||'';
+    $('#egSbEnabled').checked=!!sb.enabled; $('#egSbChannel').value=sb.channelId||''; $('#egSbEmoji').value=sb.emoji||'⭐'; $('#egSbThreshold').value=sb.threshold||3;
+    $('#egVrEnabled').checked=!!vr.enabled; $('#egVrRole').value=vr.roleId||'';
+    $('#egBpEnabled').checked=!!bp.enabled; $('#egBpChannel').value=bp.channelId||'';
+    $('#egAfkEnabled').checked=!!ak.enabled; $('#egAfkUser').value=ak.userId||''; $('#egAfkReason').value=ak.reason||'';
+    $('#egStEnabled').checked=!!st.enabled; $('#egStChannel').value=st.channelId||''; $('#egStContent').value=st.content||'';
+  }
+  async function saveEngagement(part, payload, statusSel){
+    clearStatus($(statusSel));
+    try{
+      await post('/api/engagement', Object.assign({guild:state.guild.id}, {[part]:payload}));
+      setStatus($(statusSel),'Saved.','success'); toast('Saved','success'); refreshConfigOnly();
+    }catch(err){ setStatus($(statusSel), err.message,'error'); }
+  }
+  if($('#egArSave')) $('#egArSave').addEventListener('click', (()=>saveEngagement('autoRole',{enabled:$('#egArEnabled').checked,roleId:$('#egArRole').value},'#egArStatus')));
+  if($('#egJdSave')) $('#egJdSave').addEventListener('click', (()=>saveEngagement('joinDm',{enabled:$('#egJdEnabled').checked,message:$('#egJdMessage').value},'#egJdStatus')));
+  if($('#egSbSave')) $('#egSbSave').addEventListener('click', (()=>saveEngagement('starboard',{enabled:$('#egSbEnabled').checked,channelId:$('#egSbChannel').value,emoji:$('#egSbEmoji').value,threshold:Number($('#egSbThreshold').value)||3},'#egSbStatus')));
+  if($('#egVrSave')) $('#egVrSave').addEventListener('click', (()=>saveEngagement('voiceRole',{enabled:$('#egVrEnabled').checked,roleId:$('#egVrRole').value},'#egVrStatus')));
+  if($('#egBpSave')) $('#egBpSave').addEventListener('click', (()=>saveEngagement('boosts',{enabled:$('#egBpEnabled').checked,channelId:$('#egBpChannel').value},'#egBpStatus')));
+  if($('#egAfkSave')) $('#egAfkSave').addEventListener('click', (()=>saveEngagement('afk',{enabled:$('#egAfkEnabled').checked,userId:$('#egAfkUser').value.trim(),reason:$('#egAfkReason').value.trim()},'#egAfkStatus')));
+  if($('#egStSave')) $('#egStSave').addEventListener('click', (()=>saveEngagement('sticky',{enabled:$('#egStEnabled').checked,channelId:$('#egStChannel').value,content:$('#egStContent').value},'#egStStatus')));
+
+  // ---- Levels ----
+  function renderLevels(){
+    const lv=(state.config&&state.config.levels)||{};
+    $('#lvEnabled').checked=!!lv.enabled;
+    $('#lvMinXp').value=lv.minXp||5; $('#lvMaxXp').value=lv.maxXp||15; $('#lvCooldown').value=lv.cooldownSeconds!=null?lv.cooldownSeconds:60;
+    $('#lvChannel').value=lv.channelId||''; $('#lvAnnounce').checked=lv.announce!==false;
+    const sel = lv.channels||[];
+    $('#lvChannels').innerHTML = textChannels().map(c=>`<label class="check"><input type="checkbox" data-lvch="${c.id}" ${sel.includes(c.id)?'checked':''}> #${esc(c.name)}</label>`).join('') || '<span class="hint">No text channels.</span>';
+    $('#lvRewards').value=(lv.rewards||[]).map(r=>r.level+'='+r.roleId).join('\n');
+    loadLevelBoard();
+  }
+  async function loadLevelBoard(){
+    if(!state.guild) return;
+    $('#lvBoard').innerHTML='<div class="loading">Loading…</div>';
+    try{
+      const r = await api('/api/levels'+gquery());
+      const rows = r.leaderboard||[];
+      $('#lvBoard').innerHTML = rows.length ? rows.map((row,i)=>`<div class="list-item"><div class="li-main"><div class="li-title">${i===0?'🏆 ':''}${esc(row.userId)}</div><div class="li-sub">${row.xp} XP · next level at ${row.nextLevelXp} XP</div></div><span class="tag blue">level ${row.level}</span></div>`).join('') : '<div class="empty">No XP recorded yet.</div>';
+    }catch(err){ $('#lvBoard').innerHTML='<div class="empty">'+esc(err.message)+'</div>'; }
+  }
+  if($('#lvRefresh')) $('#lvRefresh').addEventListener('click', loadLevelBoard);
+  if($('#lvSave')) $('#lvSave').addEventListener('click', async ()=>{
+    clearStatus($('#lvStatus'));
+    const rewards = $('#lvRewards').value.split(/\r?\n/).map(line=>{
+      const m = /^\s*(\d+)\s*=\s*(\d{5,})\s*$/.exec(line);
+      return m ? { level:Number(m[1]), roleId:m[2] } : null;
+    }).filter(Boolean);
+    try{
+      await post('/api/levels',{ guild:state.guild.id, enabled:$('#lvEnabled').checked, minXp:Number($('#lvMinXp').value)||5, maxXp:Number($('#lvMaxXp').value)||15, cooldownSeconds:Number($('#lvCooldown').value)||0, channelId:$('#lvChannel').value, announce:$('#lvAnnounce').checked, channels:$$('#lvChannels [data-lvch]:checked').map(c=>c.dataset.lvch), rewards });
+      setStatus($('#lvStatus'),'Leveling saved.','success'); toast('Leveling saved','success'); refreshConfigOnly();
+    }catch(err){ setStatus($('#lvStatus'), err.message,'error'); }
+  });
+
+  // ---- Community (birthdays + suggestions) ----
+  function renderCommunity(){
+    const bd=(state.config&&state.config.birthdays)||{};
+    $('#bdEnabled').checked=!!bd.enabled; $('#bdChannel').value=bd.channelId||'';
+    $('#bdMessage').value=bd.message||'🎂 Happy birthday {user}!';
+    $('#bdUsers').value=(bd.users||[]).map(u=>u.userId+'='+u.date).join('\n');
+    const sg=(state.config&&state.config.suggestions)||{};
+    $('#sgEnabled').checked=!!sg.enabled; $('#sgChannel').value=sg.channelId||'';
+  }
+  if($('#bdSave')) $('#bdSave').addEventListener('click', async ()=>{
+    clearStatus($('#bdStatus'));
+    const users = $('#bdUsers').value.split(/\r?\n/).map(line=>{
+      const m = /^\s*(\d{5,})\s*[=,]\s*(\d{2}-\d{2})\s*$/.exec(line);
+      return m ? { userId:m[1], date:m[2] } : null;
+    }).filter(Boolean);
+    try{
+      await post('/api/birthdays',{ guild:state.guild.id, enabled:$('#bdEnabled').checked, channelId:$('#bdChannel').value, message:$('#bdMessage').value, users });
+      setStatus($('#bdStatus'),'Birthdays saved.','success'); toast('Birthdays saved','success'); refreshConfigOnly();
+    }catch(err){ setStatus($('#bdStatus'), err.message,'error'); }
+  });
+  if($('#sgPost')) $('#sgPost').addEventListener('click', async ()=>{
+    clearStatus($('#sgStatus'));
+    if(!$('#sgChannel').value){ setStatus($('#sgStatus'),'Select a channel.','error'); return; }
+    try{
+      const r = await post('/api/suggestions/post',{ guild:state.guild.id, channelId:$('#sgChannel').value });
+      setStatus($('#sgStatus'), r.note||'Suggestion panel posted.','success'); toast('Suggestion panel posted','success'); $('#sgEnabled').checked=true; refreshConfigOnly();
+    }catch(err){ setStatus($('#sgStatus'), err.message,'error'); }
+  });
+  if($('#sgSave')) $('#sgSave').addEventListener('click', async ()=>{
+    clearStatus($('#sgStatus'));
+    try{
+      await post('/api/suggestions/config',{ guild:state.guild.id, enabled:$('#sgEnabled').checked, channelId:$('#sgChannel').value });
+      setStatus($('#sgStatus'),'Suggestion settings saved.','success'); toast('Saved','success'); refreshConfigOnly();
+    }catch(err){ setStatus($('#sgStatus'), err.message,'error'); }
+  });
+
+  // ---- Automation (auto-responses, schedule, stat channels) ----
+  function acAddRow(trigger, reply){
+    const row = document.createElement('div');
+    row.className = 'mapping-row';
+    row.innerHTML = `<input class="ac-trigger" placeholder="trigger word" value="${esc(trigger||'')}" maxlength="60"><input class="ac-reply" placeholder="reply text" value="${esc(reply||'')}" style="flex:2" maxlength="1500"><button type="button" class="btn danger sm ac-remove">✕</button>`;
+    row.querySelector('.ac-remove').addEventListener('click',()=>row.remove());
+    $('#acRows').appendChild(row);
+  }
+  function renderAutomation(){
+    const rows = (state.config&&state.config.autoResponses)||[];
+    $('#acRows').innerHTML='';
+    if(rows.length) rows.forEach(r=>acAddRow(r.trigger,r.reply)); else acAddRow('','');
+    const stc=(state.config&&state.config.statChannels)||{};
+    $('#stcEnabled').checked=!!stc.enabled; $('#stcMember').value=stc.memberChannelId||''; $('#stcBot').value=stc.botChannelId||'';
+    renderScheduleList();
+  }
+  function renderScheduleList(){
+    const sch = (state.config&&state.config.schedule)||{};
+    const ann = (sch.announcements||[]).map(a=>({ kind:'announcement', id:a.id, label:a.title||'(no title)', when:a.at, sub:'#'+chanName(a.channelId) }));
+    const rem = (sch.reminders||[]).map(r=>({ kind:'reminder', id:r.id, label:r.text, when:r.at, sub:'DM to '+r.userId }));
+    const all = ann.concat(rem);
+    $('#scList').innerHTML = all.length ? all.map(x=>`<div class="list-item"><div class="li-main"><div class="li-title">${x.kind==='reminder'?'⏰':'📢'} ${esc(x.label)}</div><div class="li-sub">${esc(x.sub)} · sends ${fmtDate(new Date(x.when).toISOString())}</div></div><button class="btn danger sm" data-sc-del="${x.id}">Cancel</button></div>`).join('') : '<div class="empty">Nothing scheduled.</div>';
+    $('#scList').querySelectorAll('[data-sc-del]').forEach(b=>b.addEventListener('click', async ()=>{
+      try{ await post('/api/schedule/delete',{ guild:state.guild.id, id:b.dataset.scDel }); toast('Cancelled','success'); refreshConfigOnly(); }
+      catch(err){ toast(err.message,'error'); }
+    }));
+  }
+  if($('#acAddRow')) $('#acAddRow').addEventListener('click', ()=>acAddRow('',''));
+  if($('#acSave')) $('#acSave').addEventListener('click', async ()=>{
+    clearStatus($('#acStatus'));
+    const responses = $$('#acRows .mapping-row').map(r=>({ trigger:r.querySelector('.ac-trigger').value.trim(), reply:r.querySelector('.ac-reply').value.trim() })).filter(r=>r.trigger&&r.reply);
+    try{
+      await post('/api/autoresponses',{ guild:state.guild.id, responses });
+      setStatus($('#acStatus'), responses.length+' auto-response'+(responses.length===1?'':'s')+' saved.','success'); toast('Auto-responses saved','success'); refreshConfigOnly();
+    }catch(err){ setStatus($('#acStatus'), err.message,'error'); }
+  });
+  if($('#scAdd')) $('#scAdd').addEventListener('click', async ()=>{
+    clearStatus($('#scStatus'));
+    const body = { guild:state.guild.id, type:'announcement', channelId:$('#scChannel').value, title:$('#scTitle').value.trim(), description:$('#scDesc').value.trim(), mentionEveryone:$('#scMention').checked, inMinutes:Number($('#scMins').value)||30 };
+    if(!body.channelId){ setStatus($('#scStatus'),'Select a channel.','error'); return; }
+    try{
+      await post('/api/schedule', body);
+      setStatus($('#scStatus'),'Announcement scheduled.','success'); toast('Announcement scheduled','success');
+      $('#scTitle').value=''; $('#scDesc').value=''; refreshConfigOnly();
+    }catch(err){ setStatus($('#scStatus'), err.message,'error'); }
+  });
+  if($('#scRemAdd')) $('#scRemAdd').addEventListener('click', async ()=>{
+    clearStatus($('#scRemStatus'));
+    try{
+      await post('/api/schedule',{ guild:state.guild.id, type:'reminder', userId:$('#scUser').value.trim(), text:$('#scRemText').value.trim(), inMinutes:Number($('#scRemMins').value)||60 });
+      setStatus($('#scRemStatus'),'Reminder scheduled.','success'); toast('Reminder scheduled','success');
+      $('#scRemText').value=''; refreshConfigOnly();
+    }catch(err){ setStatus($('#scRemStatus'), err.message,'error'); }
+  });
+  if($('#stcSave')) $('#stcSave').addEventListener('click', async ()=>{
+    clearStatus($('#stcStatus'));
+    try{
+      const r = await post('/api/stat-channels',{ guild:state.guild.id, enabled:$('#stcEnabled').checked, memberChannelId:$('#stcMember').value, botChannelId:$('#stcBot').value });
+      setStatus($('#stcStatus'), r.note||'Saved.','success'); toast('Stat channels saved','success'); refreshConfigOnly();
+    }catch(err){ setStatus($('#stcStatus'), err.message,'error'); }
+  });
+
+  // ---- Polls ----
+  function renderPolls(){
+    const polls = (state.config&&state.config.polls)||[];
+    $('#plList').innerHTML = polls.length ? polls.map(p=>`<div class="list-item"><div class="li-main"><div class="li-title">📊 ${esc(p.question)}</div><div class="li-sub">#${esc(chanName(p.channel))} · ${p.options.length} options · ${p.hours}h · ${fmtDate(p.created_at)}</div></div><span class="tag blue">${p.multiple?'multi':'single'}</span></div>`).join('') : '<div class="empty">No polls yet.</div>';
+  }
+  if($('#plSend')) $('#plSend').addEventListener('click', async ()=>{
+    clearStatus($('#plStatus'));
+    const options = $('#plOptions').value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+    if(!$('#plChannel').value){ setStatus($('#plStatus'),'Select a channel.','error'); return; }
+    if(!$('#plQuestion').value.trim()){ setStatus($('#plStatus'),'Enter a question.','error'); return; }
+    if(options.length<2){ setStatus($('#plStatus'),'Add at least two options.','error'); return; }
+    $('#plSend').disabled=true;
+    try{
+      await post('/api/poll',{ guild:state.guild.id, channelId:$('#plChannel').value, question:$('#plQuestion').value.trim(), options, hours:Number($('#plHours').value)||24, multiple:$('#plMultiple').checked });
+      setStatus($('#plStatus'),'Poll posted.','success'); toast('Poll posted','success');
+      $('#plQuestion').value=''; $('#plOptions').value=''; refreshConfigOnly();
+    }catch(err){ setStatus($('#plStatus'), err.message,'error'); }
+    finally{ $('#plSend').disabled=false; }
+  });
+
   // ---- Config refresh (light) ----
   async function refreshConfigOnly(){    if(!state.guild) return;
     try{ state.config = await api('/api/config'+gquery()); renderTab(state.tab); }catch(e){}
@@ -1219,6 +1751,7 @@
       const s=await api('/api/status');
       $('#tokenDot').className='dot'+(s.tokenLoaded?'':' off');
       $('#tokenState').textContent=s.tokenLoaded?'Bot token loaded':'Bot token missing';
+      setInstallLinks(s.installUrl);
     }catch(e){ $('#tokenDot').className='dot off'; $('#tokenState').textContent='offline'; }
     addMappingRow('','');
     addFieldRow('','',true);
