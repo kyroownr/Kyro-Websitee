@@ -3,48 +3,49 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Utility Bot — Multi-Server Command Center</title>
+<title>Kyro Staff Bot — Command Center</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <style>
   :root{
-    --bg:#0a0d14; --bg2:#0d1119; --surface:#121722; --surface2:#171d2b;
-    --border:rgba(255,255,255,.07); --border2:rgba(255,255,255,.12);
-    --text:#eef2f8; --dim:#9aa7bd; --dim2:#6b7891;
-    --accent:#5865f2; --accent2:#7c87ff; --green:#3ba55d; --red:#ed4245;
-    --amber:#faa61a; --cyan:#38bdf8; --magenta:#eb459e;
-    --radius:12px; --shadow:0 8px 30px rgba(0,0,0,.35);
+    --bg:#090a0d; --bg2:#0d0e12; --surface:rgba(22,24,30,.72); --surface2:#16181d;
+    --border:rgba(255,255,255,.09); --border2:rgba(255,255,255,.16);
+    --text:#F5F5F7; --dim:#8E9099; --dim2:#5C5E68;
+    --accent:#2997FF; --accent2:#54adff; --green:#30D158; --red:#FF453A;
+    --amber:#FF9F0A; --cyan:#64D2FF; --magenta:#FF375F;
+    --radius:16px; --shadow:0 18px 48px rgba(0,0,0,.5); --ease:cubic-bezier(.16,1,.3,1);
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
   body{
     background:
-      radial-gradient(1100px 600px at 85% -10%, rgba(88,101,242,.16), transparent 60%),
-      radial-gradient(900px 500px at -10% 110%, rgba(235,69,158,.10), transparent 55%),
+      radial-gradient(1100px 600px at 85% -10%, rgba(41,151,255,.10), transparent 60%),
+      radial-gradient(900px 500px at -10% 110%, rgba(48,209,88,.06), transparent 55%),
       var(--bg);
-    color:var(--text); font-family:'Plus Jakarta Sans',system-ui,sans-serif;
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Plus Jakarta Sans",Inter,system-ui,sans-serif;
     -webkit-font-smoothing:antialiased; overflow:hidden;
   }
   ::-webkit-scrollbar{width:10px;height:10px}
   ::-webkit-scrollbar-track{background:var(--bg2)}
-  ::-webkit-scrollbar-thumb{background:#2a3346;border-radius:8px;border:2px solid var(--bg2)}
-  ::-webkit-scrollbar-thumb:hover{background:#3a4560}
+  ::-webkit-scrollbar-thumb{background:#2c2e35;border-radius:8px;border:2px solid var(--bg2)}
+  ::-webkit-scrollbar-thumb:hover{background:#3d4049}
   .mono{font-family:'JetBrains Mono',monospace}
   .app{display:flex;height:100vh}
 
   /* Sidebar */
-  .sidebar{width:264px;flex-shrink:0;background:linear-gradient(180deg,var(--bg2),#0a0e16);
+  .sidebar{width:264px;flex-shrink:0;background:rgba(12,13,17,.82);backdrop-filter:blur(24px) saturate(180%);-webkit-backdrop-filter:blur(24px) saturate(180%);
     border-right:1px solid var(--border);display:flex;flex-direction:column;padding:18px 14px;gap:14px;overflow-y:auto}
   .brand{display:flex;align-items:center;gap:11px;padding:4px 8px 14px;border-bottom:1px solid var(--border)}
   .brand-logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--accent),var(--magenta));
-    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.1rem;color:#fff;box-shadow:0 4px 14px rgba(88,101,242,.4)}
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.1rem;color:#fff;box-shadow:0 4px 14px rgba(41,151,255,.4)}
   .brand-name{font-weight:800;font-size:1.02rem;letter-spacing:-.02em;line-height:1.1}
   .brand-sub{font-size:.68rem;color:var(--dim2);font-weight:600;letter-spacing:.08em;text-transform:uppercase}
   .server-picker{position:relative}
   .server-btn{width:100%;display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border2);
     border-radius:11px;padding:10px 12px;cursor:pointer;color:var(--text);transition:.15s;text-align:left}
   .server-btn:hover{border-color:var(--accent);background:var(--surface2)}
-  .server-icon{width:34px;height:34px;border-radius:9px;flex-shrink:0;background:linear-gradient(135deg,#2b3245,#1c2233);
+  .server-icon{width:34px;height:34px;border-radius:9px;flex-shrink:0;background:linear-gradient(135deg,#26282e,#141519);
     display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.9rem;overflow:hidden}
   .server-icon img{width:100%;height:100%;object-fit:cover}
   .server-meta{flex:1;min-width:0}
@@ -55,15 +56,15 @@
     border:1px solid var(--border2);border-radius:11px;box-shadow:var(--shadow);max-height:320px;overflow-y:auto;display:none;padding:6px}
   .server-menu.open{display:block}
   .server-opt{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;cursor:pointer}
-  .server-opt:hover{background:rgba(88,101,242,.16)}
-  .server-opt.active{background:rgba(88,101,242,.22)}
+  .server-opt:hover{background:rgba(41,151,255,.16)}
+  .server-opt.active{background:rgba(41,151,255,.22)}
   .nav{display:flex;flex-direction:column;gap:3px;margin-top:4px}
   .nav-label{font-size:.66rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--dim2);padding:10px 10px 5px}
   .nav-item{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:9px;cursor:pointer;color:var(--dim);
     font-weight:600;font-size:.88rem;transition:.13s;border:1px solid transparent}
   .nav-item svg{width:18px;height:18px;flex-shrink:0}
   .nav-item:hover{background:var(--surface);color:var(--text)}
-  .nav-item.active{background:linear-gradient(90deg,rgba(88,101,242,.22),rgba(88,101,242,.06));color:#fff;border-color:rgba(88,101,242,.35)}
+  .nav-item.active{background:linear-gradient(90deg,rgba(41,151,255,.22),rgba(41,151,255,.06));color:#fff;border-color:rgba(41,151,255,.35)}
   .sidebar-foot{margin-top:auto;padding:12px 10px 2px;border-top:1px solid var(--border);font-size:.72rem;color:var(--dim2)}
   .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:6px;box-shadow:0 0 8px var(--green)}
   .dot.off{background:var(--red);box-shadow:0 0 8px var(--red)}
@@ -71,7 +72,7 @@
   /* Main */
   .main{flex:1;display:flex;flex-direction:column;min-width:0}
   .topbar{height:64px;flex-shrink:0;display:flex;align-items:center;gap:14px;padding:0 26px;border-bottom:1px solid var(--border);
-    background:rgba(10,13,20,.6);backdrop-filter:blur(12px)}
+    background:rgba(9,10,13,.72);backdrop-filter:blur(24px) saturate(180%);-webkit-backdrop-filter:blur(24px) saturate(180%)}
   .hamburger{display:none;background:var(--surface);border:1px solid var(--border2);border-radius:8px;color:var(--text);width:36px;height:36px;cursor:pointer;font-size:1.1rem}
   .topbar-title{font-weight:800;font-size:1.05rem;letter-spacing:-.02em}
   .topbar-stats{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
@@ -86,7 +87,7 @@
   .panel-head h2{font-size:1.4rem;font-weight:800;letter-spacing:-.02em;display:flex;align-items:center;gap:10px}
   .panel-head p{color:var(--dim);font-size:.88rem;margin-top:5px;line-height:1.5}
 
-  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;margin-bottom:18px;box-shadow:0 2px 12px rgba(0,0,0,.18)}
+  .card{background:var(--surface);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border:1px solid var(--border);border-radius:var(--radius);padding:22px;margin-bottom:18px;box-shadow:0 2px 16px rgba(0,0,0,.22)}
   .card-title{font-size:1.02rem;font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:8px}
   .card-desc{font-size:.83rem;color:var(--dim);margin-bottom:18px;line-height:1.5}
   .grid{display:grid;gap:15px}
@@ -95,30 +96,30 @@
   .g4{grid-template-columns:repeat(4,1fr)}
   .field{display:flex;flex-direction:column;gap:6px;margin-bottom:15px}
   .field:last-child{margin-bottom:0}
-  label{font-size:.78rem;font-weight:700;color:#c3cde0;letter-spacing:.01em}
+  label{font-size:.78rem;font-weight:700;color:#C7C8CC;letter-spacing:.01em}
   .hint{font-size:.72rem;color:var(--dim2);line-height:1.4}
-  input,textarea,select{background:var(--bg2);border:1px solid var(--border2);border-radius:9px;padding:10px 13px;color:var(--text);
+  input,textarea,select{background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:10px 13px;color:var(--text);
     font-family:inherit;font-size:.88rem;outline:none;transition:.15s;width:100%}
-  input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(88,101,242,.15)}
+  input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(41,151,255,.15)}
   textarea{resize:vertical;min-height:70px;line-height:1.5}
   select{cursor:pointer}
   input[type=color]{padding:3px;height:42px;cursor:pointer}
   input[type=checkbox]{width:auto;accent-color:var(--accent);cursor:pointer}
-  .check{display:flex;align-items:center;gap:9px;font-size:.85rem;font-weight:600;color:#c3cde0;cursor:pointer;padding:6px 0}
-  .btn{background:var(--accent);color:#fff;border:none;padding:11px 20px;border-radius:9px;font-weight:700;font-size:.88rem;cursor:pointer;
-    display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:.15s;font-family:inherit}
+  .check{display:flex;align-items:center;gap:9px;font-size:.85rem;font-weight:600;color:#C7C8CC;cursor:pointer;padding:6px 0}
+  .btn{background:var(--accent);color:#fff;border:none;padding:11px 20px;border-radius:12px;font-weight:700;font-size:.88rem;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:.15s var(--ease);font-family:inherit}
   .btn:hover{background:var(--accent2);transform:translateY(-1px)}
   .btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
-  .btn.danger{background:var(--red)} .btn.danger:hover{background:#ff5c5f}
-  .btn.success{background:var(--green)} .btn.success:hover{background:#43b581}
+  .btn.danger{background:var(--red)} .btn.danger:hover{background:#ff6961}
+  .btn.success{background:var(--green)} .btn.success:hover{background:#3ee06b}
   .btn.ghost{background:var(--surface2);border:1px solid var(--border2);color:var(--text)}
-  .btn.ghost:hover{background:#20283a}
+  .btn.ghost:hover{background:#22242a}
   .btn.sm{padding:7px 13px;font-size:.78rem}
   .btn-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:6px}
   .status{padding:11px 15px;border-radius:9px;font-size:.84rem;margin-top:14px;display:none;line-height:1.45;font-weight:500}
-  .status.success{display:block;background:rgba(59,165,93,.13);border:1px solid rgba(59,165,93,.35);color:#7ee2a8}
-  .status.error{display:block;background:rgba(237,66,69,.13);border:1px solid rgba(237,66,69,.35);color:#ff9a9c}
-  .status.info{display:block;background:rgba(88,101,242,.13);border:1px solid rgba(88,101,242,.35);color:#aab4ff}
+  .status.success{display:block;background:rgba(48,209,88,.13);border:1px solid rgba(48,209,88,.35);color:#7ee2a8}
+  .status.error{display:block;background:rgba(255,69,58,.13);border:1px solid rgba(255,69,58,.35);color:#ff9a9c}
+  .status.info{display:block;background:rgba(41,151,255,.13);border:1px solid rgba(41,151,255,.35);color:#8ecbff}
 
   .list{display:flex;flex-direction:column;gap:10px}
   .list-item{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
@@ -126,10 +127,10 @@
   .li-title{font-weight:700;font-size:.92rem;display:flex;align-items:center;gap:8px}
   .li-sub{font-size:.76rem;color:var(--dim);margin-top:3px;line-height:1.4}
   .tag{display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:700;padding:3px 9px;border-radius:999px;font-family:'JetBrains Mono',monospace}
-  .tag.green{background:rgba(59,165,93,.16);color:#7ee2a8}
-  .tag.red{background:rgba(237,66,69,.16);color:#ff9a9c}
-  .tag.amber{background:rgba(250,166,26,.16);color:#ffce7a}
-  .tag.blue{background:rgba(88,101,242,.16);color:#aab4ff}
+  .tag.green{background:rgba(48,209,88,.16);color:#7ee2a8}
+  .tag.red{background:rgba(255,69,58,.16);color:#ff9a9c}
+  .tag.amber{background:rgba(255,159,10,.16);color:#ffce7a}
+  .tag.blue{background:rgba(41,151,255,.16);color:#8ecbff}
   .tag.gray{background:rgba(255,255,255,.08);color:var(--dim)}
   .empty{text-align:center;color:var(--dim2);font-size:.86rem;padding:26px;border:1px dashed var(--border2);border-radius:10px}
 
@@ -145,7 +146,7 @@
   .stat-card .sc-val{font-size:1.7rem;font-weight:800;letter-spacing:-.02em}
   .stat-card .sc-lbl{font-size:.74rem;color:var(--dim);font-weight:600;margin-top:3px;text-transform:uppercase;letter-spacing:.06em}
 
-  .avatar-lg{width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#2b3245,#1c2233);overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:1.6rem;font-weight:700}
+  .avatar-lg{width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#26282e,#141519);overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:1.6rem;font-weight:700}
   .avatar-lg img{width:100%;height:100%;object-fit:cover}
   .avatar-sm{width:34px;height:34px;border-radius:50%;overflow:hidden;flex-shrink:0;background:#2b3245;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700}
   .avatar-sm img{width:100%;height:100%;object-fit:cover}
@@ -176,7 +177,7 @@
   .loading{color:var(--dim2);font-size:.85rem;padding:14px 0}
   .switch{position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0}
   .switch input{opacity:0;width:0;height:0}
-  .slider{position:absolute;cursor:pointer;inset:0;background:#2a3346;border-radius:999px;transition:.2s}
+  .slider{position:absolute;cursor:pointer;inset:0;background:#2c2e35;border-radius:999px;transition:.2s}
   .slider:before{content:"";position:absolute;height:18px;width:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
   .switch input:checked + .slider{background:var(--accent)}
   .switch input:checked + .slider:before{transform:translateX(20px)}
@@ -201,9 +202,9 @@
   <div class="scrim" id="scrim"></div>
   <aside class="sidebar" id="sidebar">
     <div class="brand">
-      <div class="brand-logo">U</div>
+      <div class="brand-logo">K</div>
       <div>
-        <div class="brand-name">Utility Bot</div>
+        <div class="brand-name">Kyro Staff Bot</div>
         <div class="brand-sub">Command Center</div>
       </div>
     </div>
@@ -254,10 +255,10 @@
       <!-- OVERVIEW -->
       <section class="panel active" data-panel="overview">
         <div class="panel-head"><h2>Server Overview</h2><p>Live snapshot of the selected server — channels, roles and key stats.</p></div>
-        <div class="card" style="border-left:3px solid #10b981">
+        <div class="card" style="border-left:3px solid #30D158">
           <div class="card-title">⚙️ Bot permissions</div>
           <div class="card-desc">Moderation, role and announcement actions need the Kyro bot to sit high in the role list with full permissions. If anything errors with "Missing Permissions" or "role hierarchy", re-invite with Administrator:</div>
-          <a href="https://discord.com/oauth2/authorize?client_id=1570702041993711706&amp;permissions=8&amp;scope=bot%20applications.commands" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin-top:10px;padding:9px 16px;border-radius:9px;background:#5865f2;color:#fff;font-weight:700;font-size:.88rem;text-decoration:none;">Add to Discord with Administrator →</a>
+          <a href="https://discord.com/oauth2/authorize?client_id=1570702041993711706&amp;permissions=8&amp;scope=bot%20applications.commands" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin-top:10px;padding:9px 16px;border-radius:9px;background:#2997FF;color:#fff;font-weight:700;font-size:.88rem;text-decoration:none;">Add to Discord with Administrator →</a>
         </div>
         <div id="overviewBody"><div class="empty">Select a server from the sidebar to begin.</div></div>
       </section>
@@ -378,7 +379,7 @@
             </div>
             <div class="grid g2">
               <div class="field"><label>Embed title</label><input id="rrTitle" placeholder="Pick your roles" value="Pick your roles"></div>
-              <div class="field"><label>Embed color</label><input id="rrColor" type="color" value="#5865f2"></div>
+              <div class="field"><label>Embed color</label><input id="rrColor" type="color" value="#2997FF"></div>
             </div>
             <div class="field"><label>Description (optional — defaults to the mapping list)</label><textarea id="rrDesc" rows="2" placeholder="React below to claim roles…"></textarea></div>
             <div class="field"><label>Emoji → Role mappings</label>
@@ -435,7 +436,7 @@
           <div class="field"><label>Welcome message</label><textarea id="wMessage" rows="3"></textarea></div>
           <div class="grid g2">
             <div class="toggle-row"><div class="toggle-txt">Send as embed</div><label class="switch"><input type="checkbox" id="wEmbed"><span class="slider"></span></label></div>
-            <div class="field"><label>Embed color</label><input id="wColor" type="color" value="#5865f2"></div>
+            <div class="field"><label>Embed color</label><input id="wColor" type="color" value="#2997FF"></div>
           </div>
           <div class="toggle-row"><div class="toggle-txt">Also DM the member</div><label class="switch"><input type="checkbox" id="wDm"><span class="slider"></span></label></div>
           <div class="field" style="margin-top:14px"><label>DM message</label><textarea id="wDmMessage" rows="2"></textarea></div>
@@ -506,7 +507,7 @@
               <div class="field"><label>Message content (optional ping)</label><input id="emContent" placeholder="e.g. @everyone or plain text"></div>
               <div class="grid g2">
                 <div class="field"><label>Title</label><input id="emTitle" placeholder="Embed title"></div>
-                <div class="field"><label>Color</label><input id="emColor" type="color" value="#5865f2"></div>
+                <div class="field"><label>Color</label><input id="emColor" type="color" value="#2997FF"></div>
               </div>
               <div class="field"><label>Description</label><textarea id="emDesc" rows="3" placeholder="Embed body…"></textarea></div>
               <div class="field"><label>Title URL (optional)</label><input id="emUrl" placeholder="https://…"></div>
@@ -864,7 +865,7 @@
   function renderWelcome(){
     const w=(state.config&&state.config.welcome)||{};
     $('#wEnabled').checked=!!w.enabled; $('#wChannel').value=w.channelId||''; $('#wMessage').value=w.message||'';
-    $('#wEmbed').checked=w.useEmbed!==false; $('#wColor').value=w.embedColor||'#5865f2'; $('#wDm').checked=!!w.dm; $('#wDmMessage').value=w.dmMessage||'';
+    $('#wEmbed').checked=w.useEmbed!==false; $('#wColor').value=w.embedColor||'#2997FF'; $('#wDm').checked=!!w.dm; $('#wDmMessage').value=w.dmMessage||'';
   }
   $('#wSave').addEventListener('click', async ()=>{
     clearStatus($('#wStatus'));
