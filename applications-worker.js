@@ -160,7 +160,12 @@ async function botCall(env, route, method = 'GET', body, extraHeaders) {
     const seconds = [data.retry_after, result.headers.get('retry-after'), result.headers.get('x-ratelimit-reset-after')].filter(value => value !== null && value !== undefined).map(Number).filter(value => Number.isFinite(value) && value >= 0);
     throw Object.assign(error(502, 'discord_rate_limit', 'Discord is busy. The application remains queued.'), { retryAfter: seconds.length ? Math.max(1, Math.ceil(Math.max(...seconds) * 1000)) : 30000 });
   }
-  if (!result.ok) throw Object.assign(error(502, 'discord_' + result.status, 'Discord delivery needs staff attention.'), { ...(result.status >= 500 ? { retryAfter: 5000, uncertain: method === 'POST' } : {}) });
+  if (!result.ok) {
+    // Keep the real Discord status and message: "needs staff attention" alone
+    // hides whether it was a permission, a bad payload or a deleted channel.
+    const detail = `${result.status}${data.code ? ' code ' + data.code : ''}${data.message ? ': ' + data.message : ''}`;
+    throw Object.assign(error(502, 'discord_' + result.status, 'Discord delivery needs staff attention (' + detail + ').'), { ...(result.status >= 500 ? { retryAfter: 5000, uncertain: method === 'POST' } : {}), discordStatus: result.status, discordMessage: data.message || '' });
+  }
   return data;
 }
 
@@ -439,15 +444,26 @@ async function openTicketChannel(env, guildId, userId) {
     { id: userId, type: 1, allow: VIEW_OR_SEND, deny: '0' },
     { id: guild.owner_id, type: 1, allow: VIEW_OR_SEND, deny: '0' }
   ];
-  if (/^\d{17,20}$/.test(String(env.DISCORD_MOD_ROLE_ID || ''))) {
-    overwrites.push({ id: String(env.DISCORD_MOD_ROLE_ID), type: 1, allow: VIEW_OR_SEND, deny: '0' });
-  }
-  const channel = await botCall(env, `/guilds/${guildId}/channels`, 'POST', {
+  // type 0 is a ROLE overwrite; a role id sent as type 1 (member) makes Discord
+  // reject the whole channel with 400, which is what broke Open Ticket.
+  const modRoleId = String(env.DISCORD_MOD_ROLE_ID || '');
+  const hasModRole = /^\d{17,20}$/.test(modRoleId);
+  if (hasModRole) overwrites.push({ id: modRoleId, type: 0, allow: VIEW_OR_SEND, deny: '0' });
+  const payload = {
     name: ('support-' + String(user.username || 'member').toLowerCase().replace(/[^a-z0-9]+/g, '-')).slice(0, 90),
     type: 0,
     topic: `Support ticket for ${userId}`,
     permission_overwrites: overwrites
-  }, { 'X-Audit-Log-Reason': 'Kyro support ticket' });
+  };
+  let channel;
+  try {
+    channel = await botCall(env, `/guilds/${guildId}/channels`, 'POST', payload, { 'X-Audit-Log-Reason': 'Kyro support ticket' });
+  } catch (first) {
+    // A stale/invalid mod role must never cost a member their ticket.
+    if (!hasModRole) throw first;
+    payload.permission_overwrites = overwrites.filter(o => o.id !== modRoleId);
+    channel = await botCall(env, `/guilds/${guildId}/channels`, 'POST', payload, { 'X-Audit-Log-Reason': 'Kyro support ticket' });
+  }
   await botCall(env, `/channels/${channel.id}/messages`, 'POST', {
     content: `<@${userId}>`,
     allowed_mentions: { parse: ['users'] },

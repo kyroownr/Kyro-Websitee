@@ -24,12 +24,24 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT || 4000);
+// An ambient PORT=0 (or a blank value from a launcher) made Node bind a random
+// port, so the browser's http://localhost:4000 was refused. Only a real,
+// positive port is honoured; otherwise the dashboard always uses 4000.
+const CONFIGURED_PORT = Number(process.env.PORT);
+const PORT = Number.isInteger(CONFIGURED_PORT) && CONFIGURED_PORT > 0 ? CONFIGURED_PORT : 4000;
 const OWNER_ID = process.env.DISCORD_OWNER_ID || '1052909930073567232';
 // Administrator (permissions=8) keeps moderation, role and announcement tools
 // working on every server the bot joins without per-feature permission drift.
-const BOT_CLIENT_ID = process.env.DISCORD_CLIENT_ID || '1570702041993711706';
-const BOT_INSTALL_URL = `https://discord.com/oauth2/authorize?client_id=${encodeURIComponent(BOT_CLIENT_ID)}&permissions=8&scope=bot%20applications.commands`;
+// The invite link must target the app the token belongs to. A hardcoded client
+// id invited a different bot, so granting it Administrator changed nothing for
+// the bot this dashboard talks to. resolveBotIdentity() replaces this with the
+// id Discord reports for the token.
+let BOT_CLIENT_ID = String(process.env.DISCORD_CLIENT_ID || '1570702041993711706').trim();
+function installUrl(clientId) {
+  return `https://discord.com/oauth2/authorize?client_id=${encodeURIComponent(clientId)}&permissions=8&scope=bot%20applications.commands`;
+}
+let BOT_INSTALL_URL = installUrl(BOT_CLIENT_ID);
+let BOT_IDENTITY = { id: '', username: 'Kyro Staff' };
 
 // Bot token from environment or local .env (gitignored). BOM-safe; `require`
 // is undefined in ES modules so the imported fs/path are used directly.
@@ -113,6 +125,11 @@ function defaultGuild() {
         warnEscalation: { enabled: true, timeoutAt: 3, timeoutMinutes: 120, kickAt: 5, banAt: 7 },
         raidsSeen: []
       },
+      honeypot: {
+        enabled: false, channelId: '', action: 'kick', timeoutSeconds: 600,
+        reason: 'Honeypot trap triggered', exemptRoles: [], seen: [], total: 0, last_at: 0, last_user: '',
+        panelMessageId: ''
+      },
       audit: []
     };
 }
@@ -190,6 +207,25 @@ async function getBotUserId() {
     botUserId = me.id || '';
   } catch (e) {}
   return botUserId;
+}
+
+/* Ask Discord which application this token belongs to, so every invite link on
+   the dashboard adds (and re-grants) the bot that is actually running here. */
+async function resolveBotIdentity() {
+  if (!BOT_TOKEN) return;
+  try {
+    const me = await discordFetch('/users/@me');
+    if (me && me.id) BOT_IDENTITY = { id: me.id, username: me.username || BOT_IDENTITY.username };
+  } catch (e) {}
+  try {
+    const app = await discordFetch('/oauth2/applications/@me');
+    if (app && /^\d{15,25}$/.test(String(app.id || ''))) {
+      BOT_CLIENT_ID = String(app.id);
+      BOT_INSTALL_URL = installUrl(BOT_CLIENT_ID);
+    }
+  } catch (e) {
+    console.error('[Dashboard] Could not resolve the bot application id; invite links use', BOT_CLIENT_ID + '.', e.message);
+  }
 }
 
 async function getReactionUsers(channelId, messageId, emoji) {
@@ -490,7 +526,27 @@ function rolePresetById(id) {
 async function botGuildPermissions(guildId) {
   const guilds = await discordFetch('/users/@me/guilds?with_counts=false');
   const g = (Array.isArray(guilds) ? guilds : []).find((x) => x.id === guildId);
-  return { perms: BigInt((g && g.permissions) || '0'), inGuild: Boolean(g) };
+  const listed = BigInt((g && g.permissions) || '0');
+  // The guild list can omit (or lag behind) `permissions`. The bot's own member
+  // object and the role bitfields are authoritative, so compute those as well and
+  // trust them: a freshly granted Administrator was otherwise invisible for up
+  // to an hour of Discord cache, which made every setup action look broken.
+  let computed = 0n;
+  try {
+    const botId = await getBotUserId();
+    const [member, roles] = await Promise.all([
+      discordFetch(`/guilds/${guildId}/members/${botId}`),
+      discordFetch(`/guilds/${guildId}/roles`)
+    ]);
+    const byId = new Map((Array.isArray(roles) ? roles : []).map((r) => [r.id, r]));
+    const everyone = byId.get(guildId);
+    if (everyone) computed |= BigInt(everyone.permissions || '0');
+    for (const rid of (member && member.roles) || []) {
+      const role = byId.get(rid);
+      if (role) computed |= BigInt(role.permissions || '0');
+    }
+  } catch (e) {}
+  return { perms: computed || listed, inGuild: Boolean(g) };
 }
 
 const accessCache = {};
@@ -516,6 +572,33 @@ async function botAccess(guildId) {
 
 /* Guard used by every setup action: one clear, actionable error when the bot
    lacks Administrator instead of a wall of per-role "Missing Permissions". */
+const PERM_LABELS = {
+  'Manage Roles': PERM.MANAGE_ROLES,
+  'Manage Channels': PERM.MANAGE_CH,
+  'Kick Members': PERM.KICK,
+  'Ban Members': PERM.BAN,
+  'Manage Messages': PERM.MANAGE_MSG,
+  'Moderate Members': PERM.TIMEOUT
+};
+
+/* Requires exactly the permissions the action needs, not Administrator for
+   everything. Administrator still short-circuits; otherwise the error names the
+   one permission that is actually missing instead of guessing. */
+async function assertBotCan(guildId, bits, action) {
+  const access = await botAccess(guildId);
+  if (access.isAdmin) return access;
+  const perms = BigInt(access.permissions || '0');
+  const missing = Object.entries(PERM_LABELS)
+    .filter(([, bit]) => (bits & bit) === bit && (perms & bit) !== bit)
+    .map(([name]) => name);
+  if (!missing.length) return access;
+  throw Object.assign(new Error(
+    `Kyro Staff needs ${missing.join(' and ')} to run ${action} in this server. ` +
+    `In Server Settings → Roles give the **Kyro Bot** role ${missing.join(' and ')} ` +
+    `(or Administrator) — the bot already sits above the roles it manages. Invite: ` + BOT_INSTALL_URL
+  ), { status: 403, missing, needsAdmin: true, inviteUrl: BOT_INSTALL_URL });
+}
+
 async function assertBotAdmin(guildId, action) {
   const access = await botAccess(guildId);
   if (access.isAdmin) return access;
@@ -526,7 +609,7 @@ async function assertBotAdmin(guildId, action) {
 }
 
 async function applyPermissionPresets(guildId) {
-  await assertBotAdmin(guildId, 'auto permissions');
+  await assertBotCan(guildId, PERM.MANAGE_ROLES, 'auto permissions');
   const [roles, botId] = await Promise.all([
     discordFetch(`/guilds/${guildId}/roles`),
     getBotUserId()
@@ -560,7 +643,7 @@ async function applyPermissionPresets(guildId) {
 
 /* Apply one named preset to one existing role (used by the preset picker). */
 async function applyRolePreset(guildId, roleId, presetId) {
-  await assertBotAdmin(guildId, 'role permission presets');
+  await assertBotCan(guildId, PERM.MANAGE_ROLES, 'role permission presets');
   const preset = rolePresetById(presetId);
   if (!preset) throw new Error(`Unknown role preset "${presetId}".`);
   const role = (await discordFetch(`/guilds/${guildId}/roles`)).find((r) => r.id === roleId);
@@ -576,7 +659,7 @@ async function applyRolePreset(guildId, roleId, presetId) {
 /* Create a ready-made role tree for a server type. Existing role names are
    reused instead of duplicated, so the pack is safe to re-run. */
 async function createRolePack(guildId, packId) {
-  await assertBotAdmin(guildId, 'role packs');
+  await assertBotCan(guildId, PERM.MANAGE_ROLES, 'role packs');
   const pack = ROLE_PACKS.find((p) => p.id === packId);
   if (!pack) throw new Error(`Unknown role pack "${packId}".`);
   const roles = await discordFetch(`/guilds/${guildId}/roles`);
@@ -802,20 +885,63 @@ async function repairChannelAccess(guildId, channelId) {
   return { channel: channel.name, repaired: true };
 }
 
+/* Locks a channel down to staff: @everyone loses View Channel, the bot and every
+   staff-looking role keep it. Other overwrites are preserved. */
+async function makeChannelStaffOnly(guildId, channel) {
+  const roles = await discordFetch(`/guilds/${guildId}/roles`);
+  const botId = await getBotUserId();
+  const staff = (Array.isArray(roles) ? roles : []).filter((r) => {
+    if (r.id === guildId || r.managed) return false;
+    const p = BigInt(r.permissions || '0');
+    if ((p & (PERM.ADMIN | PERM.MANAGE_GUILD | PERM.MANAGE_MSG | PERM.MANAGE_ROLES | PERM.MANAGE_CH)) !== 0n) return true;
+    return /(owner|admin|moderator|\bmod\b|staff|support|helpdesk)/i.test(r.name);
+  });
+  const botAllow = PERM.VIEW | PERM.SEND | PERM.EMBED | PERM.MANAGE_MSG | PERM.HISTORY;
+  const existing = Array.isArray(channel.permission_overwrites) ? channel.permission_overwrites : [];
+  const previous = new Map(existing.map((o) => [o.id, o]));
+  const overwrites = existing
+    .filter((o) => o.id !== guildId && o.id !== botId && !staff.some((r) => r.id === o.id));
+  overwrites.push({ id: guildId, type: 0, allow: '0', deny: String(PERM.VIEW) });
+  overwrites.push({ id: botId, type: 1, allow: String(botAllow), deny: '0' });
+  // Staff keep whatever they already had in the channel, plus read access —
+  // locking a log channel down must not silence the people who read it.
+  for (const r of staff) {
+    const before = previous.get(r.id);
+    const allow = BigInt((before && before.allow) || '0') | PERM.VIEW | PERM.HISTORY;
+    const deny = BigInt((before && before.deny) || '0') & ~(PERM.VIEW | PERM.HISTORY);
+    overwrites.push({ id: r.id, type: 0, allow: allow.toString(), deny: deny.toString() });
+  }
+  await discordFetch(`/channels/${channel.id}`, {
+    method: 'PATCH', headers: { 'X-Audit-Log-Reason': 'Kyro staff-only channel' },
+    body: JSON.stringify({ permission_overwrites: overwrites })
+  });
+  return { ...channel, permission_overwrites: overwrites, staffOnly: true };
+}
+
 async function ensureChannel(guildId, wantedName, options = {}) {
   const clean = wantedName.toLowerCase();
   const channels = await discordFetch(`/guilds/${guildId}/channels`);
   const found = channels.find((c) => c.type === (options.type || 0) && c.name.toLowerCase() === clean);
-  if (found) return { channel: found, created: false };
+  if (found) {
+    // An existing channel is still repaired when this is meant to be private:
+    // a public #mod-log leaks every moderation action to the whole server.
+    if (options.private) {
+      const everyone = (found.permission_overwrites || []).find((o) => o.id === guildId && o.type === 0);
+      const hidden = everyone && (BigInt(everyone.deny || '0') & PERM.VIEW) !== 0n;
+      if (!hidden) return { channel: await makeChannelStaffOnly(guildId, found), created: false, locked: true };
+    }
+    return { channel: found, created: false, locked: Boolean(options.private) };
+  }
   const channel = await discordFetch(`/guilds/${guildId}/channels`, {
     method: 'POST', headers: { 'X-Audit-Log-Reason': 'Kyro auto setup' },
     body: JSON.stringify({ name: wantedName, type: options.type || 0, topic: options.topic })
   });
-  return { channel, created: true };
+  const ready = options.private ? await makeChannelStaffOnly(guildId, channel) : channel;
+  return { channel: ready, created: true, locked: Boolean(options.private) };
 }
 
 async function setupVerification(guildId, opts = {}) {
-  await assertBotAdmin(guildId, 'verification setup');
+  await assertBotCan(guildId, PERM.MANAGE_ROLES | PERM.MANAGE_CH, 'verification setup');
   const db = loadDB();
   const g = guildConfig(db, guildId);
   g.verification = g.verification || { enabled: false, channelId: '', roleId: '', gate: false, messageId: '', gatedChannels: [] };
@@ -937,33 +1063,54 @@ async function clearVerificationGate(guildId) {
 
 /* One-click preset: channels + welcome + logging + automod + verification + permissions */
 async function runAutoSetup(guildId, opts = {}) {
-  await assertBotAdmin(guildId, 'one-click setup');
+  await assertBotCan(guildId, PERM.MANAGE_ROLES | PERM.MANAGE_CH, 'one-click setup');
   const db = loadDB();
   const g = guildConfig(db, guildId);
   const steps = [];
+  const warnings = [];
+  // Every step is independent: one refused Discord call reports itself and the
+  // rest of the setup still runs, instead of the whole button failing with a
+  // message that names permissions the bot actually has.
+  const step = async (label, work) => {
+    try { return await work(); }
+    catch (err) {
+      const hint = err && err.needsAdmin ? err.message : (err.message || 'unknown error');
+      steps.push(`⚠️ ${label} — ${hint}`);
+      warnings.push(`${label} — ${hint}`);
+      return null;
+    }
+  };
   // 1. Core channels
-  const welcomeCh = await ensureChannel(guildId, 'welcome', { topic: 'Welcome messages for new members' });
-  steps.push(welcomeCh.created ? 'Created #welcome' : '#welcome already exists');
-  const logCh = await ensureChannel(guildId, 'mod-log', { topic: 'Kyro Staff Bot logging' });
-  steps.push(logCh.created ? 'Created #mod-log' : '#mod-log already exists');
-  const annCh = await ensureChannel(guildId, 'announcements', { topic: 'Server announcements (Kyro bot)' });
-  steps.push(annCh.created ? 'Created #announcements' : '#announcements already exists');
-  const channels = await discordFetch(`/guilds/${guildId}/channels`);
-  const textChannels = channels.filter((c) => c.type === 0);
+  const welcomeCh = await step('Create #welcome', () => ensureChannel(guildId, 'welcome', { topic: 'Welcome messages for new members' }));
+  if (welcomeCh) steps.push(welcomeCh.created ? 'Created #welcome' : '#welcome already exists');
+  const logCh = await step('Create #mod-log (staff-only)', () => ensureChannel(guildId, 'mod-log', { topic: 'Kyro Staff Bot logging', private: true }));
+  if (logCh) {
+    steps.push(logCh.created
+      ? 'Created #mod-log — staff-only, hidden from @everyone'
+      : (logCh.locked ? 'Repaired #mod-log privacy — now staff-only' : '#mod-log ready and staff-only'));
+  }
+  const annCh = await step('Create #announcements', () => ensureChannel(guildId, 'announcements', { topic: 'Server announcements (Kyro bot)' }));
+  if (annCh) steps.push(annCh.created ? 'Created #announcements' : '#announcements already exists');
+  let textChannels = [];
+  try { textChannels = (await discordFetch(`/guilds/${guildId}/channels`)).filter((c) => c.type === 0); } catch (e) {}
   // 2. Welcome defaults
   g.welcome = g.welcome || {};
-  g.welcome.enabled = true;
-  g.welcome.channelId = welcomeCh.channel.id;
-  g.welcome.useEmbed = true;
-  g.welcome.embedColor = '#2997FF';
-  g.welcome.message = 'Welcome {user} to **{server}**! You are member #{membercount}.';
-  steps.push('Welcome messages enabled → #welcome');
+  if (welcomeCh) {
+    g.welcome.enabled = true;
+    g.welcome.channelId = welcomeCh.channel.id;
+    g.welcome.useEmbed = true;
+    g.welcome.embedColor = '#2997FF';
+    g.welcome.message = 'Welcome {user} to **{server}**! You are member #{membercount}.';
+    steps.push('Welcome messages enabled → #welcome');
+  }
   // 3. Logging defaults
   g.logging = g.logging || { enabled: false, channelId: '', events: {} };
-  g.logging.enabled = true;
-  g.logging.channelId = logCh.channel.id;
-  g.logging.events = { moderation: true, giveaways: true, reactionRoles: true, automod: true, welcome: true, joins: true };
-  steps.push('Full logging enabled → #mod-log');
+  if (logCh) {
+    g.logging.enabled = true;
+    g.logging.channelId = logCh.channel.id;
+    g.logging.events = { moderation: true, giveaways: true, reactionRoles: true, automod: true, welcome: true, joins: true };
+    steps.push('Full logging enabled → #mod-log (staff-only)');
+  }
   // 4. AutoMod defaults on all text channels
   g.automod = g.automod || {};
   g.automod.enabled = true;
@@ -985,21 +1132,21 @@ async function runAutoSetup(guildId, opts = {}) {
   steps.push('Security: auto-raid detection, anti-nuke and keyword alerts enabled');
   // 6. Verification
   saveDB(db);
-  const vSteps = await setupVerification(guildId, { gate: Boolean(opts.gate) });
-  steps.push(...vSteps);
+  const vSteps = await step('Set up verification', () => setupVerification(guildId, { gate: Boolean(opts.gate) }));
+  if (vSteps) steps.push(...vSteps);
   // 7. Optional permission presets
   if (opts.permissions) {
-    const res = await applyPermissionPresets(guildId);
-    steps.push(`Permissions: **${res.applied.length} roles updated** (${res.skipped.length} left untouched)`);
+    const res = await step('Apply best-practice permissions', () => applyPermissionPresets(guildId));
+    if (res) steps.push(`Permissions: **${res.applied.length} roles updated** (${res.skipped.length} left untouched)`);
   }
   saveDB(db);
-  await logEvent(guildId, 'moderation', 'One-click server setup', steps.map((s) => '• ' + s).join('\n').slice(0, 1900), 0x2997ff);
-  return steps;
+  await logEvent(guildId, 'moderation', 'One-click server setup', steps.map((s) => '• ' + s).join('\n').slice(0, 1900), warnings.length ? 0xf59e0b : 0x2997ff);
+  return { steps, warnings };
 }
 
 /* Global lockdown: deny @everyone send everywhere (raid mode core move). */
 async function toggleGlobalLockdown(guildId, on) {
-  await assertBotAdmin(guildId, 'lockdown');
+  await assertBotCan(guildId, PERM.MANAGE_CH, 'lockdown');
   const channels = await discordFetch(`/guilds/${guildId}/channels`);
   let touched = 0;
   for (const ch of channels) {
@@ -1429,6 +1576,148 @@ function checkAutomod(msg, am) {
     }
   }
   return null;
+}
+
+/* ----------------------------- honeypot ----------------------------------
+   A decoy channel no real member should ever post in. Anything written there
+   is treated as bot or spam traffic: the message is deleted and the author is
+   kicked, banned or timed out. Staff roles and the exempt list are never
+   punished, so a moderator can safely test the trap. Driven by the poller, so
+   it needs no gateway connection. */
+async function runHoneypot(guildId, g, opts = {}) {
+  const hp = g.honeypot;
+  if (!hp || !hp.enabled || !hp.channelId) return false;
+  hp.seen = Array.isArray(hp.seen) ? hp.seen : [];
+  const seen = new Set(hp.seen);
+  let msgs = [];
+  try { msgs = await discordFetch(`/channels/${hp.channelId}/messages?limit=${opts.limit || 20}`); } catch (e) { return false; }
+  if (!Array.isArray(msgs)) return false;
+
+  // Protected roles: the exempt list plus anything staff-level, so the trap
+  // cannot punish a moderator who clicks into the channel by accident.
+  let protectedRoles = new Set((hp.exemptRoles || []).map(String));
+  try {
+    const roles = await discordFetch(`/guilds/${guildId}/roles`);
+    for (const r of (Array.isArray(roles) ? roles : [])) {
+      if (r.id === guildId) continue;
+      const p = BigInt(r.permissions || '0');
+      if ((p & (PERM.ADMIN | PERM.MANAGE_GUILD | PERM.MANAGE_ROLES | PERM.MANAGE_CH | PERM.BAN | PERM.KICK)) !== 0n) protectedRoles.add(r.id);
+      else if (/(owner|admin|moderator|\bmod\b|staff|support|helpdesk)/i.test(r.name)) protectedRoles.add(r.id);
+    }
+  } catch (e) {}
+
+  const botId = await getBotUserId();
+  let changed = false;
+  for (const msg of msgs) {
+    if (!msg.id || seen.has(msg.id)) continue;
+    seen.add(msg.id);
+    changed = true;
+    if (!msg.author || !msg.author.id) continue;
+    if (msg.author.bot || msg.author.id === botId) continue;
+    const memberRoles = (msg.member && msg.member.roles) || [];
+    if (memberRoles.some((rid) => protectedRoles.has(String(rid)))) continue;
+
+    try { await discordFetch(`/channels/${hp.channelId}/messages/${msg.id}`, { method: 'DELETE', headers: { 'X-Audit-Log-Reason': 'Honeypot: message in a trap channel' } }); } catch (e) {}
+
+    const reason = hp.reason || 'Honeypot trap triggered';
+    const action = ['ban', 'kick', 'timeout'].includes(hp.action) ? hp.action : 'kick';
+    let done = action;
+    try {
+      if (action === 'ban') {
+        await discordFetch(`/guilds/${guildId}/bans/${msg.author.id}`, {
+          method: 'PUT', headers: { 'X-Audit-Log-Reason': 'Honeypot: ' + reason },
+          body: JSON.stringify({ delete_message_seconds: 86400 })
+        });
+      } else if (action === 'kick') {
+        await discordFetch(`/guilds/${guildId}/members/${msg.author.id}`, { method: 'DELETE', headers: { 'X-Audit-Log-Reason': 'Honeypot: ' + reason } });
+      } else {
+        const until = new Date(Date.now() + Math.min(Math.max(Number(hp.timeoutSeconds) || 600, 60), 2419200) * 1000).toISOString();
+        await discordFetch(`/guilds/${guildId}/members/${msg.author.id}`, {
+          method: 'PATCH', headers: { 'X-Audit-Log-Reason': 'Honeypot: ' + reason },
+          body: JSON.stringify({ communication_disabled_until: until })
+        });
+      }
+    } catch (err) {
+      done = 'failed (' + (err.message || 'no permission') + ')';
+    }
+    try { await dmPunished(guildId, msg.author.id, action, reason, g.serverName, action === 'ban'); } catch (e) {}
+    hp.total = (Number(hp.total) || 0) + 1;
+    hp.last_at = Date.now();
+    hp.last_user = msg.author.username || msg.author.id;
+    await logEvent(guildId, 'automod', '🍯 Honeypot caught a member',
+      `**User:** <@${msg.author.id}> (\`${msg.author.username || msg.author.id}\`)\n**Channel:** <#${hp.channelId}>\n**Action:** ${done}\n**Message:** ${String(msg.content || '[attachment]').slice(0, 300)}`, 0xf59e0b);
+  }
+  hp.seen = [...seen].slice(-400);
+  // Keep the posted explainer/stats panel current — one edit, and only when the
+  // trap actually caught somebody.
+  if (changed && hp.panelMessageId) {
+    try { await postHoneypotPanel(guildId, g); } catch (e) {}
+  }
+  return changed;
+}
+
+/* The honeypot channel carries its own explanation and live counters, so staff
+   (and anyone who wanders in) can see what the trap is and how it is doing
+   without opening the dashboard. The message is edited in place on every catch. */
+function escapeMarkdown(value) {
+  return String(value == null ? '' : value).replace(/[*_~`|>\\]/g, (c) => '\\' + c).slice(0, 80);
+}
+
+function honeypotPanelPayload(g) {
+  const hp = g.honeypot || {};
+  const minutes = Math.max(1, Math.round((Number(hp.timeoutSeconds) || 600) / 60));
+  const verb = hp.action === 'ban' ? 'banned' : hp.action === 'timeout' ? 'timed out for ' + minutes + ' minutes' : 'kicked';
+  const total = Number(hp.total) || 0;
+  const channel = hp.channelId ? '<#' + hp.channelId + '>' : 'not set yet';
+  const last = hp.last_at
+    ? '<t:' + Math.floor(Number(hp.last_at) / 1000) + ':R>' + (hp.last_user ? ' · **' + escapeMarkdown(hp.last_user) + '**' : '')
+    : 'Nothing caught yet';
+  return {
+    embeds: [
+      {
+        title: '🍯 What is a Honeypot?',
+        description: 'A **honeypot** is a channel used to detect unwanted activity.\n\n' +
+          'Kyro watches a channel that is visible to members but not intended for normal use. ' +
+          'Spam bots and compromised accounts often post in it while scanning or messaging across a server.\n\n' +
+          'When a message is sent to ' + channel + ', Kyro deletes it and the author is **' + verb + '**. ' +
+          'Staff roles are always exempt, so a moderator can test the trap safely.',
+        color: 0xf59e0b
+      },
+      {
+        title: '🍯 Honeypot Statistics',
+        fields: [
+          { name: 'Server Stats', value: '• Total moderated in this server: **' + total + '**\n• Trap channel: ' + channel + '\n• Action on trigger: **' + verb + '**', inline: false },
+          { name: 'Last Trigger', value: last, inline: false },
+          { name: 'Trap Settings', value: '• Detection: background scan (no gateway needed)\n• Protected: @everyone with staff permissions, bots and the bot itself\n• Audit reason: ' + escapeMarkdown(hp.reason || 'Honeypot trap triggered'), inline: false }
+        ],
+        color: 0x2997ff,
+        footer: { text: 'Kyro Honeypot · this panel updates automatically' },
+        timestamp: new Date().toISOString()
+      }
+    ],
+    allowed_mentions: { parse: [] }
+  };
+}
+
+async function postHoneypotPanel(guildId, g) {
+  const hp = g && g.honeypot;
+  if (!hp || !hp.channelId) throw new Error('Pick a honeypot channel first.');
+  const payload = honeypotPanelPayload(g);
+  if (hp.panelMessageId) {
+    try {
+      return await discordFetch(`/channels/${hp.channelId}/messages/${hp.panelMessageId}`, {
+        method: 'PATCH', body: JSON.stringify(payload)
+      });
+    } catch (err) {
+      // The panel was deleted by hand — post a fresh one instead of failing.
+      hp.panelMessageId = '';
+    }
+  }
+  const message = await discordFetch(`/channels/${hp.channelId}/messages`, {
+    method: 'POST', body: JSON.stringify(payload)
+  });
+  hp.panelMessageId = message.id;
+  return message;
 }
 
 async function runAutomodGuild(guildId, g) {
@@ -2123,6 +2412,14 @@ async function pollTick() {
       }
     }
 
+    if (now - (lastRun.honeypot || 0) > 10000) {
+      lastRun.honeypot = now;
+      for (const guildId of guildIds) {
+        const g = guildConfig(db, guildId);
+        try { if (await runHoneypot(guildId, g)) changed = true; } catch (e) {}
+      }
+    }
+
     if (now - lastRun.welcome > 30000) {
       lastRun.welcome = now;
       for (const guildId of guildIds) {
@@ -2228,12 +2525,12 @@ function permErrorHint(err) {
   const msg = String((err && err.message) || '');
   if (err && err.needsAdmin) return err.message;
   if (err && (err.status === 403 || /missing permissions|missing perms|permission/i.test(msg))) {
-    return 'The Kyro bot is missing Manage Roles / Manage Channels. Fix it: Server Settings → Roles → drag "Kyro Bot" above the roles it manages, or re-add the bot with Administrator: ' + BOT_INSTALL_URL;
+    return 'Discord refused this action: ' + msg + (err.code ? ` (code ${err.code})` : '') + '. On Discord, a role or channel edit needs the **Kyro Bot** role above the target in Server Settings → Roles, plus Manage Roles + Manage Channels (or Administrator): ' + BOT_INSTALL_URL;
   }
   return null;
 }
 
-const server = http.createServer(async (req, res) => {
+async function handleRequest(req, res) {
   // Loopback admin tool: reject any Host that isn't localhost (DNS-rebinding guard).
   const host = (req.headers.host || '').toLowerCase();
   if (host !== `localhost:${PORT}` && host !== `127.0.0.1:${PORT}` && host !== `[::1]:${PORT}`) {
@@ -2267,7 +2564,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && p === '/api/status') {
-      return sendJSON(res, 200, { ok: true, tokenLoaded: Boolean(BOT_TOKEN), ownerId: OWNER_ID, poller: !process.env.DASHBOARD_DISABLE_POLLER, installUrl: BOT_INSTALL_URL });
+      return sendJSON(res, 200, {
+        ok: true, tokenLoaded: Boolean(BOT_TOKEN), ownerId: OWNER_ID,
+        poller: !process.env.DASHBOARD_DISABLE_POLLER,
+        installUrl: BOT_INSTALL_URL, clientId: BOT_CLIENT_ID,
+        botId: BOT_IDENTITY.id, botName: BOT_IDENTITY.username
+      });
     }
 
     if (req.method === 'POST' && p === '/api/launch') {
@@ -2322,7 +2624,7 @@ const server = http.createServer(async (req, res) => {
         verification: g.verification, security: g.security,
         engagement: g.engagement, schedule: g.schedule, autoResponses: g.autoResponses,
         suggestions: g.suggestions, levels: g.levels, birthdays: g.birthdays,
-        statChannels: g.statChannels, polls: g.polls,
+        statChannels: g.statChannels, polls: g.polls, honeypot: g.honeypot,
         rolePacks: ROLE_PACKS.map((p) => ({ id: p.id, label: p.label, description: p.description, roles: p.roles.length })),
         installUrl: BOT_INSTALL_URL
       });
@@ -2332,7 +2634,13 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/api/bot/access') {
       if (!guildId) return sendJSON(res, 400, { error: 'guild is required' });
       const access = await botAccess(guildId);
-      return sendJSON(res, 200, { ...access, required: ['Administrator'] });
+      return sendJSON(res, 200, {
+        ...access, required: ['Administrator'],
+        bot: BOT_IDENTITY, inviteUrl: BOT_INSTALL_URL,
+        reason: access.inGuild === false
+          ? `${BOT_IDENTITY.username || 'The bot'} is not in this server — add it with the invite link, then re-check.`
+          : null
+      });
     }
 
     if (req.method === 'POST' && p === '/api/bot/grant') {
@@ -2344,10 +2652,14 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, {
         ok: true,
         isAdmin: access.isAdmin,
+        inGuild: access.inGuild !== false,
+        bot: BOT_IDENTITY,
         inviteUrl: BOT_INSTALL_URL,
         message: access.isAdmin
-          ? 'Kyro Bot already has Administrator in this server.'
-          : 'Open the invite link, pick this server and approve Administrator. Nothing else changes.'
+          ? (BOT_IDENTITY.username || 'Kyro Bot') + ' already has Administrator in this server.'
+          : access.inGuild === false
+            ? (BOT_IDENTITY.username || 'The bot') + ' is not in this server yet. Open the invite link, pick this server and approve Administrator, then press Re-check permissions.'
+            : 'Open the invite link, pick this server and approve Administrator — the invite now targets ' + (BOT_IDENTITY.username || 'this bot') + ' (' + BOT_CLIENT_ID + '). Nothing else changes.'
       });
     }
 
@@ -2413,6 +2725,62 @@ const server = http.createServer(async (req, res) => {
       if (!/^[A-Za-z0-9_-]{3,32}$/.test(String(body.channelId || ''))) return sendJSON(res, 400, { error: 'Pick a valid channel.' });
       const result = await repairChannelAccess(gid, String(body.channelId));
       return sendJSON(res, 200, result);
+    }
+
+    // ---- Honeypot trap ----
+    if (req.method === 'POST' && p === '/api/honeypot') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      const hp = g.honeypot;
+      const notes = [];
+      if (body.createChannel) {
+        await assertBotCan(gid, PERM.MANAGE_CH, 'the honeypot channel');
+        const made = await ensureChannel(gid, 'honeypot', { topic: '⚠️ Decoy channel — posting here gets you removed.' });
+        hp.channelId = made.channel.id;
+        notes.push(made.created ? 'Created #honeypot' : 'Using the existing #honeypot');
+      } else if (body.channelId !== undefined) {
+        if (body.channelId && !/^[A-Za-z0-9_-]{3,32}$/.test(String(body.channelId))) return sendJSON(res, 400, { error: 'Pick a valid channel.' });
+        hp.channelId = String(body.channelId || '');
+      }
+      if (body.enabled !== undefined) hp.enabled = Boolean(body.enabled);
+      if (body.action !== undefined) {
+        const action = ['ban', 'kick', 'timeout'].includes(body.action) ? body.action : 'kick';
+        const bit = action === 'ban' ? PERM.BAN : action === 'kick' ? PERM.KICK : PERM.TIMEOUT;
+        const label = action === 'ban' ? 'Ban Members' : action === 'kick' ? 'Kick Members' : 'Moderate Members';
+        const access = await botAccess(gid);
+        if (!access.isAdmin && (BigInt(access.permissions || '0') & bit) !== bit) {
+          return sendJSON(res, 403, {
+            error: `Kyro Staff needs ${label} to ${action} a honeypot intruder. Give the **Kyro Bot** role ${label}, or pick another action.`,
+            missing: [label], inviteUrl: BOT_INSTALL_URL
+          });
+        }
+        hp.action = action;
+      }
+      if (body.timeoutSeconds !== undefined) hp.timeoutSeconds = Math.min(Math.max(Number(body.timeoutSeconds) || 600, 60), 2419200);
+      if (body.reason !== undefined) hp.reason = String(body.reason || '').slice(0, 200) || 'Honeypot trap triggered';
+      if (Array.isArray(body.exemptRoles)) hp.exemptRoles = body.exemptRoles.map(String).slice(0, 25);
+      if (hp.enabled && !hp.channelId) return sendJSON(res, 400, { error: 'Choose the honeypot channel first.' });
+      saveDB(db);
+      let run = null;
+      if (body.runNow && hp.enabled) {
+        try { await runHoneypot(gid, g, { limit: 25 }); saveDB(db); run = { total: g.honeypot.total, last_at: g.honeypot.last_at }; }
+        catch (err) { run = { error: err.message }; }
+      }
+      // The panel is what makes the trap self-explanatory in Discord. Post it
+      // when asked, and refresh it after a manual scan.
+      if (hp.channelId && (body.panel || body.createChannel || (body.runNow && run && !run.error))) {
+        try {
+          await postHoneypotPanel(gid, g);
+          saveDB(db);
+          notes.push(hp.panelMessageId && body.panel ? 'Honeypot panel posted in #honeypot' : 'Honeypot panel up to date');
+        } catch (err) {
+          notes.push('Could not post the honeypot panel: ' + (err.message || 'Discord refused it'));
+        }
+      }
+      return sendJSON(res, 200, { ok: true, honeypot: g.honeypot, panelMessageId: g.honeypot.panelMessageId || '', notes, run });
     }
 
     // ---- Engagement suite ----
@@ -2781,7 +3149,25 @@ const server = http.createServer(async (req, res) => {
         }
       };
       saveDB(db);
-      return sendJSON(res, 200, { ok: true, logging: g.logging });
+      // A logging channel that @everyone can read leaks every moderation action,
+      // so lock it down as part of saving logging (and repair it if it drifted).
+      let note = '';
+      if (g.logging.enabled && g.logging.channelId) {
+        try {
+          const channel = await discordFetch(`/channels/${g.logging.channelId}`);
+          const everyone = (channel.permission_overwrites || []).find((o) => o.id === gid && o.type === 0);
+          const hidden = everyone && (BigInt(everyone.deny || '0') & PERM.VIEW) !== 0n;
+          if (!hidden) {
+            await makeChannelStaffOnly(gid, channel);
+            note = `#${channel.name} is now staff-only`;
+          } else {
+            note = `#${channel.name} is staff-only`;
+          }
+        } catch (err) {
+          note = 'Logging saved, but the channel could not be locked down: ' + (err.message || 'Discord refused it');
+        }
+      }
+      return sendJSON(res, 200, { ok: true, logging: g.logging, note });
     }
 
     if (req.method === 'GET' && p === '/api/userinfo') {
@@ -2893,8 +3279,8 @@ const server = http.createServer(async (req, res) => {
       const gid = body.guild || guildId;
       if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
       try {
-        const steps = await runAutoSetup(gid, { gate: Boolean(body.gate), permissions: Boolean(body.permissions) });
-        return sendJSON(res, 200, { steps });
+        const result = await runAutoSetup(gid, { gate: Boolean(body.gate), permissions: Boolean(body.permissions) });
+        return sendJSON(res, 200, result);
       } catch (err) {
         const hint = permErrorHint(err);
         return sendJSON(res, hint ? 403 : 500, { error: hint || (err.message || 'Auto setup failed.'), needsAdmin: Boolean(err.needsAdmin), inviteUrl: BOT_INSTALL_URL });
@@ -2981,7 +3367,9 @@ const server = http.createServer(async (req, res) => {
     if (err.needsAdmin) { payload.needsAdmin = true; payload.inviteUrl = err.inviteUrl || BOT_INSTALL_URL; payload.missing = err.missing || []; }
     return sendJSON(res, status, payload);
   }
-});
+}
+
+const server = http.createServer(handleRequest);
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
@@ -2992,11 +3380,14 @@ server.on('error', (err) => {
   process.exit(1);
 });
 
+await resolveBotIdentity();
+
 server.listen(PORT, '127.0.0.1', () => {
   console.log('=======================================================');
   console.log('  Kyro Staff Bot — Multi-Server Command Center');
   console.log(`  http://localhost:${PORT}`);
   console.log(`  Bot token: ${BOT_TOKEN ? 'loaded' : 'MISSING — set DISCORD_BOT_TOKEN in .env'}`);
+  if (BOT_TOKEN) console.log(`  Bot app: ${BOT_IDENTITY.username || 'unknown'} (client ${BOT_CLIENT_ID})`);
   console.log('  Features: moderation, giveaways, reaction roles, automod, welcome,');
   console.log('            logging, setup, security, engagement, levels, community,');
   console.log('            scheduler, polls, role packs, utility, embeds');
@@ -3010,4 +3401,16 @@ server.listen(PORT, '127.0.0.1', () => {
   if (!process.env.DASHBOARD_DISABLE_OPEN) openLocalDashboard();
 });
 
-export { server };
+// The server binds the IPv4 loopback only, but `localhost` resolves to ::1
+// first on some Windows setups — the browser then shows ERR_CONNECTION_REFUSED
+// while the dashboard is running. Serve the same handler on IPv6 loopback too;
+// the Host guard still rejects every non-loopback address.
+const server6 = http.createServer(handleRequest);
+server6.on('error', (err) => {
+  if (err.code !== 'EADDRINUSE' && err.code !== 'EADDRNOTAVAIL' && err.code !== 'EAFNOSUPPORT') {
+    console.error('[Dashboard] IPv6 loopback listener failed:', err.message);
+  }
+});
+server6.listen(PORT, '::1');
+
+export { server, server6 };

@@ -811,6 +811,32 @@
           </div>
           <div class="status" id="glStatus"></div>
         </div>
+        <div class="card" style="border-left:3px solid #f59e0b">
+          <div class="card-title">🍯 Honeypot trap</div>
+          <div class="card-desc">A decoy channel no real member should ever post in. Anything written there is treated as bot or spam traffic: the message is deleted and the author is kicked, banned or timed out. Staff roles are never punished, so a moderator can test it safely. Detection runs on the background poller, so no gateway connection is needed.</div>
+          <label class="check"><input type="checkbox" id="hpEnabled"> Enable honeypot</label>
+          <div class="grid g2">
+            <div class="field"><label>Honeypot channel</label><select id="hpChannel"></select></div>
+            <div class="field"><label>Action on trigger</label><select id="hpAction">
+              <option value="kick">Kick</option>
+              <option value="ban">Ban (removes 1 day of their messages)</option>
+              <option value="timeout">Timeout</option>
+            </select></div>
+          </div>
+          <div class="grid g2">
+            <div class="field"><label>Timeout minutes</label><input id="hpTimeout" type="number" min="1" max="40320" value="10"></div>
+            <div class="field"><label>Audit log reason</label><input id="hpReason" placeholder="Honeypot trap triggered"></div>
+          </div>
+          <div class="btn-row">
+            <button class="btn ghost sm" id="hpCreate">Find or create #honeypot</button>
+            <button class="btn sm" id="hpSave">Save honeypot</button>
+            <button class="btn ghost sm" id="hpCheck">Check now</button>
+            <button class="btn ghost sm" id="hpPanel">Post info + stats panel</button>
+          </div>
+          <div class="hint" id="hpStats">No triggers yet.</div>
+          <div class="hint">The panel posted in the channel explains what a honeypot is and shows live server statistics — it updates itself after every catch.</div>
+          <div class="status" id="hpStatus"></div>
+        </div>
         <div class="card">
           <div class="card-title">🚩 Keyword Alerts</div>
           <div class="card-desc">Scans recent messages in your AutoMod channels and reports anything matching these terms to #mod-log — self-harm phrases, scam bait, doxxing links.</div>
@@ -937,7 +963,11 @@
   function relTime(ts){ const d = Math.max(0, ts - Date.now()); const m = Math.round(d/60000); if(m<60) return m+'m'; const h=Math.round(m/60); if(h<24) return h+'h'; return Math.round(h/24)+'d'; }
 
   async function api(path, opts){
-    const res = await fetch(path, opts);
+    let res;
+    try{ res = await fetch(path, opts); }
+    catch(e){
+      throw new Error('Cannot reach the local bot server. Start it with start-dashboard.cmd (or npm start), leave that window open, then reload this page.');
+    }
     const data = await res.json().catch(()=>({}));
     if(!res.ok){
       if(data && data.needsAdmin) showAdminBanner(data);
@@ -1037,8 +1067,15 @@
     const el = $('#adminBanner'); if(!el) return;
     el.hidden = false;
     if(info && info.inviteUrl) $('#adminInviteBtn').href = info.inviteUrl;
+    const botName = (info && info.bot && info.bot.username) || 'Kyro Staff';
+    if(info && info.inGuild === false){
+      $('#adminBannerText').innerHTML = '<b>'+esc(botName)+' is not in this server.</b> The dashboard cannot read this server until that bot is added — use the invite button (it now targets '+esc(botName)+'), then press Re-check permissions.';
+      $('#adminInviteBtn').textContent = 'Add '+botName+' to this server';
+      return;
+    }
     const missing = info && Array.isArray(info.missing) ? info.missing : [];
-    if(missing.length) $('#adminBannerText').innerHTML = '<b>Kyro Bot needs Administrator in this server.</b> Missing: '+esc(missing.join(', '))+'. Moderation, role and setup actions will fail until it is granted.';
+    $('#adminBannerText').innerHTML = '<b>'+esc(botName)+' does not have Administrator in this server.</b>'+(missing.length?(' Missing: '+esc(missing.join(', '))+'.'):'')+' Setup, role and logging actions run with the permissions it already has — only actions that need a missing permission will be refused, and they name it.';
+    $('#adminInviteBtn').textContent = 'Grant Administrator';
   }
   function hideAdminBanner(){ const el = $('#adminBanner'); if(el) el.hidden = true; }
   async function loadBotAccess(){
@@ -1054,19 +1091,23 @@
   function renderBotAccessCard(){
     if(!$('#botAccessCard')) return;
     const a = state.access || {};
-    const ok = Boolean(a.isAdmin);
+    const botName = (a.bot && a.bot.username) || 'Kyro Staff';
+    const inGuild = a.inGuild !== false;
+    const ok = Boolean(a.isAdmin) && inGuild;
     $('#botAccessCard').style.borderLeftColor = ok ? 'var(--green)' : 'var(--amber)';
-    $('#botAccessDesc').innerHTML = ok
-      ? 'Kyro Bot has <b>Administrator</b> in this server, so every moderation, role and setup action works. New servers are always invited with Administrator.'
-      : 'Kyro Bot is missing Administrator here'+(a.missing&&a.missing.length?(' — missing <b>'+esc(a.missing.join(', '))+'</b>'):'')+'. Grant it once and every feature works immediately.';
+    $('#botAccessDesc').innerHTML = !inGuild
+      ? '<b>'+esc(botName)+' is not in this server.</b> Invite it with the button below, then press Re-check permissions. The invite targets '+esc(botName)+', the same bot this dashboard runs on.'
+      : ok
+        ? esc(botName)+' has <b>Administrator</b> in this server, so every moderation, role and setup action works. New servers are always invited with Administrator.'
+        : esc(botName)+' does not have <b>Administrator</b> here'+(a.missing&&a.missing.length?(' — missing <b>'+esc(a.missing.join(', '))+'</b>'):'')+'. Setup, role and logging actions still work with the permissions it has; grant Administrator to cover everything at once.';
     $('#botAccessBody').innerHTML = ok
       ? '<span class="tag green">Administrator granted</span>'
-      : '<a class="btn sm" data-install-link target="_blank" rel="noopener noreferrer" href="'+(a.inviteUrl||'#')+'">Re-invite with Administrator →</a>';
+      : '<a class="btn sm" data-install-link target="_blank" rel="noopener noreferrer" href="'+(a.inviteUrl||'#')+'">'+(inGuild?'Grant Administrator →':'Add '+esc(botName)+' to this server →')+'</a>';
   }
   $('#adminRecheck').addEventListener('click', async ()=>{
     try{
       const r = await post('/api/bot/grant',{ guild: state.guild ? state.guild.id : '' });
-      toast(r.isAdmin ? 'Administrator confirmed' : 'Still missing Administrator', r.isAdmin?'success':'error');
+      toast(r.isAdmin ? 'Administrator confirmed' : (r.inGuild === false ? (r.bot && r.bot.username ? r.bot.username : 'The bot')+' is not in this server yet' : 'Still missing Administrator'), r.isAdmin?'success':'error');
       await loadBotAccess();
     }catch(err){ toast(err.message,'error'); }
   });
@@ -1092,7 +1133,7 @@
   }
   function populateSelectors(){
     const cfg = state.config || {};
-    ['#chanSelect','#gvChannel','#rrChannel','#wChannel','#logChannel','#emChannel','#vfChannel','#tkChannel','#crChannel','#egSbChannel','#egBpChannel','#egStChannel','#lvChannel','#bdChannel','#sgChannel','#scChannel','#plChannel'].forEach(sel=>{
+    ['#chanSelect','#gvChannel','#rrChannel','#wChannel','#logChannel','#emChannel','#vfChannel','#tkChannel','#hpChannel','#crChannel','#egSbChannel','#egBpChannel','#egStChannel','#lvChannel','#bdChannel','#sgChannel','#scChannel','#plChannel'].forEach(sel=>{
       const el = $(sel); if(!el) return;
       const cur = el.value;
       el.innerHTML = '<option value="">Select channel…</option>' + chanOptions(cur);
@@ -1333,13 +1374,18 @@
     clearStatus($('#logStatus'));
     const events={}; $$('#logEvents [data-ev]').forEach(c=>events[c.dataset.ev]=c.checked);
     const body={ guild:state.guild.id, enabled:$('#logEnabled').checked, channelId:$('#logChannel').value, events };
-    try{ await post('/api/logging', body); setStatus($('#logStatus'),'Logging saved.','success'); toast('Logging saved','success'); refreshConfigOnly(); }
+    try{ const r=await post('/api/logging', body); setStatus($('#logStatus'),'Logging saved.'+(r.note?' '+r.note+'.':''),'success'); toast('Logging saved','success'); refreshConfigOnly(); }
     catch(err){ setStatus($('#logStatus'), err.message,'error'); }
   });
 
   // ---- Server Setup ----
   function renderSetup(){
     if($('#vfChannel') && $('#vfChannel').options[0]) $('#vfChannel').options[0].textContent = 'Find or create ✅┃verify';
+    // The pickers are filled from the guild snapshot; re-fill them here so an
+    // empty select never blocks the tab when the first load was still running.
+    if($('#psRole') && $('#psRole').options.length <= 1 && state.data){
+      $('#psRole').innerHTML = '<option value="">Select role…</option>' + roleOptions($('#psRole').value);
+    }
     loadPresetOptions();
     updatePackDesc();
   }
@@ -1354,6 +1400,7 @@
     $('#weEnabled').checked=we.enabled!==false; $('#weTimeoutAt').value=we.timeoutAt||3; $('#weKickAt').value=we.kickAt||5; $('#weBanAt').value=we.banAt||7; $('#weTimeoutMinutes').value=we.timeoutMinutes||120;
     if(s.raidMode) setStatus($('#rmStatus'),'⚠️ RAID MODE ACTIVE — all channels locked.','error'); else clearStatus($('#rmStatus'));
     loadModStats();
+    renderHoneypot();
   }
 
   // ---- Utility ----
@@ -1440,8 +1487,10 @@
     $('#asRun').disabled=true;
     try{
       const r=await post('/api/autosetup',{ guild:state.guild.id, gate:$('#asGate').checked, permissions:$('#asPerms').checked });
-      $('#asSteps').innerHTML=(r.steps||[]).map(s=>`<div class="list-item"><div class="li-main"><div class="li-title">${esc(s)}</div></div><span class="tag green">done</span></div>`).join('');
-      setStatus($('#asStatus'),'Full setup complete.','success'); toast('One-click setup complete','success'); refreshGuild();
+      const failed=Array.isArray(r.warnings)?r.warnings.length:0;
+      $('#asSteps').innerHTML=(r.steps||[]).map(s=>`<div class="list-item"><div class="li-main"><div class="li-title">${esc(s)}</div></div><span class="tag ${s.startsWith('⚠️')?'amber':'green'}">${s.startsWith('⚠️')?'needs attention':'done'}</span></div>`).join('');
+      setStatus($('#asStatus'), failed ? `Setup finished with ${failed} step${failed===1?'':'s'} needing attention.` : 'Full setup complete.', failed?'':'success');
+      toast(failed?'Setup finished with warnings':'One-click setup complete', failed?'':'success'); refreshGuild();
     }catch(err){ $('#asSteps').innerHTML=''; setStatus($('#asStatus'), err.message,'error'); }
     finally{ $('#asRun').disabled=false; }
   });
@@ -1500,6 +1549,67 @@
   $('#glOn').addEventListener('click', async ()=>{ clearStatus($('#glStatus')); try{ const r=await post('/api/lockdown',{ guild:state.guild.id, on:true }); setStatus($('#glStatus'),`Locked ${r.touched} channels.`,'error'); toast('Global lockdown ON','success'); }catch(err){ setStatus($('#glStatus'), err.message,'error'); } });
   $('#glOff').addEventListener('click', async ()=>{ clearStatus($('#glStatus')); try{ const r=await post('/api/lockdown',{ guild:state.guild.id, on:false }); setStatus($('#glStatus'),`Unlocked ${r.touched} channels.`,'success'); toast('Global lockdown OFF','success'); }catch(err){ setStatus($('#glStatus'), err.message,'error'); } });
 
+  // ---- Honeypot ----
+  function renderHoneypot(){
+    const h=(state.config&&state.config.honeypot)||{};
+    if($('#hpEnabled')) $('#hpEnabled').checked=!!h.enabled;
+    if($('#hpChannel')) $('#hpChannel').value=h.channelId||'';
+    if($('#hpAction')) $('#hpAction').value=h.action||'kick';
+    if($('#hpTimeout')) $('#hpTimeout').value=Math.max(1,Math.round((Number(h.timeoutSeconds)||600)/60));
+    if($('#hpReason')) $('#hpReason').value=h.reason||'Honeypot trap triggered';
+    if($('#hpStats')) $('#hpStats').textContent = Number(h.total)>0
+      ? `Caught ${h.total} ${h.total===1?'member':'members'} · last: ${h.last_user||'unknown'} · ${h.last_at?fmtDate(new Date(h.last_at).toISOString()):'—'}`
+      : 'No triggers yet.';
+  }
+  function hpPayload(extra){
+    return Object.assign({
+      guild: state.guild.id,
+      enabled: $('#hpEnabled').checked,
+      channelId: $('#hpChannel').value,
+      action: $('#hpAction').value,
+      timeoutSeconds: Math.max(1,Number($('#hpTimeout').value)||10)*60,
+      reason: $('#hpReason').value.trim()
+    }, extra||{});
+  }
+  $('#hpSave').addEventListener('click', async ()=>{
+    clearStatus($('#hpStatus'));
+    try{
+      const r = await post('/api/honeypot', hpPayload());
+      setStatus($('#hpStatus'),(r.notes||[]).concat('Honeypot saved.').join(' · '),'success');
+      toast('Honeypot saved','success'); refreshConfigOnly();
+    }catch(err){ setStatus($('#hpStatus'), err.message,'error'); }
+  });
+  $('#hpCreate').addEventListener('click', async ()=>{
+    clearStatus($('#hpStatus'));
+    $('#hpCreate').disabled = true;
+    try{
+      const r = await post('/api/honeypot', hpPayload({ createChannel:true }));
+      setStatus($('#hpStatus'),(r.notes||[]).join(' · ')||'#honeypot ready.','success');
+      toast('#honeypot ready','success'); refreshGuild();
+    }catch(err){ setStatus($('#hpStatus'), err.message,'error'); }
+    finally{ $('#hpCreate').disabled = false; }
+  });
+  $('#hpCheck').addEventListener('click', async ()=>{
+    clearStatus($('#hpStatus'));
+    if(!$('#hpEnabled').checked){ setStatus($('#hpStatus'),'Enable the honeypot first, then check again.','error'); return; }
+    try{
+      const r = await post('/api/honeypot', hpPayload({ runNow:true }));
+      setStatus($('#hpStatus'), r.run && r.run.total ? `Checked — ${r.run.total} caught so far.` : 'Checked — nothing new in the trap.','success');
+      refreshConfigOnly();
+    }catch(err){ setStatus($('#hpStatus'), err.message,'error'); }
+  });
+  $('#hpPanel').addEventListener('click', async ()=>{
+    clearStatus($('#hpStatus'));
+    if(!$('#hpChannel').value){ setStatus($('#hpStatus'),'Pick the honeypot channel first.','error'); return; }
+    $('#hpPanel').disabled = true;
+    try{
+      const r = await post('/api/honeypot', hpPayload({ panel:true }));
+      setStatus($('#hpStatus'),(r.notes||[]).join(' · ')||'Honeypot panel posted.','success');
+      toast('Honeypot panel posted','success');
+    }catch(err){ setStatus($('#hpStatus'), err.message,'error'); }
+    finally{ $('#hpPanel').disabled = false; }
+  });
+
   $('#kaSave').addEventListener('click', async ()=>{ clearStatus($('#kaStatus')); try{ await post('/api/security',{ guild:state.guild.id, keywordAlerts:$('#kaEnabled').checked, keywords:$('#kaKeywords').value.split(',').map(s=>s.trim()).filter(Boolean) }); setStatus($('#kaStatus'),'Keyword alerts saved.','success'); }catch(err){ setStatus($('#kaStatus'), err.message,'error'); } });
 
   $('#weSave').addEventListener('click', async ()=>{ clearStatus($('#weStatus')); try{ await post('/api/security',{ guild:state.guild.id, warnEscalation:{ enabled:$('#weEnabled').checked, timeoutAt:Number($('#weTimeoutAt').value)||3, timeoutMinutes:Number($('#weTimeoutMinutes').value)||120, kickAt:Number($('#weKickAt').value)||5, banAt:Number($('#weBanAt').value)||7 } }); setStatus($('#weStatus'),'Warning escalation saved.','success'); }catch(err){ setStatus($('#weStatus'), err.message,'error'); } });
@@ -1530,7 +1640,7 @@
   // ---- Role packs & presets ----
   async function loadPresetOptions(){
     try{
-      if(!state.presets){
+      if(!state.presets || !state.presets.length){
         const r = await api('/api/roles/presets'+gquery());
         state.presets = r.presets || [];
         state.packs = r.packs || [];
@@ -1540,14 +1650,18 @@
         const groups = {};
         state.presets.forEach(p=>{ (groups[p.group] = groups[p.group]||[]).push(p); });
         sel.innerHTML = Object.keys(groups).map(g=>'<optgroup label="'+esc(g)+'">'+groups[g].map(p=>'<option value="'+p.id+'">'+esc(p.label)+'</option>').join('')+'</optgroup>').join('');
+        if(!state.presets.length) setStatus($('#psStatus'),'Presets did not load. Restart the dashboard (start-dashboard.cmd) so the server matches this page, then reload.','error');
       }
       const packSel = $('#rpPack');
       if(packSel && !packSel.options.length){
         const packs = (state.packs && state.packs.length) ? state.packs : ((state.config&&state.config.rolePacks)||[]);
         packSel.innerHTML = packs.map(p=>'<option value="'+p.id+'">'+esc(p.label)+'</option>').join('');
+        if(!packs.length) $('#rpPackDesc').textContent = 'Role packs did not load. Restart the dashboard (start-dashboard.cmd) so the server matches this page, then reload.';
         updatePackDesc();
       }
-    }catch(e){}
+    }catch(e){
+      if($('#psStatus') && !$('#psStatus').textContent) setStatus($('#psStatus'),'Could not load the role presets: '+(e.message||'dashboard API unreachable')+'. Reload the page — if it persists, restart start-dashboard.cmd so it matches this page.','error');
+    }
   }
   function updatePackDesc(){
     const sel = $('#rpPack'); if(!sel) return;
@@ -1824,7 +1938,7 @@
     try{
       const s=await api('/api/status');
       $('#tokenDot').className='dot'+(s.tokenLoaded?'':' off');
-      $('#tokenState').textContent=s.tokenLoaded?'Bot token loaded':'Bot token missing';
+      $('#tokenState').textContent=s.tokenLoaded?((s.botName||'Bot')+' connected'):'Bot token missing';
       setInstallLinks(s.installUrl);
     }catch(e){ $('#tokenDot').className='dot off'; $('#tokenState').textContent='offline'; }
     addMappingRow('','');

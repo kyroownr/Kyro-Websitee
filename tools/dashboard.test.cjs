@@ -27,6 +27,9 @@ let failRoleCreation = false;
 // Flipped to '0' to simulate a server where the bot was invited without
 // Administrator; the dashboard must then ask for admin instead of failing.
 let adminPermissions = '8';
+// Simulates Discord's guild list still reporting 0 permissions right after
+// Administrator was granted: the bot's member roles are the source of truth.
+let staleGuildListAdmin = false;
 
 function jsonRes(obj, status) {
   const s = status || 200;
@@ -36,6 +39,11 @@ function jsonRes(obj, status) {
 
 // Discord REST mock router.
 const mockOverwrites = { chan1: [], chan2: [] };
+// Mutable so the honeypot test can add a staff member and a bot message to the
+// same channel without disturbing the earlier automod assertions.
+let chan1Messages = [
+  { id: 'm1', content: 'hello world', author: { id: '200000000000000003', bot: false }, mentions: [], member: { roles: [] } }
+];
 // Mutable so the role-cleanup test can add unused/staff roles after the earlier
 // assertions have already expected the original five-role fixture.
 let guild1Roles = [
@@ -58,6 +66,9 @@ global.fetch = async (url, opts) => {
   calls.push({ method, path: p, body });
 
   if (p === '/users/@me') return jsonRes({ id: BOT_ID, username: 'UtilityBot' });
+  // The invite must target the app this token belongs to, even though the
+  // dashboard used to hardcode a different client id.
+  if (p === '/oauth2/applications/@me') return jsonRes({ id: '1571036271839682601', name: 'Kyro Bot' });
   if (p === '/users/@me/guilds') return jsonRes([
     { id: 'guild1', name: 'Test Server', icon: null, owner: true, approximate_member_count: 100, permissions: adminPermissions },
     { id: 'guild2', name: 'Second Server', icon: null, owner: false, approximate_member_count: 42, permissions: adminPermissions }
@@ -84,6 +95,12 @@ global.fetch = async (url, opts) => {
   }
   if (/^\/guilds\/guild1\/roles\/[^/]+$/.test(p) && method === 'DELETE') return jsonRes({}, 204);
   if (p === '/guilds/guild1/members/bot0000000000000001') return jsonRes({ user: { id: BOT_ID, username: 'UtilityBot' }, roles: ['role_bot'] });
+  if (p === '/guilds/guild2/members/bot0000000000000001') return jsonRes({ user: { id: BOT_ID, username: 'UtilityBot' }, roles: staleGuildListAdmin ? ['role_stale_admin'] : ['role_stale_member'] });
+  if (p === '/guilds/guild2/roles') return jsonRes([
+    { id: 'guild2', name: '@everyone', managed: false, permissions: '0' },
+    { id: 'role_stale_admin', name: 'Kyro Bot', managed: false, permissions: '8' },
+    { id: 'role_stale_member', name: 'Member', managed: false, permissions: '0' }
+  ]);
   if (/^\/guilds\/guild1\/roles\/[^/]+$/.test(p) && method === 'PATCH') return jsonRes({ id: p.split('/').pop(), permissions: body && body.permissions });
   if (p === '/guilds/guild1/members') return jsonRes(guild1Members);
   if (p === '/guilds/guild1/members/search') return jsonRes([
@@ -96,9 +113,7 @@ global.fetch = async (url, opts) => {
   if (p === '/users/200000000000000003') return jsonRes({ id: '200000000000000003', username: 'alice', global_name: 'Alice', avatar: null, discriminator: '0', bot: false });
   if (p === '/users/200000000000000003/channels') return jsonRes({ id: 'dm1' });
   if (p === '/channels/chan1' && method === 'GET') return jsonRes({ id: 'chan1', name: 'general', permission_overwrites: mockOverwrites.chan1 });
-  if (p === '/channels/chan1/messages' && method === 'GET') return jsonRes([
-    { id: 'm1', content: 'hello world', author: { id: '200000000000000003', bot: false }, mentions: [], member: { roles: [] } }
-  ]);
+  if (p === '/channels/chan1/messages' && method === 'GET') return jsonRes(chan1Messages);
   if (p === '/channels/chan1/messages' && method === 'POST') return jsonRes({ id: 'msg1' });
   if (p === '/channels/chan1/messages/bulk-delete') return jsonRes({}, 204);
   if (/^\/channels\/chan1\/messages\/msg1$/.test(p)) return jsonRes({ id: 'msg1' }); // PATCH edit / DELETE
@@ -120,6 +135,8 @@ function ok(cond, label) {
 }
 function shutdown(code) {
   try { if (serverHandle) { serverHandle.closeAllConnections(); serverHandle.close(); } } catch (e) {}
+  try { if (serverHandle && serverHandle.ipv6) { serverHandle.ipv6.closeAllConnections(); serverHandle.ipv6.close(); } } catch (e) {}
+  try { if (serverHandle && serverHandle.servers) serverHandle.servers.forEach((s) => { try { s.close(); } catch (e) {} }); } catch (e) {}
   try { fs.unlinkSync(TMP_DATA); } catch (e) {}
   setTimeout(() => process.exit(code), 50);
 }
@@ -151,11 +168,17 @@ async function waitForServer() {
 (async () => {
   const mod = await import(pathToFileURL(path.join(__dirname, '..', 'bot_dashboard.js')).href);
   serverHandle = mod.server;
+  // Keep the IPv6 loopback twin reachable for shutdown.
+  serverHandle.servers = [mod.server, mod.server6].filter(Boolean);
+  serverHandle.ipv6 = mod.server6;
   await waitForServer();
 
   // Status + HTML
   const status = await req('GET', '/api/status');
   ok(status.status === 200 && status.data.tokenLoaded === true, 'status reports token loaded');
+  ok(status.data.clientId === '1571036271839682601', 'invite client id is taken from the bot token');
+  ok(String(status.data.installUrl || '').includes('client_id=1571036271839682601'), 'install URL targets the running bot, not a hardcoded app');
+  ok(status.data.botName === 'UtilityBot', 'status reports the bot identity');
   const html = await realFetch(BASE + '/');
   const htmlText = await html.text();
   ok(html.status === 200 && /Kyro Staff Bot/.test(htmlText) && /Giveaways/.test(htmlText), 'serves dashboard HTML');
@@ -248,6 +271,10 @@ async function waitForServer() {
   // Logging config
   const lg = await req('POST', '/api/logging', { guild: 'guild1', enabled: true, channelId: 'chan1', events: { moderation: true, giveaways: true, reactionRoles: false, automod: true, welcome: true, joins: true } });
   ok(lg.status === 200 && lg.data.logging.events.reactionRoles === false, 'logging config saved');
+  ok(/staff-only/.test(lg.data.note), 'logging save reports the channel is staff-only');
+  const logLock = lastCall((c) => c.method === 'PATCH' && c.path === '/channels/chan1' && c.body.permission_overwrites);
+  ok(logLock && logLock.body.permission_overwrites.some((o) => o.id === 'guild1' && o.type === 0 && (BigInt(o.deny) & 1024n) !== 0n), 'a public log channel is locked down on save');
+  ok(!logLock.body.permission_overwrites.some((o) => o.id === 'guild1' && o.type === 0 && (BigInt(o.allow || '0') & 1024n) !== 0n), '@everyone loses view on the log channel');
 
   // Utility userinfo
   const ui = await req('GET', '/api/userinfo?guild=guild1&user=200000000000000003');
@@ -311,6 +338,8 @@ async function waitForServer() {
   // One-click auto setup
   const asr = await req('POST', '/api/autosetup', { guild: 'guild1', gate: false, permissions: true });
   ok(asr.status === 200 && asr.data.steps.some((s) => /#welcome/.test(s)) && asr.data.steps.some((s) => /AutoMod/.test(s)), 'one-click setup steps');
+  ok(asr.data.steps.some((s) => /staff-only/.test(s)), 'one-click setup reports the private #mod-log');
+  ok(Array.isArray(asr.data.warnings) && asr.data.warnings.length === 0, 'clean one-click setup has no warnings');
   const ascfg = await req('GET', '/api/config?guild=guild1');
   ok(ascfg.data.welcome.enabled && ascfg.data.logging.enabled && ascfg.data.automod.enabled, 'auto setup enabled welcome/logging/automod');
   ok(ascfg.data.security.antiNuke === true, 'auto setup enabled anti-nuke');
@@ -379,6 +408,9 @@ async function waitForServer() {
   // ---- Admin access gate ----
   const access = await req('GET', '/api/bot/access?guild=guild1');
   ok(access.status === 200 && access.data.isAdmin === true, 'admin access reported for an admin bot');
+  ok(access.data.bot && access.data.bot.id === BOT_ID, 'access reports which bot the dashboard is running');
+  const absent = await req('GET', '/api/bot/access?guild=guild3');
+  ok(absent.status === 200 && absent.data.inGuild === false && /not in this server/.test(absent.data.reason || ''), 'a server the bot is not in is reported clearly');
 
   adminPermissions = '0';
   const accessDenied = await req('GET', '/api/bot/access?guild=guild2');
@@ -392,6 +424,18 @@ async function waitForServer() {
   adminPermissions = '8';
   const grantOk = await req('POST', '/api/bot/grant', { guild: 'guild2' });
   ok(grantOk.status === 200 && grantOk.data.isAdmin === true, 'grant re-check reports admin after the invite');
+
+  // Discord caches the guild list, so a freshly granted Administrator can still
+  // read as 0 there. The bot's own member roles must win, or setup keeps saying
+  // the bot is missing permissions it actually has.
+  adminPermissions = '0';
+  staleGuildListAdmin = true;
+  await req('POST', '/api/bot/grant', { guild: 'guild2' }); // bust the access cache
+  const stale = await req('GET', '/api/bot/access?guild=guild2');
+  ok(stale.status === 200 && stale.data.isAdmin === true, 'freshly granted Administrator is detected even when the guild list is stale');
+  staleGuildListAdmin = false;
+  adminPermissions = '8';
+  await req('POST', '/api/bot/grant', { guild: 'guild1' }); // restore the admin cache
 
   // ---- Role packs & presets ----
   const packs = await req('GET', '/api/roles/packs');
@@ -515,6 +559,59 @@ async function waitForServer() {
   const repBad = await req('POST', '/api/channels/repair', { guild: 'guild1', channelId: '../etc' });
   ok(repBad.status === 400, 'invalid channel id rejected');
 
-  console.log(JSON.stringify({ checks: passed, multiServer: 'guild selector + per-guild isolation', features: 'moderation, giveaways, reaction roles, automod, welcome, logging, setup, security, utility, embed, engagement, levels, birthdays, suggestions, polls, scheduler, stat channels, role packs, admin gate', discord: 'mocked REST', result: 'passed' }));
+  // ---- Honeypot trap ----
+  const hpNoChannel = await req('POST', '/api/honeypot', { guild: 'guild1', enabled: true });
+  ok(hpNoChannel.status === 400 && /channel/i.test(hpNoChannel.data.error), 'honeypot refuses to enable without a channel');
+  adminPermissions = '0';
+  await req('POST', '/api/bot/grant', { guild: 'guild2' }); // bust the 20s access cache
+  const hpNoPerm = await req('POST', '/api/honeypot', { guild: 'guild2', enabled: true, channelId: 'chan1', action: 'ban' });
+  ok(hpNoPerm.status === 403 && /Ban Members/.test(hpNoPerm.data.error), 'honeypot names the ban permission it is missing');
+  adminPermissions = '8';
+  const hpSaved = await req('POST', '/api/honeypot', { guild: 'guild1', enabled: true, channelId: 'chan1', action: 'kick', timeoutSeconds: 900, reason: 'trap' });
+  ok(hpSaved.status === 200 && hpSaved.data.honeypot.enabled === true && hpSaved.data.honeypot.timeoutSeconds === 900, 'honeypot settings saved');
+
+  // Staff and bot posts inside the trap must never be punished.
+  chan1Messages = [
+    { id: 'm1', content: 'hello world', author: { id: '200000000000000003', bot: false }, mentions: [], member: { roles: [] } },
+    { id: 'hp_staff', content: 'testing the trap', author: { id: '200000000000000009', bot: false }, mentions: [], member: { roles: ['role_admin2'] } },
+    { id: 'hp_bot', content: 'beep', author: { id: BOT_ID, bot: true }, mentions: [], member: { roles: [] } }
+  ];
+  const hpRun = await req('POST', '/api/honeypot', { guild: 'guild1', enabled: true, channelId: 'chan1', action: 'kick', runNow: true });
+  ok(hpRun.status === 200 && hpRun.data.run && hpRun.data.run.total === 1, 'honeypot run catches the intruder exactly once');
+  ok(lastCall((c) => c.method === 'DELETE' && c.path === '/channels/chan1/messages/m1'), 'honeypot deletes the trap message');
+  ok(lastCall((c) => c.method === 'DELETE' && c.path === '/guilds/guild1/members/200000000000000003'), 'honeypot kicks the intruder');
+  ok(!calls.some((c) => c.method === 'DELETE' && (c.path === '/guilds/guild1/members/200000000000000009' || c.path === '/guilds/guild1/members/' + BOT_ID)), 'staff and bots are never punished');
+  ok(!calls.some((c) => c.method === 'DELETE' && c.path === '/channels/chan1/messages/hp_staff'), 'staff messages are left in place');
+  const hpAgain = await req('POST', '/api/honeypot', { guild: 'guild1', enabled: true, channelId: 'chan1', action: 'kick', runNow: true });
+  ok(hpAgain.data.run.total === 1, 'the same message is never punished twice');
+  const hpCfg = await req('GET', '/api/config?guild=guild1');
+  ok(hpCfg.data.honeypot.total === 1 && hpCfg.data.honeypot.last_user === '200000000000000003', 'honeypot stats persisted in the config');
+  const hpCreate = await req('POST', '/api/honeypot', { guild: 'guild1', createChannel: true, enabled: false });
+  ok(hpCreate.status === 200 && /honeypot/.test(hpCreate.data.honeypot.channelId), 'honeypot channel created when missing');
+
+  // The Discord panel explains the trap and carries live statistics.
+  const hpPanel = await req('POST', '/api/honeypot', { guild: 'guild1', panel: true });
+  ok(hpPanel.status === 200 && hpPanel.data.panelMessageId === 'msg1', 'honeypot panel posted');
+  const panelCall = lastCall((c) => c.method === 'POST' && /\/messages$/.test(c.path) && c.body.embeds && c.body.embeds[0].title === '🍯 What is a Honeypot?');
+  ok(panelCall, 'panel carries the "What is a Honeypot?" explainer');
+  ok(panelCall.body.embeds[1].title === '🍯 Honeypot Statistics' && panelCall.body.embeds[1].fields.some((f) => /Total moderated in this server/.test(f.value)), 'panel carries server statistics');
+  ok(panelCall.body.allowed_mentions.parse.length === 0, 'panel never pings anyone');
+  const panelRefresh = await req('POST', '/api/honeypot', { guild: 'guild1', enabled: true, action: 'kick', runNow: true });
+  ok(panelRefresh.status === 200 && /up to date/.test(panelRefresh.data.notes.join(' ')), 'panel is refreshed after a scan');
+
+  // A bot with Manage Roles + Manage Channels (no Administrator) must still be
+  // able to run setup — the old code claimed both were missing.
+  adminPermissions = String((1n << 28n) | (1n << 4n) | (1n << 11n) | (1n << 10n));
+  await req('POST', '/api/bot/grant', { guild: 'guild1' });
+  const accessNoAdmin = await req('GET', '/api/bot/access?guild=guild1');
+  ok(accessNoAdmin.status === 200 && accessNoAdmin.data.isAdmin === false, 'access reports no Administrator honestly');
+  ok(!accessNoAdmin.data.missing.includes('Manage Roles') && !accessNoAdmin.data.missing.includes('Manage Channels'), 'access does not claim Manage Roles/Channels are missing when they are granted');
+  const asNoAdmin = await req('POST', '/api/autosetup', { guild: 'guild1', gate: false, permissions: false });
+  ok(asNoAdmin.status === 200, 'one-click setup runs without Administrator when the needed bits are present');
+  ok(Array.isArray(asNoAdmin.data.warnings), 'one-click setup reports per-step warnings');
+  adminPermissions = '8';
+  await req('POST', '/api/bot/grant', { guild: 'guild1' });
+
+  console.log(JSON.stringify({ checks: passed, multiServer: 'guild selector + per-guild isolation', features: 'moderation, giveaways, reaction roles, automod, welcome, logging, setup, security, honeypot, utility, embed, engagement, levels, birthdays, suggestions, polls, scheduler, stat channels, role packs, admin gate', discord: 'mocked REST', result: 'passed' }));
   shutdown(0);
 })().catch((err) => { console.error('TEST ERROR:', err.message || err); shutdown(1); });

@@ -875,12 +875,14 @@
         const isReleased = Boolean(item.released || votes >= limit);
         const userVote = Number(item.userVote || 0);
         const earlyAccess = Boolean(item.early_access) && !isReleased;
+        const earlyLocked = Boolean(item.early_locked) && !isReleased;
 
         const statusBadge = isReleased
           ? '<span class="badge badge-free mono" style="font-size:0.75rem;padding:2px 8px;">Just Dropped</span>'
           : earlyAccess
             ? '<span class="badge mono" style="font-size:0.75rem;padding:2px 8px;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.4);">Early Access</span>'
-            : '<span class="badge badge-pro mono" style="font-size:0.75rem;padding:2px 8px;">Voting In Progress</span>';
+            : '<span class="badge badge-pro mono" style="font-size:0.75rem;padding:2px 8px;">Voting In Progress</span>' +
+              (isOwner && earlyLocked ? ' <span class="badge mono" title="Early-access passes do not unlock this build" style="font-size:0.72rem;padding:2px 8px;background:rgba(239,68,68,0.12);color:#fca5a5;border:1px solid rgba(239,68,68,0.35);">EA held back</span>' : '');
 
         const thumb = item.image_url
           ? `<img src="${esc(item.image_url)}" alt="${esc(item.title)}" loading="lazy" decoding="async" style="width:100%;height:140px;object-fit:cover;border-radius:8px 8px 0 0;" />`
@@ -1130,6 +1132,13 @@
             <span class="field-label">Preview image URL</span>
             <input class="field-input" id="incEditImage" placeholder="https://…" value="${esc(item.image_url || '')}" />
           </label>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:-8px;flex-wrap:wrap;">
+            <label class="btn btn-ghost btn-sm" style="cursor:pointer;display:inline-flex;">
+              Upload a picture instead
+              <input type="file" id="incEditImageFile" accept="image/*" style="display:none;" />
+            </label>
+            <span style="color:var(--dim);font-size:0.78rem;" id="incEditImageStatus">The uploaded picture replaces the Kyro banner on the card.</span>
+          </div>
           <label class="field">
             <span class="field-label">Download URL</span>
             <input class="field-input" id="incEditDownload" placeholder="https://…" value="${esc(item.download_url || '')}" />
@@ -1155,6 +1164,51 @@
     overlay.querySelectorAll('[data-inc-close]').forEach(button => button.addEventListener('click', close));
     const onKey = event => { if (event.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } };
     document.addEventListener('keydown', onKey);
+
+    // Owners can drop the real screenshot straight into an existing card — no
+    // CDN URL hunting, and no chance of saving a card that still shows the banner.
+    const imageFile = overlay.querySelector('#incEditImageFile');
+    const imageField = overlay.querySelector('#incEditImage');
+    const imageStatus = overlay.querySelector('#incEditImageStatus');
+    if (imageFile) imageFile.addEventListener('change', async () => {
+      const file = imageFile.files && imageFile.files[0];
+      if (!file) return;
+      if (!file.type.startsWith('image/')) {
+        toast({ title: 'Not an image', sub: 'Pick a PNG, JPG, GIF or WebP picture.', icon: ICON.x });
+        return;
+      }
+      if (file.size > 8 * 1024 * 1024) {
+        toast({ title: 'Image too large', sub: 'Pictures must be under 8 MB.', icon: ICON.x });
+        return;
+      }
+      if (imageStatus) imageStatus.textContent = 'Uploading…';
+      try {
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error('Could not read that file.'));
+          reader.readAsDataURL(file);
+        });
+        const res = await fetch(AUTH_WORKER_URL + '/vault/upload-image', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+          body: JSON.stringify({ image: dataUrl, filename: file.name || 'screenshot.png' }),
+          credentials: 'omit'
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.url) {
+          if (imageStatus) imageStatus.textContent = 'Upload failed — try a smaller picture or paste a direct image URL.';
+          toast({ title: 'Image upload failed', sub: data.error || 'The image could not be stored.', icon: ICON.x });
+          return;
+        }
+        imageField.value = data.url;
+        if (imageStatus) imageStatus.textContent = 'Uploaded ✓ — press Save changes to put it on the card.';
+        toast({ title: 'Image uploaded', sub: 'Save changes to replace the Kyro banner.', icon: ICON.check });
+      } catch (err) {
+        if (imageStatus) imageStatus.textContent = 'Upload failed — try again.';
+        toast({ title: 'Image upload failed', sub: err.message || 'Network error while storing the image.', icon: ICON.x });
+      }
+    });
 
     const save = overlay.querySelector('#incEditSave');
     save.addEventListener('click', async () => {
@@ -1218,6 +1272,16 @@
 
     if (data.is_owner) {
       const users = Array.isArray(data.users) ? data.users : [];
+      const releases = Array.isArray(data.releases) ? data.releases : [];
+      const excluded = new Set((Array.isArray(data.excluded) ? data.excluded : []).map(value => String(value).toLowerCase()));
+      const isBlocked = release => excluded.has(String(release.id || '').toLowerCase()) || excluded.has(String(release.slug || '').toLowerCase());
+      const excludeRows = releases.length
+        ? releases.map(r => '<label style="display:flex;align-items:center;gap:9px;padding:7px 10px;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);border-radius:8px;cursor:pointer;font-size:0.82rem;color:#e2e8f0;">' +
+            '<input type="checkbox" data-ea-exclude="' + esc(r.id) + '"' + (isBlocked(r) ? ' checked' : '') + ' style="width:15px;height:15px;cursor:pointer;" />' +
+            '<span style="flex:1;">' + esc(r.title || r.id) +
+              (r.released ? ' <span class="mono" style="color:var(--dim);font-size:0.72rem;">· already live</span>' : '') +
+            '</span></label>').join('')
+        : '<p class="mono" style="color:var(--dim);font-size:0.8rem;margin:4px 0;">No incoming releases yet.</p>';
       const rows = users.length
         ? users.map(u => '<li style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);border-radius:8px;">' +
             '<span class="mono" style="font-size:0.82rem;color:#e2e8f0;">' + esc(u.username || u.id) + ' <span style="color:var(--dim);">· ' + esc(u.id) + '</span></span>' +
@@ -1237,6 +1301,12 @@
             '<button type="submit" class="btn btn-primary btn-sm" id="eaGrantBtn">Grant Access</button>' +
           '</form>' +
           '<ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;">' + rows + '</ul>' +
+          '<div style="margin-top:14px;border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;">' +
+            '<strong style="color:#fff;font-size:0.86rem;display:block;margin-bottom:3px;">Releases early access must not unlock</strong>' +
+            '<p style="color:var(--dim);font-size:0.78rem;margin:0 0 8px;">A pass skips the waitlist for everything except the builds you tick here — those stay behind the community vote goal. Only the Owner can change this.</p>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;max-height:210px;overflow-y:auto;">' + excludeRows + '</div>' +
+            '<div class="mono" id="eaExcludeStatus" style="color:var(--dim);font-size:0.76rem;margin-top:6px;"></div>' +
+          '</div>' +
         '</div>';
       const form = $('#eaGrantForm');
       if (form) form.addEventListener('submit', async (e) => {
@@ -1254,6 +1324,23 @@
         } catch (err) { toast({ title: 'Grant failed', sub: err.message, icon: ICON.x }); }
         finally { if (btn) { btn.disabled = false; btn.textContent = 'Grant Access'; } }
       });
+      section.querySelectorAll('[data-ea-exclude]').forEach(box => box.addEventListener('change', async () => {
+        const ids = [...section.querySelectorAll('[data-ea-exclude]')].filter(input => input.checked).map(input => input.dataset.eaExclude);
+        const status = $('#eaExcludeStatus');
+        if (status) status.textContent = 'Saving…';
+        try {
+          const res = await fetch(AUTH_WORKER_URL + '/early-access', { method: 'PATCH', headers: Object.assign({ 'content-type': 'application/json' }, reqHeaders()), credentials: 'omit', body: JSON.stringify({ excluded: ids }) });
+          const out = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(out.error || 'Server error');
+          if (status) status.textContent = ids.length ? 'Saved — ' + ids.length + ' release' + (ids.length === 1 ? '' : 's') + ' held back from early access.' : 'Saved — early access covers every release again.';
+          toast({ title: ids.length ? 'Early access restricted' : 'Early access restriction cleared', sub: ids.length ? 'Only the releases you left unticked unlock before the vote goal.' : 'Pass holders skip the waitlist again.', icon: ICON.check });
+          loadIncomingReleases();
+        } catch (err) {
+          box.checked = !box.checked;
+          if (status) status.textContent = 'Could not save: ' + err.message;
+          toast({ title: 'Could not save restriction', sub: err.message, icon: ICON.x });
+        }
+      }));
       section.querySelectorAll('[data-ea-revoke]').forEach(btn => btn.addEventListener('click', async () => {
         const id = btn.dataset.eaRevoke;
         btn.disabled = true;
@@ -2621,9 +2708,11 @@
             toast({ title: 'Image uploaded!', sub: 'Saved to Kyro media network.', icon: ICON.check });
           } else {
             console.warn('CDN upload response:', upData);
+            toast({ title: 'Image upload failed', sub: upData.error || 'The image could not be stored. Try again, or paste a direct image URL.', icon: ICON.x });
           }
         } catch (err) {
-          console.warn('Image upload failed, fallback to direct data:', err);
+          console.warn('Image upload failed:', err);
+          toast({ title: 'Image upload failed', sub: err.message || 'Network error while storing the image.', icon: ICON.x });
         }
       };
       reader.readAsDataURL(file);
@@ -2710,17 +2799,20 @@
       });
     }
 
-    // Toggle Incoming options visibility
-    const isIncomingCheck = $('#vUpIsIncoming');
+    // Release mode: publish straight to the Vault, or hold it in Incoming.
+    const modeRadios = $$('input[name="vUpMode"]');
     const incomingOptions = $('#vUpIncomingOptions');
-    if (isIncomingCheck && incomingOptions) {
-      isIncomingCheck.addEventListener('change', () => {
-        incomingOptions.style.display = isIncomingCheck.checked ? 'grid' : 'none';
-        if (btn) {
-          btn.textContent = isIncomingCheck.checked ? 'Submit to Ready to Release (#incomming)' : 'Submit Upload to Vault';
-        }
-      });
-    }
+    const isIncomingChosen = () => {
+      const picked = $('input[name="vUpMode"]:checked');
+      return Boolean(picked && picked.value === 'incoming');
+    };
+    const paintMode = () => {
+      const incoming = isIncomingChosen();
+      if (incomingOptions) incomingOptions.style.display = incoming ? 'grid' : 'none';
+      if (btn) btn.textContent = incoming ? 'Send to Incoming (#incomming)' : 'Release directly to the Vault';
+    };
+    modeRadios.forEach(radio => radio.addEventListener('change', paintMode));
+    paintMode();
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -2745,9 +2837,18 @@
         cleanSlug = $('#vUpTitle').value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
       }
 
-      const isIncoming = Boolean($('#vUpIsIncoming')?.checked);
+      const isIncoming = isIncomingChosen();
       const voteLimit = parseInt($('#vUpVoteLimit')?.value, 10) || 5;
       const releaseAtVal = $('#vUpReleaseAt')?.value ? new Date($('#vUpReleaseAt').value).toISOString() : null;
+
+      // A staged picture that never reached storage would silently publish the
+      // Kyro banner again, so say so instead of submitting without an image.
+      if (stagedImageBase64 && !$('#vUpImageUrl')?.value.trim()) {
+        toast({ title: 'Image is not stored yet', sub: 'Wait for the upload to finish, or retry the picture — otherwise the card shows the Kyro banner.', icon: ICON.x });
+        btn.disabled = false;
+        btn.textContent = isIncoming ? 'Send to Incoming (#incomming)' : 'Release directly to the Vault';
+        return;
+      }
 
       const payload = {
         title: $('#vUpTitle')?.value.trim(),
@@ -2790,7 +2891,8 @@
             });
           }
           form.reset();
-          if (incomingOptions) incomingOptions.style.display = 'none';
+          if (modeRadios[0]) modeRadios[0].checked = true;
+          paintMode();
           if (removeImgBtn) removeImgBtn.click();
           renderAccountUploads();
         } else {
@@ -2800,7 +2902,7 @@
         toast({ title: 'Network error', sub: err.message, icon: ICON.x });
       } finally {
         btn.disabled = false;
-        btn.textContent = isIncomingCheck?.checked ? 'Submit to Ready to Release (#incomming)' : 'Submit Upload to Vault';
+        paintMode();
       }
     });
   }

@@ -83,6 +83,7 @@ export default {
       if (url.pathname === '/feedback') return await handleFeedback(request, url, env, cors);
       if (url.pathname === '/invite') return await handleInvite(request, url, env, cors);
       if (url.pathname === '/vault/upload-image') return await handleVaultImageUpload(request, url, env, cors);
+      if (url.pathname.startsWith('/vault/image/')) return await handleVaultImageServe(request, url, env);
       if (url.pathname === '/vault/submissions') return await handleVaultSubmissions(request, url, env, cors);
       if (url.pathname === '/vault/submissions/review') return await handleVaultSubmissionReview(request, url, env, cors);
       if (url.pathname === '/vault/submissions/manage') return await handleVaultSubmissionManage(request, url, env, cors);
@@ -999,6 +1000,113 @@ const VAULT_PUBLIC_ITEMS_KEY = 'kyro.vault_approved_items.v1';
 const HIDDEN_RESOURCES_KEY = 'kyro.hidden_resources.v1';
 const INCOMING_PREVIEW_URL = 'https://kyro.new.tg/assets/incoming-preview.png';
 
+/* Item images. The staff media channel is where a picture should go, but the
+   bot is not guaranteed access to it (a category or channel overwrite can deny
+   it), and when that happened every upload failed silently — exactly how cards
+   ended up showing the Kyro banner instead of the uploaded picture. So: try the
+   configured channel, repair/create a private one the bot can post in, and keep
+   the bytes in KV served by this worker as a last resort. */
+const VAULT_IMAGES_KEY = 'kyro.vault_images.v1';
+const MEDIA_CHANNEL_KEY = 'kyro.media_channel.v1';
+
+async function uploadToDiscord(env, channelId, blob, filename) {
+  const form = new FormData();
+  form.append('files[0]', blob, filename);
+  try {
+    const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+      method: 'POST', headers: { Authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }, body: form
+    });
+    const text = await res.text();
+    let data = {};
+    try { data = JSON.parse(text); } catch {}
+    return { ok: res.ok, status: res.status, url: data.attachments?.[0]?.url || '', detail: data.message || text.slice(0, 160) };
+  } catch (err) {
+    return { ok: false, status: 0, url: '', detail: err.message || 'network error' };
+  }
+}
+
+async function ensureMediaChannel(env) {
+  const guildId = env.KYRO_GUILD_ID || env.DISCORD_GUILD_ID || '';
+  if (!env.DISCORD_BOT_TOKEN || !/^\d{17,20}$/.test(String(guildId))) return '';
+  const auth = { Authorization: 'Bot ' + env.DISCORD_BOT_TOKEN };
+  try {
+    const listRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/channels`, { headers: auth });
+    if (!listRes.ok) return '';
+    const list = await listRes.json();
+    const existing = (Array.isArray(list) ? list : []).find(c => c.type === 0 && String(c.name || '').toLowerCase() === 'vault-asset-storage');
+    if (existing) return existing.id;
+    const me = await (await fetch('https://discord.com/api/v10/users/@me', { headers: auth })).json().catch(() => ({}));
+    const overwrites = [{ id: guildId, type: 0, allow: '0', deny: '1024' }];
+    if (me && me.id) overwrites.push({ id: me.id, type: 1, allow: String(1024 + 2048 + 16384), deny: '0' });
+    const created = await fetch(`https://discord.com/api/v10/guilds/${guildId}/channels`, {
+      method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'vault-asset-storage', type: 0, topic: 'Kyro media network — item images. Staff only.', permission_overwrites: overwrites })
+    });
+    const data = await created.json().catch(() => ({}));
+    if (created.ok && data.id) return data.id;
+  } catch {}
+  return '';
+}
+
+async function storeItemImage(env, requestUrl, blob, filename, mime) {
+  const tried = new Set();
+  let detail = env.DISCORD_BOT_TOKEN ? '' : 'no bot token configured';
+  const cached = env.DISCORD_BOT_TOKEN ? ((await readDoc(env, MEDIA_CHANNEL_KEY, { id: '' })).value || {}) : {};
+  for (const id of (env.DISCORD_BOT_TOKEN ? [env.DISCORD_MEDIA_CHANNEL_ID, cached.id, '1571185513401159720'] : []).filter(Boolean)) {
+    if (tried.has(id)) continue;
+    tried.add(id);
+    const out = await uploadToDiscord(env, id, blob, filename);
+    if (out.ok && out.url) return { url: out.url };
+    detail = out.status + ' ' + (out.detail || '');
+    if (out.status === 401 || out.status === 429) break;
+  }
+  const healed = env.DISCORD_BOT_TOKEN ? await ensureMediaChannel(env) : '';
+  if (healed && !tried.has(healed)) {
+    const out = await uploadToDiscord(env, healed, blob, filename);
+    if (out.ok && out.url) {
+      try { await env.KYRO_DATA.put(MEDIA_CHANNEL_KEY, JSON.stringify({ id: healed })); } catch {}
+      return { url: out.url };
+    }
+    detail = out.status + ' ' + (out.detail || '');
+  }
+  try {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    const id = crypto.randomUUID();
+    await mutateDoc(env, VAULT_IMAGES_KEY, { items: {} }, (doc) => {
+      const items = doc && doc.items && typeof doc.items === 'object' ? doc.items : {};
+      const now = Date.now();
+      for (const [key, value] of Object.entries(items)) {
+        if (!value || now - Number(value.created || 0) > 90 * 86400000) delete items[key];
+      }
+      items[id] = { data: btoa(binary), mime, created: now };
+      return { items };
+    });
+    return { url: `${requestUrl.origin}/vault/image/${id}` };
+  } catch (err) {
+    return { url: '', detail: (detail || 'Discord refused the upload') + ' · ' + (err.message || 'storage failed') };
+  }
+}
+
+async function handleVaultImageServe(request, url, env) {
+  const id = url.pathname.slice('/vault/image/'.length);
+  if (!/^[a-fA-F0-9-]{36}$/.test(id)) return json({ error: 'Not found.' }, 404);
+  const doc = (await readDoc(env, VAULT_IMAGES_KEY, { items: {} })).value || {};
+  const item = doc.items && doc.items[id];
+  if (!item || !item.data) return json({ error: 'Not found.' }, 404);
+  const bytes = Uint8Array.from(atob(item.data), (c) => c.charCodeAt(0));
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      'Content-Type': item.mime || 'image/png',
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'"
+    }
+  });
+}
+
 async function handleVaultImageUpload(request, url, env, cors) {
   if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
   const token = bearerToken(request, url);
@@ -1041,29 +1149,12 @@ async function handleVaultImageUpload(request, url, env, cors) {
   const filename = `image_${Date.now().toString(36)}.${IMAGE_EXTENSIONS[mime]}`;
 
   // The payload is proven to be a real image before we spend a bot call on it.
-  if (!env.DISCORD_BOT_TOKEN) throw fail(500, 'no_bot_token', 'Discord bot token is not configured.');
-
-  // Upload silently to hidden backend storage channel (1571185513401159720) to generate permanent Discord CDN attachment URL
-  const channelId = env.DISCORD_MEDIA_CHANNEL_ID || '1571185513401159720';
-  const discordForm = new FormData();
-  discordForm.append('files[0]', imageBlob, filename);
-
-  const uploadRes = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-    method: 'POST',
-    headers: { Authorization: 'Bot ' + env.DISCORD_BOT_TOKEN },
-    body: discordForm
-  });
-
-  if (!uploadRes.ok) {
-    const errText = await uploadRes.text();
-    throw fail(uploadRes.status, 'discord_upload_failed', `Discord upload rejected: ${errText}`);
-  }
-
-  const msgData = await uploadRes.json();
-  const attachmentUrl = msgData.attachments?.[0]?.url;
-  if (!attachmentUrl) throw fail(500, 'no_attachment_returned', 'Discord did not return attachment URL.');
-
-  return json({ ok: true, url: attachmentUrl }, 200, cors);
+  // No bot token (or a channel the bot cannot post in) is not fatal: the bytes
+  // are kept by this worker and served back, so a card never falls back to the
+  // Kyro banner because Discord was unreachable.
+  const stored = await storeItemImage(env, url, imageBlob, filename, mime);
+  if (!stored.url) throw fail(502, 'image_storage_failed', 'Could not store that image: ' + (stored.detail || 'unknown reason'));
+  return json({ ok: true, url: stored.url }, 200, cors);
 }
 
 async function handleVaultPublic(request, url, env, cors) {
@@ -1106,8 +1197,11 @@ async function handleVaultLink(request, url, env, cors) {
   const staged = (Array.isArray(incoming.items) ? incoming.items : [])
     .find(item => item.id === id || item.slug === id);
   if (staged && !staged.released) {
-    const bypass = isAdmin(session, env) || await hasEarlyAccess(env, session.id);
-    if (!bypass) throw fail(403, 'not_released', 'That release is still gathering community votes.');
+    const held = earlyAccessBlocked(await earlyAccessExclusions(env), staged);
+    const bypass = isAdmin(session, env) || (!held && await hasEarlyAccess(env, session.id));
+    if (!bypass) throw fail(403, 'not_released', held
+      ? 'The owner has held this release back from early access — it unlocks when the community vote goal is reached.'
+      : 'That release is still gathering community votes.');
   }
 
   const files = entry.files || {};
@@ -1411,26 +1505,38 @@ async function handleIncomingReleases(request, url, env, cors) {
     // Resolve the viewer: owner/admin and early-access members skip the waitlist.
     let viewerId = '';
     let canBypass = false;
+    let isStaff = false;
     try {
       const token = bearerToken(request, url);
       if (token) {
         const session = await readSession(token, env);
         if (session && session.inServer) {
           viewerId = session.id;
-          canBypass = isAdmin(session, env) || await hasEarlyAccess(env, session.id);
+          isStaff = isAdmin(session, env);
+          canBypass = isStaff || await hasEarlyAccess(env, session.id);
         }
       }
     } catch {}
 
+    let exclusions = [];
+    try { exclusions = await earlyAccessExclusions(env); } catch {}
+
     const projected = items.map(item => {
       const voters = item.voters || {};
       const userVote = viewerId ? (voters[viewerId] || 0) : 0;
-      const unlocked = Boolean(item.released) || canBypass;
+      // The owner can hold a release back from early access: the pass then only
+      // covers the rest of the board, and this item waits for its vote goal.
+      const blocked = earlyAccessBlocked(exclusions, item);
+      // Restrictions apply to the pass only — staff and the owner always see
+      // their own unreleased builds.
+      const passUnlocks = isStaff || (canBypass && !blocked);
+      const unlocked = Boolean(item.released) || passUnlocks;
       return {
         ...item,
         userVote,
         voters: undefined, // keep privacy
-        early_access: canBypass && !item.released,
+        early_access: passUnlocks && !item.released,
+        early_locked: blocked && !item.released,
         // The direct link stays hidden until the goal is reached or the viewer
         // holds an early-access pass, so the waitlist is a real gate.
         download_url: unlocked ? item.download_url : undefined,
@@ -2213,12 +2319,26 @@ const DASHBOARD_AUDIT_KEY = 'kyro.dashboard_audit.v1';
 const NOTIFICATIONS_KEY = 'kyro.notifications.v1';
 const INCOMING_RELEASES_KEY = 'kyro.incoming_releases.v1';
 const EARLY_ACCESS_KEY = 'kyro.early_access.v1';
+const EARLY_ACCESS_EXCLUSIONS_KEY = 'kyro.early_access_exclusions.v1';
 
 /* Owner-granted pass: these members skip the incoming waitlist and pull the
    download link directly, before the community vote goal is reached. */
 async function earlyAccessUsers(env) {
   const doc = (await readDoc(env, EARLY_ACCESS_KEY, { users: {} })).value || {};
   return doc.users && typeof doc.users === 'object' ? doc.users : {};
+}
+
+/* A pass is not all-or-nothing: the owner can hold individual releases back,
+   so a build can keep its early-access gate even when a member holds a pass. */
+async function earlyAccessExclusions(env) {
+  const doc = (await readDoc(env, EARLY_ACCESS_EXCLUSIONS_KEY, { ids: [] })).value || {};
+  return hiddenTokens(doc.ids);
+}
+
+function earlyAccessBlocked(exclusions, item) {
+  if (!exclusions || !exclusions.length) return false;
+  const set = exclusions instanceof Set ? exclusions : new Set(exclusions);
+  return set.has(String(item.id || '').toLowerCase()) || set.has(String(item.slug || '').toLowerCase());
 }
 
 async function hasEarlyAccess(env, userId) {
@@ -2238,7 +2358,14 @@ async function handleEarlyAccess(request, url, env, cors) {
       earlyAccess: isOwner || isAdmin(session, env) || Boolean(users[session.id]),
       is_owner: isOwner
     };
-    if (isOwner) payload.users = Object.entries(users).map(([id, meta]) => ({ id, ...(meta || {}) }));
+    if (isOwner) {
+      payload.users = Object.entries(users).map(([id, meta]) => ({ id, ...(meta || {}) }));
+      payload.excluded = await earlyAccessExclusions(env);
+      const incoming = (await readDoc(env, INCOMING_RELEASES_KEY, { items: [] })).value || {};
+      payload.releases = (Array.isArray(incoming.items) ? incoming.items : []).map(item => ({
+        id: item.id, title: item.title, slug: item.slug, released: Boolean(item.released)
+      }));
+    }
     return json(payload, 200, cors);
   }
 
@@ -2273,7 +2400,19 @@ async function handleEarlyAccess(request, url, env, cors) {
     return json({ ok: true, removed }, 200, cors);
   }
 
-  return json({ error: 'Use GET, POST, or DELETE.' }, 405, cors);
+  // Which releases a pass does NOT unlock. Replaces the whole list, so the
+  // owner UI can send the checked boxes straight back.
+  if (request.method === 'PATCH') {
+    const input = await jsonBody(request);
+    if (!Array.isArray(input.excluded)) throw fail(400, 'bad_excluded', 'Send an array of release IDs.');
+    const tokens = hiddenTokens(input.excluded.map(value => cleanText(value, 120))).slice(0, 500);
+    await mutateDoc(env, EARLY_ACCESS_EXCLUSIONS_KEY, { ids: [] }, () => ({ ids: tokens }));
+    await logBotAudit(env, 'Early Access Restrictions Updated', session,
+      tokens.length ? `Early access held back for ${tokens.length} release${tokens.length === 1 ? '' : 's'}.` : 'Every release is open to early access again.');
+    return json({ ok: true, excluded: tokens }, 200, cors);
+  }
+
+  return json({ error: 'Use GET, POST, PATCH, or DELETE.' }, 405, cors);
 }
 const KYRO_ICON = 'https://raw.githubusercontent.com/kyroownr/Kyro-Websitee/main/assets/kyro-icon.png';
 

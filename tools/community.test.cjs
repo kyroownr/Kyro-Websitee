@@ -158,6 +158,31 @@ async function main() {
     const imB2 = await call('/vault/incoming', undefined, 'memberB');
     expect(imB2.data.incoming.find(i => i.id === pendingId).download_url === undefined, 'B is still gated after A is granted');
 
+    /* ---------------- owner holds individual releases back from EA ---------------- */
+    const excludedByMember = await call('/early-access', { excluded: [pendingId] }, 'memberA', 'PATCH');
+    expect(excludedByMember.status === 403, 'only the owner can restrict early access per release');
+    const excludedByAdmin = await call('/early-access', { excluded: [pendingId] }, 'admin', 'PATCH');
+    expect(excludedByAdmin.status === 403, 'admins cannot restrict early access either');
+    expect((await call('/early-access', { excluded: 'nope' }, 'owner', 'PATCH')).status === 400, 'exclusion list must be an array');
+
+    const restrict = await call('/early-access', { excluded: [pendingId] }, 'owner', 'PATCH');
+    expect(restrict.status === 200 && restrict.data.excluded.includes(pendingId.toLowerCase()), 'owner holds a release back from early access');
+    const eaOA = await call('/early-access', undefined, 'owner');
+    expect(eaOA.data.excluded.includes(pendingId.toLowerCase()) && eaOA.data.releases.some(r => r.id === pendingId), 'owner payload lists exclusions and releases');
+    const blockedForA = await call('/vault/incoming', undefined, 'memberA');
+    const blockedItem = blockedForA.data.incoming.find(i => i.id === pendingId);
+    expect(blockedItem.download_url === undefined && blockedItem.pass === undefined, 'a restricted release stays sealed for a pass holder');
+    expect(blockedItem.early_access === false && blockedItem.early_locked === true, 'the card marks the release as held back');
+    const stillOwner = await call('/vault/incoming', undefined, 'owner');
+    expect(stillOwner.data.incoming.find(i => i.id === pendingId).download_url === 'https://example.com/pending.zip', 'the owner still sees their own build');
+    const otherMember = await call('/vault/incoming', undefined, 'memberB');
+    expect(otherMember.data.incoming.find(i => i.id === pendingId).download_url === undefined, 'a restricted release stays hidden from everyone else too');
+
+    const clear = await call('/early-access', { excluded: [] }, 'owner', 'PATCH');
+    expect(clear.status === 200 && clear.data.excluded.length === 0, 'owner clears the restriction');
+    const reopened = await call('/vault/incoming', undefined, 'memberA');
+    expect(reopened.data.incoming.find(i => i.id === pendingId).download_url === 'https://example.com/pending.zip', 'clearing the restriction restores early access');
+
     const eaO = await call('/early-access', undefined, 'owner');
     expect(eaO.data.is_owner === true && Array.isArray(eaO.data.users) && eaO.data.users.some(u => u.id === IDS.memberA), 'owner lists granted users');
     const imO = await call('/vault/incoming', undefined, 'owner');
