@@ -1,12 +1,1 @@
-/* Live "site updated" stamp shared by the about and guide pages. */
-(function () {
-  const two = (n) => String(n).padStart(2, '0');
-  const el = document.getElementById('siteUpdated');
-  const tick = () => {
-    const d = new Date();
-    el.textContent = d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate()) +
-      ' ' + two(d.getHours()) + ':' + two(d.getMinutes()) + ':' + two(d.getSeconds());
-  };
-  tick();
-  setInterval(tick, 1000);
-})();
+(function(){const e=t=>String(t).padStart(2,"0"),o=document.getElementById("siteUpdated"),n=()=>{const t=new Date;o.textContent=t.getFullYear()+"-"+e(t.getMonth()+1)+"-"+e(t.getDate())+" "+e(t.getHours())+":"+e(t.getMinutes())+":"+e(t.getSeconds())};n(),setInterval(n,1e3)})();

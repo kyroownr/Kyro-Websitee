@@ -1189,7 +1189,6 @@ async function handleVaultLink(request, url, env, cors) {
 
   const doc = (await readDoc(env, VAULT_LINKS_KEY, { items: {} })).value || {};
   const entry = doc.items && doc.items[id];
-  if (!entry) throw fail(404, 'no_file', 'No downloadable file is stored for that resource.');
 
   // A staged release stays sealed until the community vote releases it, even
   // for members who know the title — early access or staff bypass it.
@@ -1204,12 +1203,32 @@ async function handleVaultLink(request, url, env, cors) {
       : 'That release is still gathering community votes.');
   }
 
-  const files = entry.files || {};
+  const files = (entry && entry.files) || {};
   const file = name ? files[name] : Object.values(files)[0];
-  if (!file || !file.url) throw fail(404, 'no_file', 'No downloadable file is stored for that resource.');
+  if (file && file.url) {
+    await limitWrites(env, 'links', session.id, 80);
+    return json({ ok: true, url: file.url, pass: file.pass || '' }, 200, cors);
+  }
+
+  // No uploaded archive: fall back to the external link stored on the resource.
+  // A released incoming build keeps its link on the public item; the staged
+  // gate above already cleared this viewer for anything still unreleased.
+  let linkUrl = staged && staged.download_url ? staged.download_url : '';
+  let linkPass = staged && staged.pass ? staged.pass : '';
+  if (!linkUrl) {
+    const pub = (await readDoc(env, VAULT_PUBLIC_ITEMS_KEY, { items: [] })).value || {};
+    const found = (Array.isArray(pub.items) ? pub.items : []).find(i => i.id === id || i.slug === id);
+    if (found && found.download_url) { linkUrl = found.download_url; linkPass = found.pass || ''; }
+  }
+  if (!linkUrl) {
+    const subs = (await readDoc(env, VAULT_SUBMISSIONS_KEY, { submissions: [] })).value || {};
+    const found = (Array.isArray(subs.submissions) ? subs.submissions : []).find(s => s.id === id || s.slug === id);
+    if (found && found.download_url) { linkUrl = found.download_url; linkPass = found.pass || ''; }
+  }
+  if (!linkUrl) throw fail(404, 'no_file', 'No downloadable file is stored for that resource.');
 
   await limitWrites(env, 'links', session.id, 80);
-  return json({ ok: true, url: file.url, pass: file.pass || '' }, 200, cors);
+  return json({ ok: true, url: linkUrl, pass: linkPass }, 200, cors);
 }
 
 function hiddenTokens(input) {

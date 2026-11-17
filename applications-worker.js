@@ -464,17 +464,24 @@ async function openTicketChannel(env, guildId, userId) {
     payload.permission_overwrites = overwrites.filter(o => o.id !== modRoleId);
     channel = await botCall(env, `/guilds/${guildId}/channels`, 'POST', payload, { 'X-Audit-Log-Reason': 'Kyro support ticket' });
   }
+  // Ping the owner and the mod role so staff know a ticket is waiting even if
+  // they are not watching the channel list.
+  const staffMentions = [`<@${guild.owner_id}>`];
+  if (hasModRole) staffMentions.push(`<@&${modRoleId}>`);
   await botCall(env, `/channels/${channel.id}/messages`, 'POST', {
-    content: `<@${userId}>`,
-    allowed_mentions: { parse: ['users'] },
+    content: `<@${userId}> ${staffMentions.join(' ')} — a new support ticket is open.`,
+    allowed_mentions: { parse: ['users', 'roles'] },
     embeds: [{
-      author: { name: 'Kyro Support Ticket', icon_url: KYRO_ICON_URL },
-      title: 'Private support ticket',
-      description: `**Opened by:** <@${userId}>\nDescribe your issue below — the staff team can see this channel.\nPress **Close Ticket** once it is resolved.`,
+      author: { name: 'Kyro Support', icon_url: KYRO_ICON_URL },
+      title: 'Hey! Welcome to the Help Channel!',
+      description: `Hey <@${userId}>, welcome to the help channel!\nBelow you can leave your questions or issues.\n\nplease wait until the mod or our support member is online meanwile just describe the thing u need support and for better reference paste a ss and also if the ur satisfied please give the feedback from the website thanks\n\nYou can close this ticket anytime using the **Close Ticket** button below.`,
       color: 0x2997FF,
       timestamp: new Date().toISOString()
     }],
-    components: [{ type: 1, components: [{ type: 2, style: 4, label: 'Close Ticket', custom_id: `kyro-ticket:close:${guildId}:${userId}` }] }]
+    components: [{ type: 1, components: [
+      { type: 2, style: 4, label: 'Close Ticket', custom_id: `kyro-ticket:close:${guildId}:${userId}` },
+      { type: 2, style: 5, label: 'Leave Feedback ↗', url: 'https://kyro.new.tg#feedback' }
+    ] }]
   });
   return { channelId: channel.id, guildName: guild.name };
 }
@@ -743,7 +750,9 @@ export class KyroApplications {
             { id: guildId, type: 0, deny: '1024', allow: '0' },
             { id: String(this.env.DISCORD_MOD_ROLE_ID), type: 0, allow: '68608', deny: '0' },
             { id: bot.id, type: 1, allow: '68608', deny: '0' },
-            { id: row.by, type: 1, allow: '68608', deny: '0' }
+            // Staff-only review by default; the applicant joins only when an
+            // interview is enabled, so private review stays private otherwise.
+            ...(this.env.KYRO_APPLICATION_INTERVIEW_ENABLED === 'true' ? [{ id: row.by, type: 1, allow: '68608', deny: '0' }] : [])
           ]
         });
         if (!snowflake(channel.id)) throw Object.assign(error(502, 'discord_uncertain', 'Discord channel creation needs staff attention.'), { uncertain: true });

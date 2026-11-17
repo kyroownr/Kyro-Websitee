@@ -19,9 +19,16 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+let esbuild = null;
+try { esbuild = require('esbuild'); } catch { esbuild = null; }
 
 const root = path.join(__dirname, '..');
 const out = path.join(root, 'docs');
+
+/* Content hash per published bundle, so HTML cache-busting versions track the
+   actual minified bytes instead of a hand-edited number. */
+const bundleHashes = {};
 
 /* Everything a browser legitimately needs. dashboard.html is the staff bot UI
    served by bot_dashboard.js on localhost — it has no business on the public
@@ -74,11 +81,43 @@ function shouldPublish(relative) {
   return PUBLIC_DIRS.includes(parts[0]);
 }
 
+/* Minify the published JS/CSS bundles. Falls back to the raw source if esbuild
+   is unavailable or a file fails to transform, so the build never breaks. */
+function minifyBundle(relative, source) {
+  if (!esbuild) return null;
+  const norm = relative.replace(/\\/g, '/');
+  if (!/^(js|css)\//.test(norm)) return null;
+  const ext = path.extname(norm).toLowerCase();
+  const loader = ext === '.js' ? 'js' : ext === '.css' ? 'css' : null;
+  if (!loader) return null;
+  try {
+    return esbuild.transformSync(source, { loader, minify: true, legalComments: 'none', target: 'es2020' }).code;
+  } catch {
+    return null;
+  }
+}
+
 function copyFile(relative) {
   const from = path.join(root, relative);
   const to = path.join(out, relative);
   fs.mkdirSync(path.dirname(to), { recursive: true });
-  fs.copyFileSync(from, to);
+  const norm = relative.replace(/\\/g, '/');
+  const ext = path.extname(norm).toLowerCase();
+  if ((ext === '.js' || ext === '.css') && /^(js|css)\//.test(norm)) {
+    const source = fs.readFileSync(from, 'utf8');
+    const minified = minifyBundle(relative, source);
+    const content = minified != null ? minified : source;
+    fs.writeFileSync(to, content);
+    bundleHashes[norm] = crypto.createHash('sha256').update(content).digest('hex').slice(0, 8);
+  } else if (ext === '.html' || ext === '.htm') {
+    const html = fs.readFileSync(from, 'utf8');
+    fs.writeFileSync(to, html.replace(/(\/(?:js|css)\/[A-Za-z0-9._-]+\.(?:js|css))\?v=[A-Za-z0-9._-]+/g, (match, ref) => {
+      const hash = bundleHashes[ref.replace(/^\//, '')];
+      return hash ? ref + '?v=' + hash : match;
+    }));
+  } else {
+    fs.copyFileSync(from, to);
+  }
   return fs.statSync(to).size;
 }
 
@@ -107,7 +146,9 @@ function build() {
   }
 
   let bytes = 0;
-  for (const file of files) bytes += copyFile(file);
+  // Bundles first so their content hashes exist before HTML rewrites ?v=.
+  for (const file of files) if (/\.(js|css)$/i.test(file)) bytes += copyFile(file);
+  for (const file of files) if (!/\.(js|css)$/i.test(file)) bytes += copyFile(file);
 
   // Belt and braces: nothing that reached the output may be backend source.
   const leaked = files.filter((file) => !shouldPublish(file));
