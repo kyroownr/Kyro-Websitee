@@ -612,6 +612,22 @@ async function waitForServer() {
   adminPermissions = '8';
   await req('POST', '/api/bot/grant', { guild: 'guild1' });
 
-  console.log(JSON.stringify({ checks: passed, multiServer: 'guild selector + per-guild isolation', features: 'moderation, giveaways, reaction roles, automod, welcome, logging, setup, security, honeypot, utility, embed, engagement, levels, birthdays, suggestions, polls, scheduler, stat channels, role packs, admin gate', discord: 'mocked REST', result: 'passed' }));
+  // Slash-command registration: the fix for "verification + commands don't work".
+  const cmdList = await req('GET', '/api/commands');
+  ok(cmdList.status === 200 && Array.isArray(cmdList.data.commands) && cmdList.data.commands.length === 8, 'GET /api/commands lists all 8 commands');
+  ok(cmdList.data.commands.some((c) => c.name === 'setup') && cmdList.data.commands.some((c) => c.name === 'mod'), 'command list includes setup and mod');
+  const reg = await req('POST', '/api/commands/register', {});
+  ok(reg.status === 200 && reg.data.ok === true, 'POST /api/commands/register succeeds');
+  ok(Array.isArray(reg.data.results) && reg.data.results.length === 2, 'registration returns one result per guild');
+  ok(reg.data.results.every((r) => r.ok === true), 'both guilds registered ok');
+  const put1 = lastCall((c) => c.method === 'PUT' && c.path === '/applications/1571036271839682601/guilds/guild1/commands');
+  const put2 = lastCall((c) => c.method === 'PUT' && c.path === '/applications/1571036271839682601/guilds/guild2/commands');
+  ok(put1 && put2, 'PUT bulk-overwrite issued for every guild the bot is in');
+  ok(Array.isArray(put1.body) && put1.body.length === 8, 'registration body carries the full 8-command schema');
+  ok(put1.body.some((c) => c.name === 'setup' && c.options.some((o) => o.name === 'verification')), 'registered setup includes the verification subcommand');
+  const statusAfter = await req('GET', '/api/status');
+  ok(statusAfter.data.commandsRegistered === 2, 'status reports 2 guilds with commands registered');
+
+  console.log(JSON.stringify({ checks: passed, multiServer: 'guild selector + per-guild isolation', features: 'moderation, giveaways, reaction roles, automod, welcome, logging, setup, security, honeypot, utility, embed, engagement, levels, birthdays, suggestions, polls, scheduler, stat channels, role packs, admin gate, slash-command registration', discord: 'mocked REST', result: 'passed' }));
   shutdown(0);
 })().catch((err) => { console.error('TEST ERROR:', err.message || err); shutdown(1); });

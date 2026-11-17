@@ -20,6 +20,7 @@ import fs from 'fs';
 import path from 'path';
 import { exec } from 'child_process';
 import { fileURLToPath } from 'url';
+import { KYRO_COMMANDS, COMMANDS_VERSION, registerAllCommands } from './bot-commands.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -226,6 +227,37 @@ async function resolveBotIdentity() {
   } catch (e) {
     console.error('[Dashboard] Could not resolve the bot application id; invite links use', BOT_CLIENT_ID + '.', e.message);
   }
+}
+
+/* Discord only shows slash commands that have been registered with the
+   application. The interactions worker handles them, but nothing registered
+   them — so /setup verification, /mod, /role and the rest never appeared and
+   verification "did not work". Register the full set per-guild (instant,
+   idempotent PUT bulk-overwrite) for every server the bot is in. Fail-soft: a
+   guild that rejects registration is logged, never fatal. Throttled to once per
+   10 minutes unless forced, so the poller can call it cheaply. */
+const COMMANDS_STATE = { version: COMMANDS_VERSION, lastRun: 0, results: [] };
+async function ensureSlashCommands(force = false) {
+  if (!BOT_TOKEN) return { ok: false, error: 'No bot token loaded.' };
+  const now = Date.now();
+  if (!force && now - COMMANDS_STATE.lastRun < 10 * 60 * 1000) {
+    return { ok: true, skipped: true, results: COMMANDS_STATE.results };
+  }
+  COMMANDS_STATE.lastRun = now;
+  let guilds = [];
+  try {
+    guilds = await discordFetch('/users/@me/guilds');
+  } catch (e) {
+    return { ok: false, error: 'Could not list guilds: ' + (e.message || e) };
+  }
+  const ids = (Array.isArray(guilds) ? guilds : []).map((g) => g && g.id).filter(Boolean);
+  if (!ids.length) return { ok: true, count: KYRO_COMMANDS.length, results: [], note: 'Bot is not in any guild yet.' };
+  const results = await registerAllCommands(discordFetch, BOT_CLIENT_ID, ids);
+  COMMANDS_STATE.results = results;
+  const okCount = results.filter((r) => r.ok).length;
+  console.log(`[Dashboard] Registered ${KYRO_COMMANDS.length} slash commands in ${okCount}/${ids.length} guild(s).`);
+  for (const r of results) if (!r.ok) console.warn(`[Dashboard] Command registration failed in ${r.guildId}: ${r.error}`);
+  return { ok: okCount === ids.length, count: KYRO_COMMANDS.length, results };
 }
 
 async function getReactionUsers(channelId, messageId, emoji) {
@@ -2568,13 +2600,28 @@ async function handleRequest(req, res) {
         ok: true, tokenLoaded: Boolean(BOT_TOKEN), ownerId: OWNER_ID,
         poller: !process.env.DASHBOARD_DISABLE_POLLER,
         installUrl: BOT_INSTALL_URL, clientId: BOT_CLIENT_ID,
-        botId: BOT_IDENTITY.id, botName: BOT_IDENTITY.username
+        botId: BOT_IDENTITY.id, botName: BOT_IDENTITY.username,
+        commandsVersion: COMMANDS_STATE.version,
+        commandsRegistered: COMMANDS_STATE.results.filter((r) => r.ok).length
       });
     }
 
     if (req.method === 'POST' && p === '/api/launch') {
       openLocalDashboard();
       return sendJSON(res, 200, { ok: true });
+    }
+
+    if (req.method === 'GET' && p === '/api/commands') {
+      return sendJSON(res, 200, {
+        version: COMMANDS_STATE.version,
+        commands: KYRO_COMMANDS.map((c) => ({ name: c.name, description: c.description })),
+        results: COMMANDS_STATE.results
+      });
+    }
+
+    if (req.method === 'POST' && p === '/api/commands/register') {
+      const out = await ensureSlashCommands(true);
+      return sendJSON(res, out.ok || out.skipped ? 200 : 502, out);
     }
 
     // Multi-server selector
@@ -3395,6 +3442,10 @@ server.listen(PORT, '127.0.0.1', () => {
   if (!process.env.DASHBOARD_DISABLE_POLLER) {
     setInterval(pollTick, 5000);
     console.log('  Background poller active (giveaways / roles / automod / welcome).');
+    // Register slash commands on boot and re-check every 10 min so newly joined
+    // guilds get them automatically. Fail-soft; never blocks the dashboard.
+    ensureSlashCommands(true).catch((e) => console.warn('[Dashboard] Initial command registration failed:', e.message));
+    setInterval(() => ensureSlashCommands(false).catch(() => {}), 10 * 60 * 1000);
   }
   // /start-kyro runs on Cloudflare, so it can never open a browser on this
   // machine — opening on boot is what makes the dashboard actually appear.

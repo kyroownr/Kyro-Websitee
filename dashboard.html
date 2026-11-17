@@ -503,6 +503,13 @@
       <!-- SERVER SETUP -->
       <section class="panel" data-panel="setup">
         <div class="panel-head"><h2>Server Setup</h2><p>One-click configuration — full server preset, best-practice permissions, verification and tickets.</p></div>
+        <div class="card" style="border-left:3px solid #30D158">
+          <div class="card-title">⌨️ Slash commands</div>
+          <div class="card-desc">Registers <b>/setup</b>, <b>/mod</b>, <b>/role</b>, <b>/whois</b>, <b>/invite</b>, <b>/stats</b>, <b>/sync</b> and <b>/start-kyro</b> in <b>every server the bot is in</b>. Discord only shows commands that have been registered — if <b>/setup verification</b> or the mod commands never appear, run this. Safe to re-run; commands update instantly.</div>
+          <div class="btn-row"><button class="btn" id="cmdRegister">Register slash commands</button></div>
+          <div class="status" id="cmdStatus"></div>
+          <div class="list" id="cmdResult"></div>
+        </div>
         <div class="card" style="border-left:3px solid #2997FF">
           <div class="card-title">⚡ One-Click Server Setup</div>
           <div class="card-desc">Creates <b>#welcome</b>, <b>#mod-log</b> and <b>#announcements</b>, enables Welcome + full Logging + AutoMod (scam/invite/mention filters on every channel), turns on security defaults and sets up verification. Safe to re-run — existing channels are reused.</div>
@@ -1482,6 +1489,21 @@
   });
 
   // ---- Server Setup handlers ----
+  $('#cmdRegister').addEventListener('click', async ()=>{
+    clearStatus($('#cmdStatus')); $('#cmdResult').innerHTML='<div class="loading">Registering slash commands in every server…</div>';
+    $('#cmdRegister').disabled=true;
+    try{
+      const r=await post('/api/commands/register',{});
+      const results=Array.isArray(r.results)?r.results:[];
+      const nameOf=id=>{ const g=(state.guilds||[]).find(x=>x.id===id); return g?g.name:id; };
+      $('#cmdResult').innerHTML=results.map(x=>`<div class="list-item"><div class="li-main"><div class="li-title">${esc(nameOf(x.guildId))}</div>${x.ok?'':`<div class="li-sub">${esc(x.error||'failed')}</div>`}</div><span class="tag ${x.ok?'green':'amber'}">${x.ok?'registered':'failed'}</span></div>`).join('')||'<div class="empty">The bot is not in any server yet — invite it first.</div>';
+      const ok=results.filter(x=>x.ok).length;
+      setStatus($('#cmdStatus'), r.note ? r.note : `Registered ${r.count||0} commands in ${ok}/${results.length} server${results.length===1?'':'s'}. They appear in Discord instantly.`, ok===results.length&&results.length?'success':'');
+      toast('Slash commands registered','success');
+    }catch(err){ $('#cmdResult').innerHTML=''; setStatus($('#cmdStatus'), err.message,'error'); }
+    finally{ $('#cmdRegister').disabled=false; }
+  });
+
   $('#asRun').addEventListener('click', async ()=>{
     clearStatus($('#asStatus')); $('#asSteps').innerHTML='<div class="loading">Running full setup — this creates channels and posts messages, give it a few seconds…</div>';
     $('#asRun').disabled=true;
