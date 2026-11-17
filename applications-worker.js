@@ -473,12 +473,12 @@ async function openTicketChannel(env, guildId, userId) {
     allowed_mentions: { parse: ['users', 'roles'] },
     embeds: [{
       author: { name: 'Kyro Support', icon_url: KYRO_ICON_URL },
-      title: 'Hey! Welcome to the Help Channel!',
-      description: `Hey <@${userId}>, welcome to the help channel!\nBelow you can leave your questions or issues.\n\nplease wait until the mod or our support member is online meanwile just describe the thing u need support and for better reference paste a ss and also if the ur satisfied please give the feedback from the website thanks\n\nYou can close this ticket anytime using the **Close Ticket** button below.`,
+      description: `Hey <@${userId}>, welcome to Kyro Support!\n\nA member of our staff team has been notified and will be with you shortly. While you wait, please share the following details so we can help you faster:\n• Issue or Question: Clearly describe what you need assistance with.\n• Screenshots / Proof: Paste any relevant screenshots (ss) for reference.\n\nOnce your issue is resolved, we’d appreciate it if you could leave a review on our website using the Leave Feedback button below.\n\nYou can close this ticket anytime using the Close Ticket button.`,
       color: 0x2997FF,
       timestamp: new Date().toISOString()
     }],
     components: [{ type: 1, components: [
+      { type: 2, style: 3, label: 'Claim Ticket', custom_id: `kyro-ticket:claim:${guildId}:${userId}` },
       { type: 2, style: 4, label: 'Close Ticket', custom_id: `kyro-ticket:close:${guildId}:${userId}` },
       { type: 2, style: 5, label: 'Leave Feedback ↗', url: 'https://kyro.new.tg#feedback' }
     ] }]
@@ -1220,6 +1220,74 @@ export async function handleApplicationInteractions(request, env, ctx) {
       } catch (err) { console.warn('[kyro-ticket] close failed:', err); }
     })());
     return response({ type: 4, data: { content: '🔒 Closing this ticket…', flags: 64 } });
+  }
+
+  // "Claim Ticket" — staff-only. The claim is stored in the channel topic and
+  // sending is locked to the claimer so two mods never answer at once.
+  const ticketClaimMatch = /^kyro-ticket:claim:(\d{17,20}):(\d{17,20})$/.exec(interaction.data?.custom_id || '');
+  if (interaction.type === 3 && ticketClaimMatch) {
+    const [, ticketGuildId, ticketOwnerId] = ticketClaimMatch;
+    const claimerId = interaction.member?.user?.id || '';
+    const claimerPerms = BigInt(interaction.member?.permissions || '0');
+    const isStaff = (claimerPerms & BigInt(0x8)) === BigInt(0x8) || (interaction.member?.roles || []).includes(String(env.DISCORD_MOD_ROLE_ID));
+    if (!isStaff) {
+      return response({ type: 4, data: { content: 'Only staff can claim tickets.', flags: 64 } });
+    }
+    if (claimerId === ticketOwnerId) {
+      return response({ type: 4, data: { content: 'You opened this ticket — a staff member claims it to help you.', flags: 64 } });
+    }
+    ctx.waitUntil((async () => {
+      let ack;
+      try {
+        const channel = await botCall(env, `/channels/${interaction.channel_id}`);
+        const topic = String(channel.topic || '');
+        const claimed = /claimed by (\d{17,20})/.exec(topic);
+        if (claimed) {
+          ack = claimed[1] === claimerId ? '🙋 You already claimed this ticket.' : `🔒 This ticket is already claimed by <@${claimed[1]}>.`;
+        } else {
+          const SEND = BigInt(2048);
+          const overwrites = (channel.permission_overwrites || []).map((o) => ({ ...o }));
+          const modRoleId = String(env.DISCORD_MOD_ROLE_ID || '');
+          for (const o of overwrites) {
+            if (o.type === 0 && o.id === modRoleId) {
+              o.allow = String(BigInt(o.allow || '0') & ~SEND);
+              o.deny = String(BigInt(o.deny || '0') | SEND);
+            }
+          }
+          const mine = overwrites.find((o) => o.type === 1 && o.id === claimerId);
+          if (mine) {
+            mine.allow = String(BigInt(mine.allow || '0') | BigInt(VIEW_OR_SEND));
+            mine.deny = String(BigInt(mine.deny || '0') & ~BigInt(VIEW_OR_SEND));
+          } else {
+            overwrites.push({ id: claimerId, type: 1, allow: VIEW_OR_SEND, deny: '0' });
+          }
+          await botCall(env, `/channels/${interaction.channel_id}`, 'PATCH', {
+            topic: `${topic} | claimed by ${claimerId}`,
+            permission_overwrites: overwrites
+          }, { 'X-Audit-Log-Reason': `Ticket claimed by ${claimerId}` });
+          const embed = { ...(interaction.message?.embeds?.[0] || {}) };
+          embed.footer = { text: `Claimed by ${interaction.member.user.global_name || interaction.member.user.username}` };
+          const rows = (interaction.message?.components || []).map((r) => ({
+            ...r,
+            components: (r.components || []).filter((c) => !String(c.custom_id || '').startsWith('kyro-ticket:claim:'))
+          }));
+          try {
+            await botCall(env, `/channels/${interaction.channel_id}/messages/${interaction.message.id}`, 'PATCH', { embeds: [embed], components: rows });
+          } catch {}
+          ack = '🙋 You claimed this ticket. Other staff can read it, but only you can reply until it closes.';
+        }
+      } catch (err) {
+        console.warn('[kyro-ticket] claim failed:', err);
+        ack = '❌ Could not claim this ticket: ' + (err.message || 'try again later.');
+      }
+      try {
+        await fetch(DISCORD_API + '/webhooks/' + interaction.application_id + '/' + interaction.token + '/messages/@original', {
+          method: 'PATCH', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: ack, allowed_mentions: { parse: [] } }), redirect: 'manual', signal: AbortSignal.timeout(8000)
+        });
+      } catch {}
+    })());
+    return response({ type: 5, data: { flags: 64 } });
   }
 
   // "✅ Verify" button inside the verify channel — grants the Verified role.

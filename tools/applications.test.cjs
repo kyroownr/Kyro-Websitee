@@ -211,6 +211,77 @@ async function main() {
     check((await dm.json()).type === 4, 'verify outside a guild denied');
   } finally { global.fetch = originalFetch; }
 
+  // Support tickets: new welcome copy, website-matched color, staff-only claim
+  // that locks sending to the claimer, and opener-or-staff close.
+  const ticketChan = '1571547868647399800';
+  const ticketMsg = '1571547868647399801';
+  let ticketTopic = `Support ticket for ${userId('member')}`;
+  let ticketOverwrites = [
+    { id: guild, type: 0, allow: '0', deny: '1024' },
+    { id: userId('member'), type: 1, allow: '68608', deny: '0' },
+    { id: userId('owner'), type: 1, allow: '68608', deny: '0' },
+    { id: mod, type: 0, allow: '68608', deny: '0' }
+  ];
+  const ticketPosts = [], ticketChanPatches = [], ticketMsgPatches = [], ticketAcks = [], ticketDeferred = [], ticketDeletes = [];
+  const ticketFetch = async (url, options = {}) => {
+    const u = new URL(url);
+    const method = options.method || 'GET';
+    if (u.pathname === `/api/v10/guilds/${guild}` && method === 'GET') return Response.json({ owner_id: userId('owner'), name: 'Kyro' });
+    if (u.pathname.startsWith('/api/v10/users/') && method === 'GET') return Response.json({ id: u.pathname.split('/').pop(), username: 'member-editor' });
+    if (u.pathname === `/api/v10/guilds/${guild}/channels` && method === 'GET') return Response.json([]);
+    if (u.pathname === `/api/v10/guilds/${guild}/channels` && method === 'POST') { const payload = JSON.parse(options.body); ticketPosts.push(payload); return Response.json({ id: ticketChan, ...payload }); }
+    if (u.pathname === `/api/v10/channels/${ticketChan}/messages` && method === 'POST') { const payload = JSON.parse(options.body); ticketPosts.push(payload); return Response.json({ id: ticketMsg, ...payload }); }
+    if (u.pathname === `/api/v10/channels/${ticketChan}` && method === 'GET') return Response.json({ id: ticketChan, topic: ticketTopic, permission_overwrites: ticketOverwrites });
+    if (u.pathname === `/api/v10/channels/${ticketChan}` && method === 'PATCH') { const payload = JSON.parse(options.body); ticketChanPatches.push(payload); if (payload.topic !== undefined) ticketTopic = payload.topic; if (payload.permission_overwrites) ticketOverwrites = payload.permission_overwrites; return Response.json({}); }
+    if (u.pathname === `/api/v10/channels/${ticketChan}` && method === 'DELETE') { ticketDeletes.push(u.pathname); return Response.json({}); }
+    if (u.pathname === `/api/v10/channels/${ticketChan}/messages/${ticketMsg}` && method === 'PATCH') { ticketMsgPatches.push(JSON.parse(options.body)); return Response.json({}); }
+    if (u.pathname.includes('/webhooks/') && method === 'PATCH') { ticketAcks.push(JSON.parse(options.body)); return Response.json({}); }
+    throw new Error('Unexpected ticket endpoint: ' + u.pathname);
+  };
+  try {
+    global.fetch = ticketFetch;
+    const openButton = { type: 3, application_id: bot, token: 'ticket-open', guild_id: guild, channel_id: category, member: { user: { id: userId('member') }, roles: [] }, data: { custom_id: `kyro-ticket:open:${guild}` } };
+    const or = await module.handleApplicationInteractions(await signed(openButton), env, { waitUntil: work => ticketDeferred.push(work) });
+    check((await or.json()).type === 5, 'open ticket acknowledged immediately');
+    await Promise.all(ticketDeferred.splice(0));
+    const card = ticketPosts.find(p => p.embeds);
+    check(card && card.embeds[0].description.startsWith(`Hey <@${userId('member')}>, welcome to Kyro Support!`), 'ticket embed greets the ticket creator, not the bot or owner');
+    check(card.embeds[0].description.includes('• Issue or Question: Clearly describe what you need assistance with.') && card.embeds[0].description.includes('• Screenshots / Proof: Paste any relevant screenshots (ss) for reference.') && card.embeds[0].description.includes('we’d appreciate it if you could leave a review on our website using the Leave Feedback button below.'), 'ticket copy matches the dictated text verbatim');
+    check(card.embeds[0].color === parseInt('2997FF', 16), 'ticket embed color matches the website accent');
+    const buttons = card.components[0].components;
+    check(buttons.length === 3 && buttons[0].label === 'Claim Ticket' && buttons[0].style === 3 && buttons[1].label === 'Close Ticket' && buttons[2].style === 5, 'claim, close and feedback buttons on the ticket card');
+    check(card.content.includes(`<@${userId('member')}>`) && card.content.includes(`<@&${mod}>`) && card.content.includes(`<@${userId('owner')}>`), 'new-ticket ping tags creator, mod role and owner');
+    const claimId = `kyro-ticket:claim:${guild}:${userId('member')}`;
+    const claimButton = { type: 3, application_id: bot, token: 'ticket-claim', guild_id: guild, channel_id: ticketChan, message: { id: ticketMsg, embeds: card.embeds, components: card.components }, member: { user: { id: userId('member'), username: 'member-editor' }, roles: [] }, data: { custom_id: claimId } };
+    const denied = await module.handleApplicationInteractions(await signed(claimButton), env, { waitUntil: work => ticketDeferred.push(work) });
+    const deniedBody = await denied.json();
+    check(deniedBody.type === 4 && /Only staff can claim/.test(deniedBody.data.content), 'non-staff cannot claim');
+    const selfClaim = await module.handleApplicationInteractions(await signed({ ...claimButton, member: { user: { id: userId('member') }, roles: [mod] } }), env, { waitUntil: work => ticketDeferred.push(work) });
+    check((await selfClaim.json()).type === 4, 'the opener cannot claim their own ticket');
+    const staffClaim = await module.handleApplicationInteractions(await signed({ ...claimButton, token: 'ticket-claim-2', member: { user: { id: userId('mod'), username: 'mod-editor', global_name: 'Mod Editor' }, roles: [mod] } }), env, { waitUntil: work => ticketDeferred.push(work) });
+    check((await staffClaim.json()).type === 5, 'staff claim acknowledged immediately');
+    await Promise.all(ticketDeferred.splice(0));
+    check(ticketTopic.endsWith(`| claimed by ${userId('mod')}`), 'claim is recorded in the channel topic');
+    const modOverwrite = ticketOverwrites.find(o => o.type === 0 && o.id === mod);
+    check((BigInt(modOverwrite.deny) & 2048n) === 2048n && (BigInt(modOverwrite.allow) & 2048n) === 0n, 'mod role loses send while a ticket is claimed');
+    const claimerOverwrite = ticketOverwrites.find(o => o.type === 1 && o.id === userId('mod'));
+    check(claimerOverwrite && claimerOverwrite.allow === '68608', 'the claimer keeps view and send');
+    check(ticketOverwrites.find(o => o.type === 1 && o.id === userId('member')).allow === '68608', 'ticket creator keeps send');
+    check(ticketMsgPatches.length === 1 && ticketMsgPatches[0].embeds[0].footer.text === 'Claimed by Mod Editor', 'ticket card shows who claimed it');
+    check(ticketMsgPatches[0].components[0].components.every(c => !String(c.custom_id || '').startsWith('kyro-ticket:claim:')) && ticketMsgPatches[0].components[0].components.length === 2, 'claim button removed after claiming');
+    check(ticketAcks.some(a => /You claimed this ticket/.test(a.content || '')), 'claimer gets a confirmation');
+    const second = await module.handleApplicationInteractions(await signed({ ...claimButton, token: 'ticket-claim-3', member: { user: { id: userId('owner') }, permissions: '8', roles: [] } }), env, { waitUntil: work => ticketDeferred.push(work) });
+    check((await second.json()).type === 5, 'second staff claim acknowledged');
+    await Promise.all(ticketDeferred.splice(0));
+    check(ticketAcks.some(a => /already claimed by/.test(a.content || '')), 'second claimer is told who holds the ticket');
+    check(ticketChanPatches.length === 1, 'a claimed ticket is not re-locked');
+    const closeButton = { type: 3, application_id: bot, token: 'ticket-close', guild_id: guild, channel_id: ticketChan, message: { id: ticketMsg }, member: { user: { id: userId('member') }, roles: [] }, data: { custom_id: `kyro-ticket:close:${guild}:${userId('member')}` } };
+    const closed = await module.handleApplicationInteractions(await signed(closeButton), env, { waitUntil: work => ticketDeferred.push(work) });
+    check((await closed.json()).type === 4, 'opener can close');
+    await Promise.all(ticketDeferred.splice(0));
+    check(ticketDeletes.length === 1, 'close deletes the ticket channel');
+  } finally { global.fetch = originalFetch; }
+
   const rows = new Map();
   let alarm = null, owner = userId('owner'), allowMod = true, patchRateLimit = true;
   const storage = {
