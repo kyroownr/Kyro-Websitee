@@ -1656,7 +1656,14 @@ async function finishGiveaway(guildId, gv, reroll) {
    giveaways", never recounts entries and never ends the post. Scans recent
    messages of every text-like channel for the bot's own giveaway embeds. */
 async function syncGiveawaysFromDiscord(guildId) {
-  const botId = await getBotUserId();
+  // The poller holds a DB snapshot for the whole tick and saves it at the end;
+  // adopting mid-tick would be clobbered by that stale save. Wait for the tick
+  // to finish, then hold the poller flag so no tick starts under us.
+  await pollPromise.catch(() => {});
+  while (polling) await new Promise((r) => setTimeout(r, 100));
+  polling = true;
+  try {
+    const botId = await getBotUserId();
   const channels = await discordFetch(`/guilds/${guildId}/channels`);
   const db = loadDB();
   const g = guildConfig(db, guildId);
@@ -1694,6 +1701,7 @@ async function syncGiveawaysFromDiscord(guildId) {
   }
   saveDB(db);
   return { adopted };
+  } finally { polling = false; }
 }
 
 /* Host an embed image by uploading it to Discord as a attachment in a private
@@ -2604,8 +2612,10 @@ function scanChannelSet(g) {
 // ---------------------------------------------------------------------------
 const lastRun = { giveaways: 0, reactionRoles: 0, automod: 0, welcome: 0, tempbans: 0, security: 0, engagement: 0, schedule: 0, birthdays: 0, stats: 0 };
 let polling = false;
+let pollPromise = Promise.resolve();
+function pollTick() { pollPromise = pollTickRun(); return pollPromise; }
 
-async function pollTick() {
+async function pollTickRun() {
   if (polling || !BOT_TOKEN) return;
   polling = true;
   try {
