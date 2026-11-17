@@ -39,6 +39,13 @@ function jsonRes(obj, status) {
 
 // Discord REST mock router.
 const mockOverwrites = { chan1: [], chan2: [] };
+// When set, the channel-visibility test serves this fixture instead of the
+// default three-channel list. Reset to null afterwards so nothing else changes.
+let extraChannels = null;
+// Giveaway-sync and image-upload fixtures. Empty/null = fall through to the
+// default mock behaviour so earlier assertions are unaffected.
+let giveawayScan = {};
+let reactionFixture = null;
 // Mutable so the honeypot test can add a staff member and a bot message to the
 // same channel without disturbing the earlier automod assertions.
 let chan1Messages = [
@@ -65,6 +72,13 @@ global.fetch = async (url, opts) => {
   try { body = opts && opts.body ? JSON.parse(opts.body) : null; } catch (e) {}
   calls.push({ method, path: p, body });
 
+  const msgChan = /^\/channels\/([^/]+)\/messages$/.exec(p);
+  if (method === 'GET' && msgChan && giveawayScan[msgChan[1]]) return jsonRes(giveawayScan[msgChan[1]]);
+  if (method === 'GET' && /\/reactions\//.test(p) && reactionFixture) return jsonRes(reactionFixture);
+  if (method === 'POST' && msgChan && opts.body && typeof opts.body.append === 'function') {
+    return jsonRes({ id: 'msg_up', attachments: [{ url: 'https://cdn.discordapp.com/attachments/1/2/image.png' }] });
+  }
+
   if (p === '/users/@me') return jsonRes({ id: BOT_ID, username: 'UtilityBot' });
   // The invite must target the app this token belongs to, even though the
   // dashboard used to hardcode a different client id.
@@ -76,6 +90,7 @@ global.fetch = async (url, opts) => {
   if (/^\/guilds\/guild1$/.test(p)) return jsonRes({ id: 'guild1', name: 'Test Server', icon: null, owner_id: '1052909930073567232', approximate_member_count: 100, approximate_presence_count: 20, verification_level: 2, premium_tier: 1 });
   if (p === '/guilds/guild1/channels') {
     if (method === 'POST') return jsonRes({ id: 'chan_new_' + (body && body.name || 'x').replace(/[^a-z0-9]/g, ''), name: body && body.name, type: body && body.type || 0, permission_overwrites: [] });
+    if (extraChannels) return jsonRes(extraChannels);
     return jsonRes([
       { id: 'chan1', name: 'general', type: 0, position: 1, permission_overwrites: mockOverwrites.chan1 },
       { id: 'chan2', name: 'giveaways', type: 0, position: 2, permission_overwrites: mockOverwrites.chan2 },
@@ -628,6 +643,106 @@ async function waitForServer() {
   const statusAfter = await req('GET', '/api/status');
   ok(statusAfter.data.commandsRegistered === 2, 'status reports 2 guilds with commands registered');
 
-  console.log(JSON.stringify({ checks: passed, multiServer: 'guild selector + per-guild isolation', features: 'moderation, giveaways, reaction roles, automod, welcome, logging, setup, security, honeypot, utility, embed, engagement, levels, birthdays, suggestions, polls, scheduler, stat channels, role packs, admin gate, slash-command registration', discord: 'mocked REST', result: 'passed' }));
+  // Bulk "set default role": give every current member a role. Reset the role and
+  // member fixtures (earlier cleanup tests mutated them) so this is self-contained.
+  // Role ids are numeric snowflakes, as Discord returns in production.
+  guild1Roles = [
+    { id: 'guild1', name: '@everyone', color: 0, position: 0, managed: false, permissions: '0' },
+    { id: '111111111111111111', name: 'Member', color: 0, position: 1, managed: false, permissions: '0' },
+    { id: '222222222222222222', name: 'VIP', color: 0, position: 2, managed: false, permissions: '0' },
+    { id: 'role_bot', name: 'Kyro Bot', color: 0, position: 10, managed: false, permissions: '8' }
+  ];
+  guild1Members = [
+    { user: { id: '200000000000000003', username: 'alice', bot: false }, roles: ['111111111111111111'] },
+    { user: { id: '200000000000000004', username: 'bob', bot: false }, roles: ['111111111111111111', '222222222222222222'] }
+  ];
+  const bulk = await req('POST', '/api/roles/bulk', { guild: 'guild1', roleId: '222222222222222222' });
+  ok(bulk.status === 200 && bulk.data.ok === true, 'bulk role assign succeeds');
+  ok(bulk.data.added === 1 && bulk.data.skipped === 1 && bulk.data.failed === 0, 'bulk assign adds only the member lacking the role');
+  ok(bulk.data.role === 'VIP', 'bulk assign reports the role name');
+  ok(lastCall((c) => c.method === 'PUT' && c.path === '/guilds/guild1/members/200000000000000003/roles/222222222222222222'), 'bulk assign PUT the role onto the member');
+  const bulkSkip = await req('POST', '/api/roles/bulk', { guild: 'guild1', roleId: '111111111111111111' });
+  ok(bulkSkip.status === 200 && bulkSkip.data.skipped === 2 && bulkSkip.data.added === 0, 'bulk assign skips members who already have the role');
+  const bulkEveryone = await req('POST', '/api/roles/bulk', { guild: 'guild1', roleId: 'guild1' });
+  ok(bulkEveryone.status === 400, 'bulk assign refuses the @everyone role');
+  const bulkBad = await req('POST', '/api/roles/bulk', { guild: 'guild1', roleId: 'nope' });
+  ok(bulkBad.status === 400, 'bulk assign refuses a malformed role id');
+
+  // Channel visibility: open the community channels, lock the staff hub. A
+  // self-contained fixture with decorative names, a staff category, a forum, the
+  // verify channel and a private ticket that must all be handled correctly.
+  guild1Roles = guild1Roles.concat([{ id: '333333333333333333', name: 'Mod', color: 0, position: 5, managed: false, permissions: '0' }]);
+  guild1Roles = guild1Roles.concat([{ id: '444444444444444444', name: 'Verified', color: 0, position: 2, managed: false, permissions: '0' }]);
+  extraChannels = [
+    { id: 'cat_staff', name: 'Staff for mods+', type: 4, position: 0 },
+    { id: 'ch_transcript', name: 'transcript-log-channel', type: 0, parent_id: 'cat_staff', permission_overwrites: [] },
+    { id: 'ch_vault', name: 'vault-asset-storage', type: 0, parent_id: 'cat_staff', permission_overwrites: [] },
+    { id: 'ch_updates', name: 'updates-for-mods', type: 0, parent_id: 'cat_staff', permission_overwrites: [] },
+    { id: 'ch_ann', name: '📢┃announcements', type: 0, permission_overwrites: [{ id: 'guild1', type: 0, allow: '0', deny: '1024' }] },
+    { id: 'ch_general', name: 'general chat', type: 0, permission_overwrites: [] },
+    { id: 'ch_download', name: 'downloads-links', type: 0, permission_overwrites: [] },
+    { id: 'ch_incoming', name: 'incomming', type: 0, permission_overwrites: [] },
+    { id: 'ch_flexx', name: 'flexx', type: 0, permission_overwrites: [] },
+    { id: 'ch_staffapp', name: 'staff applications', type: 0, parent_id: 'cat_staff', permission_overwrites: [] },
+    { id: 'ch_staffgeneral', name: 'general-chat', type: 0, parent_id: 'cat_staff', permission_overwrites: [] },
+    { id: 'ch_help', name: 'help', type: 15, permission_overwrites: [] },
+    { id: 'ch_verify', name: '✅┃verify', type: 0, permission_overwrites: [] },
+    { id: 'ch_ticket', name: 'ticket-0001', type: 0, permission_overwrites: [] },
+    { id: 'ch_memes', name: 'memes', type: 0, permission_overwrites: [] }
+  ];
+  const cv = await req('POST', '/api/channels/visibility', { guild: 'guild1' });
+  ok(cv.status === 200, 'channel visibility applies');
+  ok(cv.data.public.length === 7, 'seven community channels opened');
+  ok(cv.data.public.includes('📢┃announcements') && cv.data.public.includes('general chat') && cv.data.public.includes('downloads-links') && cv.data.public.includes('incomming') && cv.data.public.includes('flexx') && cv.data.public.includes('help'), 'decorated, spaced, hyphenated and typo names all resolve');
+  ok(cv.data.private.length === 4 && cv.data.private.includes('transcript-log-channel') && cv.data.private.includes('vault-asset-storage') && cv.data.private.includes('updates-for-mods'), 'the staff hub is locked to staff');
+  ok(cv.data.public.includes('staff applications') && !cv.data.private.includes('staff applications'), 'staff-applications stays public even under the staff category');
+  ok(cv.data.public.includes('general chat') && cv.data.private.includes('general-chat') && !cv.data.public.includes('general-chat'), 'the community general-chat opens but the staff-hub namesake stays locked');
+  const annPatch = lastCall((c) => c.method === 'PATCH' && c.path === '/channels/ch_ann');
+  const annEveryone = annPatch.body.permission_overwrites.find((o) => o.id === 'guild1' && o.type === 0);
+  ok((BigInt(annEveryone.deny) & 1024n) !== 0n && (BigInt(annEveryone.allow) & 1024n) === 0n, 'opened channels stay hidden from unverified @everyone (mandatory verification)');
+  ok(annPatch.body.permission_overwrites.some((o) => o.id === '444444444444444444' && o.type === 0 && (BigInt(o.allow) & 1024n) !== 0n), 'the Verified role gets full view access to opened channels');
+  ok(annPatch.body.permission_overwrites.some((o) => o.id === BOT_ID && o.type === 1 && (BigInt(o.allow) & 1024n) !== 0n), 'the bot keeps posting rights in public channels');
+  const trPatch = lastCall((c) => c.method === 'PATCH' && c.path === '/channels/ch_transcript');
+  const trEveryone = trPatch.body.permission_overwrites.find((o) => o.id === 'guild1' && o.type === 0);
+  ok((BigInt(trEveryone.deny) & 1024n) !== 0n, 'a staff-hub channel hides from @everyone');
+  ok(trPatch.body.permission_overwrites.some((o) => o.id === '333333333333333333' && (BigInt(o.allow) & 1024n) !== 0n), 'staff keep view access to the locked hub');
+  ok(!calls.some((c) => c.method === 'PATCH' && c.path === '/channels/ch_verify'), 'the verify channel is left untouched');
+  ok(!calls.some((c) => c.method === 'PATCH' && c.path === '/channels/ch_ticket'), 'private ticket channels are left untouched');
+  ok(!calls.some((c) => c.method === 'PATCH' && c.path === '/channels/ch_memes'), 'channels outside the list are left untouched');
+  extraChannels = null;
+
+  // Giveaway sync: adopt a giveaway post that lives in Discord but not the DB,
+  // recount its entries from reactions, then end it into a closed-with-winners post.
+  extraChannels = [{ id: 'gvchan', name: 'giveaways', type: 0, permission_overwrites: [] }];
+  giveawayScan = { gvchan: [{
+    id: 'gvmsg1', author: { id: BOT_ID }, content: '🎉 **GIVEAWAY** 🎉', timestamp: new Date().toISOString(),
+    embeds: [{ title: '🎉 5 downloads', description: 'Anything u want\n\n**Winners:** 10\n\nReact with 🎉 to enter!', footer: { text: '0 entries • Utility Bot Giveaways' }, timestamp: new Date(Date.now() - 3600e3).toISOString() }]
+  }] };
+  reactionFixture = [{ id: BOT_ID }, { id: '200000000000000003' }, { id: '200000000000000004' }];
+  const sync = await req('POST', '/api/giveaway/sync', { guild: 'guild1' });
+  ok(sync.status === 200 && sync.data.adopted.length === 1, 'sync adopts the untracked Discord giveaway');
+  const cfgAfterSync = await req('GET', '/api/config?guild=guild1');
+  const adopted = (cfgAfterSync.data.giveaways || []).find((x) => x.message_id === 'gvmsg1');
+  ok(Boolean(adopted), 'the adopted giveaway is listed in the dashboard');
+  ok(adopted && adopted.entrants.length === 2, 'adopted giveaway counts real reaction entries (bot excluded)');
+  ok(adopted && adopted.winners === 10, 'adopted giveaway keeps its winner count');
+  const endAdopted = await req('POST', '/api/giveaway/end', { guild: 'guild1', id: adopted.id });
+  ok(endAdopted.status === 200, 'the adopted giveaway can be ended');
+  const endPatch = lastCall((c) => c.method === 'PATCH' && c.path === '/channels/gvchan/messages/gvmsg1');
+  ok(endPatch && /Giveaway finished — these are the winners:/.test(endPatch.body.embeds[0].description), 'the original post is edited to announce the winners');
+  ok(endPatch && /🔒 This giveaway is closed\./.test(endPatch.body.embeds[0].description), 'the original post is marked closed');
+  ok(endPatch && /2 entries • Kyro Giveaways/.test(endPatch.body.embeds[0].footer.text), 'the footer shows real entries and Kyro branding');
+  giveawayScan = {}; reactionFixture = null; extraChannels = null;
+
+  // Embed image upload: a pasted/uploaded file is hosted and a CDN URL returned.
+  const up = await req('POST', '/api/embed/image', { guild: 'guild1', filename: 'a.png', contentType: 'image/png', dataBase64: Buffer.from('fake-png').toString('base64') });
+  ok(up.status === 200 && up.data.url === 'https://cdn.discordapp.com/attachments/1/2/image.png', 'image upload returns a public CDN url');
+  ok(lastCall((c) => c.method === 'POST' && c.path === '/channels/chan1/messages' && c.body === null), 'the image was posted to Discord as a multipart attachment');
+  const upBadType = await req('POST', '/api/embed/image', { guild: 'guild1', filename: 'a.html', contentType: 'text/html', dataBase64: Buffer.from('x').toString('base64') });
+  ok(upBadType.status === 400, 'non-image uploads are rejected');
+  const upEmpty = await req('POST', '/api/embed/image', { guild: 'guild1', filename: 'a.png', contentType: 'image/png', dataBase64: '' });
+  ok(upEmpty.status === 400, 'empty image uploads are rejected');
+
+  console.log(JSON.stringify({ checks: passed, multiServer: 'guild selector + per-guild isolation', features: 'moderation, giveaways, reaction roles, automod, welcome, logging, setup, security, honeypot, utility, embed, engagement, levels, birthdays, suggestions, polls, scheduler, stat channels, role packs, admin gate, slash-command registration, bulk default role, channel visibility, giveaway sync, embed image upload', discord: 'mocked REST', result: 'passed' }));
   shutdown(0);
 })().catch((err) => { console.error('TEST ERROR:', err.message || err); shutdown(1); });

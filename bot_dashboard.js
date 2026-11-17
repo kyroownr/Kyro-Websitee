@@ -799,6 +799,51 @@ async function botTopPosition(guildId, roles) {
   return top;
 }
 
+/* Give every current member a role — the "set default role" tool. Paginates the
+   full member list, skips bots and members who already hold the role, and grants
+   it one member at a time through the rate-limited REST helper. Fail-soft per
+   member so a single hierarchy/permission error never aborts the whole run. */
+async function bulkAssignRole(guildId, roleIdRaw) {
+  await requireBotPermission(guildId, PERM_MANAGE_ROLES, 'Manage Roles', 'giving everyone a role');
+  const roleId = String(roleIdRaw || '').trim();
+  if (!/^\d{17,20}$/.test(roleId)) throw Object.assign(new Error('Pick a role first.'), { status: 400 });
+  if (roleId === guildId) throw Object.assign(new Error('The @everyone role cannot be assigned.'), { status: 400 });
+  const roles = await discordFetch(`/guilds/${guildId}/roles`);
+  const target = (Array.isArray(roles) ? roles : []).find((r) => r.id === roleId);
+  if (!target) throw Object.assign(new Error('That role no longer exists.'), { status: 404 });
+  if (target.managed) throw Object.assign(new Error('That role is managed by an integration and cannot be assigned manually.'), { status: 400 });
+  const botTop = await botTopPosition(guildId, roles);
+  if (target.position >= botTop) {
+    throw Object.assign(new Error(`Drag the **Kyro Bot** role above **${target.name}** in Server Settings → Roles, then run this again.`), { status: 403 });
+  }
+  let after = '';
+  let total = 0, added = 0, skipped = 0, failed = 0;
+  const errors = [];
+  for (let page = 0; page < 100; page++) {
+    const batch = await discordFetch(`/guilds/${guildId}/members?limit=1000${after ? '&after=' + encodeURIComponent(after) : ''}`);
+    if (!Array.isArray(batch) || !batch.length) break;
+    for (const member of batch) {
+      const user = member.user || {};
+      if (user.bot) continue;
+      total++;
+      if ((member.roles || []).includes(roleId)) { skipped++; continue; }
+      try {
+        await discordFetch(`/guilds/${guildId}/members/${user.id}/roles/${roleId}`, {
+          method: 'PUT', headers: { 'X-Audit-Log-Reason': 'Kyro set default role' }
+        });
+        added++;
+      } catch (err) {
+        failed++;
+        if (errors.length < 10) errors.push(`${user.username || user.id}: ${err.message}`);
+      }
+    }
+    if (batch.length < 1000) break;
+    after = (batch[batch.length - 1].user && batch[batch.length - 1].user.id) || '';
+    if (!after) break;
+  }
+  return { ok: failed === 0, role: target.name, roleId, total, added, skipped, failed, errors };
+}
+
 async function roleCleanupPlan(guildId, keepRaw) {
   await requireBotPermission(guildId, PERM_MANAGE_ROLES, 'Manage Roles', 'role cleanup');
   const keep = Math.max(0, Math.min(ROLE_CLEANUP_MAX, Math.trunc(Number(keepRaw)) || 0));
@@ -948,6 +993,103 @@ async function makeChannelStaffOnly(guildId, channel) {
     body: JSON.stringify({ permission_overwrites: overwrites })
   });
   return { ...channel, permission_overwrites: overwrites, staffOnly: true };
+}
+
+/* Opens a channel to verified members: the Verified role gets the full chat
+   bundle, @everyone is denied View so role-less / unverified members must verify
+   first (mandatory verification), the bot keeps posting rights, and every other
+   overwrite (staff perks, muted read-only) is preserved untouched. If no Verified
+   role exists the channel falls back to fully public so nobody is locked out. */
+async function makeChannelPublic(guildId, channel, botId, verifiedRoleId) {
+  const existing = Array.isArray(channel.permission_overwrites) ? channel.permission_overwrites : [];
+  const overwrites = existing.filter((o) =>
+    !(o.id === guildId && o.type === 0) &&
+    !(o.id === botId && o.type === 1) &&
+    !(verifiedRoleId && o.id === verifiedRoleId && o.type === 0));
+  if (verifiedRoleId) {
+    overwrites.push({ id: guildId, type: 0, allow: '0', deny: String(PERM.VIEW) });
+    overwrites.push({ id: verifiedRoleId, type: 0, allow: String(CHAT_BASICS), deny: '0' });
+  } else {
+    overwrites.push({ id: guildId, type: 0, allow: String(CHAT_BASICS), deny: '0' });
+  }
+  const botAllow = PERM.VIEW | PERM.SEND | PERM.REACT | PERM.EMBED | PERM.ATTACH | PERM.HISTORY | PERM.MANAGE_MSG | PERM.THREAD_CREATE | PERM.THREAD_SEND;
+  overwrites.push({ id: botId, type: 1, allow: String(botAllow), deny: '0' });
+  await discordFetch(`/channels/${channel.id}`, {
+    method: 'PATCH', headers: { 'X-Audit-Log-Reason': 'Kyro public channel' },
+    body: JSON.stringify({ permission_overwrites: overwrites })
+  });
+  return { ...channel, permission_overwrites: overwrites, public: true };
+}
+
+/* The community layout the owner asked for: a fixed list of channels everyone
+   can see and use, and a staff hub hidden from regular members. Names are
+   matched after stripping every non-alphanumeric character, so emoji prefixes,
+   ┃ separators, spaces and hyphens ("📢┃announcements", "general chat",
+   "download-links", "incomming") all resolve. The verify channel and private
+   ticket channels are never touched. staff-applications stays public for
+   submissions — the bot's review replies live in private tickets, not here. */
+const PUBLIC_CHANNEL_NAMES = new Set([
+  'alert', 'socialmedia', 'partners', 'requests', 'feedback', 'announcements',
+  'rules', 'downloadlinks', 'downloadslinks', 'downloads', 'questions', 'suggestions', 'showcase',
+  'generalchat', 'general', 'resources', 'flexx', 'incomming', 'incoming', 'help',
+  'staffapplications'
+]);
+const STAFF_HUB_NAMES = new Set(['transcriptlogchannel', 'vaultassetstorage', 'updatesformods']);
+
+async function applyChannelVisibility(guildId) {
+  await requireBotPermission(guildId, PERM_MANAGE_CHANNELS, 'Manage Channels', 'channel visibility');
+  const [channels, roles, botId] = await Promise.all([
+    discordFetch(`/guilds/${guildId}/channels`),
+    discordFetch(`/guilds/${guildId}/roles`),
+    getBotUserId()
+  ]);
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const list = Array.isArray(channels) ? channels : [];
+  // Public channels are open to the Verified role; resolve it (or create it) so
+  // unverified / role-less members stay gated until they press Verify.
+  let verifiedRoleId = ((Array.isArray(roles) ? roles : []).find((r) => !r.managed && String(r.name || '').trim().toLowerCase() === 'verified') || {}).id || '';
+  if (!verifiedRoleId) {
+    try {
+      const made = await discordFetch(`/guilds/${guildId}/roles`, {
+        method: 'POST', headers: { 'X-Audit-Log-Reason': 'Kyro channel visibility' },
+        body: JSON.stringify({ name: 'Verified', color: 0x30d158, permissions: '0', mentionable: false })
+      });
+      verifiedRoleId = made.id || '';
+    } catch (e) {}
+  }
+  // Any staff category ("Staff for mods+", "Staff Hub") is hidden from members.
+  const staffCategoryIds = new Set(list
+    .filter((c) => c.type === 4 && /staff/.test(norm(c.name)))
+    .map((c) => c.id));
+  const db = loadDB();
+  const cfg = guildConfig(db, guildId);
+  const verifyChannelId = (cfg.verification && cfg.verification.channelId) || '';
+  const madePublic = [], madePrivate = [], skipped = [];
+  for (const ch of list) {
+    if (ch.type === 4) continue; // categories are handled through their children
+    if (![0, 2, 5, 15].includes(ch.type)) continue; // text, voice, announcement, forum
+    const n = norm(ch.name);
+    const underStaff = ch.parent_id && staffCategoryIds.has(ch.parent_id);
+    // staff-applications is the one staff-named channel members must still see;
+    // everything else inside a staff category stays locked, including a second
+    // #general-chat that lives in the staff hub rather than the community one.
+    const decide = n === 'staffapplications' ? 'public'
+      : (underStaff || STAFF_HUB_NAMES.has(n)) ? 'private'
+      : PUBLIC_CHANNEL_NAMES.has(n) ? 'public'
+      : 'skip';
+    if (decide === 'skip') continue;
+    if (decide === 'public' && verifyChannelId && ch.id === verifyChannelId) {
+      skipped.push(`${ch.name} — verification channel left as-is`);
+      continue;
+    }
+    try {
+      if (decide === 'private') { await makeChannelStaffOnly(guildId, ch); madePrivate.push(ch.name); }
+      else { await makeChannelPublic(guildId, ch, botId, verifiedRoleId); madePublic.push(ch.name); }
+    } catch (err) { skipped.push(`${ch.name} — ${err.message}`); }
+  }
+  await logEvent(guildId, 'security', 'Channel visibility applied',
+    `**Public:** ${madePublic.length}\n${madePublic.map((n) => '• ' + n).join('\n')}\n**Staff-only:** ${madePrivate.length}\n${madePrivate.map((n) => '• ' + n).join('\n')}`.slice(0, 1900), 0x2997ff);
+  return { public: madePublic, private: madePrivate, skipped };
 }
 
 async function ensureChannel(guildId, wantedName, options = {}) {
@@ -1433,16 +1575,18 @@ function giveawayEmbed(gv, ended, winnerIds) {
     '',
     `**Winners:** ${gv.winners}`,
     ended
-      ? (winnerIds && winnerIds.length ? `**Winner(s):** ${winnerIds.map((id) => `<@${id}>`).join(', ')}` : '**No valid entries.**')
+      ? (winnerIds && winnerIds.length
+        ? `**Giveaway finished — these are the winners:**\n${winnerIds.map((id) => `<@${id}>`).join(', ')}`
+        : '**Giveaway finished — no valid entries.**')
       : `**Ends:** <t:${endsUnix}:R> (<t:${endsUnix}:f>)`,
     '',
-    ended ? 'This giveaway has ended.' : 'React with 🎉 to enter!'
+    ended ? '🔒 This giveaway is closed.' : 'React with 🎉 to enter!'
   ].filter((x) => x !== null).join('\n');
   return {
     title: `🎉 ${gv.prize}`.slice(0, 256),
     description: desc.slice(0, 4000),
     color: ended ? 0x95a5a6 : 0x57f287,
-    footer: { text: `${gv.entrants ? gv.entrants.length : 0} entries • Utility Bot Giveaways` },
+    footer: { text: `${gv.entrants ? gv.entrants.length : 0} entries • Kyro Giveaways` },
     timestamp: new Date(gv.ends_at).toISOString()
   };
 }
@@ -1505,6 +1649,83 @@ async function finishGiveaway(guildId, gv, reroll) {
   saveDB(db);
   await logEvent(guildId, 'giveaways', reroll ? 'Giveaway rerolled' : 'Giveaway ended', `**Prize:** ${gv.prize}\n**Entries:** ${gv.entrants.length}\n**Winner(s):** ${winners.length ? winners.map((id) => `<@${id}>`).join(', ') : 'none'}`, 0x57f287);
   return gv;
+}
+
+/* Adopt giveaway posts that already exist in Discord but are not in the local
+   DB (e.g. created before a DB reset). Without this the dashboard shows "no
+   giveaways", never recounts entries and never ends the post. Scans recent
+   messages of every text-like channel for the bot's own giveaway embeds. */
+async function syncGiveawaysFromDiscord(guildId) {
+  const botId = await getBotUserId();
+  const channels = await discordFetch(`/guilds/${guildId}/channels`);
+  const db = loadDB();
+  const g = guildConfig(db, guildId);
+  g.giveaways = g.giveaways || [];
+  const tracked = new Set(g.giveaways.map((x) => x.message_id));
+  const adopted = [];
+  for (const ch of (Array.isArray(channels) ? channels : [])) {
+    if (![0, 5, 15].includes(ch.type)) continue;
+    let msgs = [];
+    try { msgs = await discordFetch(`/channels/${ch.id}/messages?limit=30`); } catch (e) { continue; }
+    for (const m of (Array.isArray(msgs) ? msgs : [])) {
+      if (!m.author || m.author.id !== botId || tracked.has(m.id)) continue;
+      const emb = (m.embeds || [])[0];
+      if (!emb) continue;
+      const isGv = /GIVEAWAY/i.test(m.content || '') || /Giveaways$/i.test((emb.footer && emb.footer.text) || '');
+      if (!isGv) continue;
+      const descText = String(emb.description || '');
+      const winnersMatch = /\*\*Winners:\*\*\s*(\d+)/.exec(descText);
+      const endsAt = emb.timestamp ? Date.parse(emb.timestamp) : Date.now();
+      let entrants = [];
+      try { entrants = (await getReactionUsers(ch.id, m.id, '🎉')).filter((u) => u.id !== botId).map((u) => u.id); } catch (e) {}
+      const gv = {
+        id: uid(), channel: ch.id, message_id: m.id,
+        prize: String(emb.title || '').replace(/^🎉\s*/, '').trim() || 'Giveaway',
+        description: (descText.split('\n')[0] || '').slice(0, 1000),
+        winners: winnersMatch ? Math.min(Math.max(parseInt(winnersMatch[1], 10) || 1, 1), 20) : 1,
+        ends_at: isNaN(endsAt) ? Date.now() : endsAt,
+        ended: /closed|finished|has ended/i.test(descText),
+        entrants, winnerIds: [], created_at: m.timestamp || new Date().toISOString()
+      };
+      g.giveaways.unshift(gv);
+      tracked.add(m.id);
+      adopted.push(gv.prize);
+    }
+  }
+  saveDB(db);
+  return { adopted };
+}
+
+/* Host an embed image by uploading it to Discord as a attachment in a private
+   storage channel. The returned cdn.discordapp.com URL is public and permanent,
+   so embeds render without the owner needing any external image host or URL. */
+const EMBED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const EMBED_IMAGE_MAX = 8 * 1024 * 1024;
+async function uploadEmbedImage(guildId, opts) {
+  if (!BOT_TOKEN) throw Object.assign(new Error('Bot token missing.'), { status: 500 });
+  const contentType = String(opts.contentType || '').toLowerCase();
+  if (!EMBED_IMAGE_TYPES.has(contentType)) throw Object.assign(new Error('Only PNG, JPEG, GIF or WebP images are supported.'), { status: 400 });
+  const buf = Buffer.from(String(opts.dataBase64 || ''), 'base64');
+  if (!buf.length) throw Object.assign(new Error('Empty image.'), { status: 400 });
+  if (buf.length > EMBED_IMAGE_MAX) throw Object.assign(new Error('Image is larger than 8 MB.'), { status: 400 });
+  const channels = await discordFetch(`/guilds/${guildId}/channels`);
+  const list = Array.isArray(channels) ? channels : [];
+  const host = list.find((c) => c.type === 0 && /asset-storage|vault-asset/.test(c.name))
+    || list.find((c) => c.type === 0 && /mod-log|transcript-log/.test(c.name))
+    || list.find((c) => c.type === 0);
+  if (!host) throw Object.assign(new Error('No channel available to host the image.'), { status: 500 });
+  const filename = String(opts.filename || 'image.png').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 64) || 'image.png';
+  const form = new FormData();
+  form.append('payload_json', JSON.stringify({ allowed_mentions: { parse: [] } }));
+  form.append('files[0]', new Blob([buf], { type: contentType }), filename);
+  const res = await fetch(`https://discord.com/api/v10/channels/${host.id}/messages`, {
+    method: 'POST', headers: { Authorization: `Bot ${BOT_TOKEN}` }, body: form
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(data.message || `Discord HTTP ${res.status}`), { status: res.status });
+  const url = data.attachments && data.attachments[0] && data.attachments[0].url;
+  if (!url) throw Object.assign(new Error('Discord did not return an image URL.'), { status: 502 });
+  return { url };
 }
 
 // ---------------------------------------------------------------------------
@@ -2774,6 +2995,19 @@ async function handleRequest(req, res) {
       return sendJSON(res, 200, result);
     }
 
+    if (req.method === 'POST' && p === '/api/channels/visibility') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      try {
+        const result = await applyChannelVisibility(gid);
+        return sendJSON(res, 200, result);
+      } catch (err) {
+        const hint = permErrorHint(err);
+        return sendJSON(res, err.status || (hint ? 403 : 500), { error: hint || (err.message || 'Could not apply channel visibility.'), needsAdmin: Boolean(err.needsAdmin), inviteUrl: BOT_INSTALL_URL });
+      }
+    }
+
     // ---- Honeypot trap ----
     if (req.method === 'POST' && p === '/api/honeypot') {
       const body = await readBody(req);
@@ -3070,6 +3304,18 @@ async function handleRequest(req, res) {
       const gv = await createGiveaway(gid, body);
       return sendJSON(res, 200, { ok: true, giveaway: gv });
     }
+    if (req.method === 'POST' && p === '/api/giveaway/sync') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      try {
+        const result = await syncGiveawaysFromDiscord(gid);
+        return sendJSON(res, 200, result);
+      } catch (err) {
+        const hint = permErrorHint(err);
+        return sendJSON(res, hint ? 403 : 500, { error: hint || (err.message || 'Could not sync giveaways.') });
+      }
+    }
     if (req.method === 'POST' && p === '/api/giveaway/end') {
       const body = await readBody(req);
       const gid = body.guild || guildId;
@@ -3261,6 +3507,17 @@ async function handleRequest(req, res) {
       return sendJSON(res, 200, { ok: true });
     }
 
+    if (req.method === 'POST' && p === '/api/embed/image') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      try {
+        const result = await uploadEmbedImage(gid, body);
+        return sendJSON(res, 200, result);
+      } catch (err) {
+        return sendJSON(res, err.status || 500, { error: err.message || 'Could not upload the image.' });
+      }
+    }
     if (req.method === 'POST' && p === '/api/embed') {
       const body = await readBody(req);
       const gid = body.guild || guildId;
@@ -3297,6 +3554,20 @@ async function handleRequest(req, res) {
       const result = await applyPermissionPresets(gid);
       await logEvent(gid, 'security', 'Auto permissions applied', `**Updated:** ${result.applied.length}\n${result.applied.map((a) => '• ' + a).join('\n')}`.slice(0, 1900), 0x30d158);
       return sendJSON(res, 200, result);
+    }
+
+    if (req.method === 'POST' && p === '/api/roles/bulk') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      try {
+        const result = await bulkAssignRole(gid, body.roleId);
+        await logEvent(gid, 'security', 'Default role applied to everyone', `**Role:** ${result.role}\n**Added:** ${result.added} · already had it: ${result.skipped} · failed: ${result.failed}`, 0x30d158);
+        return sendJSON(res, 200, result);
+      } catch (err) {
+        const hint = permErrorHint(err);
+        return sendJSON(res, err.status || (hint ? 403 : 500), { error: hint || (err.message || 'Could not assign the role.'), needsAdmin: Boolean(err.needsAdmin), inviteUrl: BOT_INSTALL_URL });
+      }
     }
 
     if (req.method === 'POST' && p === '/api/verify/setup') {
@@ -3446,6 +3717,16 @@ server.listen(PORT, '127.0.0.1', () => {
     // guilds get them automatically. Fail-soft; never blocks the dashboard.
     ensureSlashCommands(true).catch((e) => console.warn('[Dashboard] Initial command registration failed:', e.message));
     setInterval(() => ensureSlashCommands(false).catch(() => {}), 10 * 60 * 1000);
+    // Adopt giveaway posts already live in Discord so they are listed, counted
+    // and ended even if the local DB lost them. Fail-soft per guild.
+    (async () => {
+      try {
+        const db = loadDB();
+        for (const gid of Object.keys(db.guilds || {})) {
+          try { const r = await syncGiveawaysFromDiscord(gid); if (r.adopted.length) console.log(`[Dashboard] Adopted ${r.adopted.length} existing giveaway(s) in ${gid}.`); } catch (e) {}
+        }
+      } catch (e) {}
+    })();
   }
   // /start-kyro runs on Cloudflare, so it can never open a browser on this
   // machine — opening on boot is what makes the dashboard actually appear.

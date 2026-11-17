@@ -1237,6 +1237,20 @@ export async function handleApplicationInteractions(request, env, ctx) {
       try {
         await botCall(env, `/guilds/${verifyGuildId}/members/${interaction.member.user.id}/roles/${verifyRoleId}`, 'PUT');
         ack = '✅ You are verified — every channel is unlocked. Welcome aboard!';
+        // Close the verify channel for this member now that they are verified:
+        // a member-specific View deny overrides the Verified role's allow, so
+        // the channel disappears from their list while staying open for newcomers.
+        try {
+          const channels = await botCall(env, `/guilds/${verifyGuildId}/channels`);
+          const verifyChannel = (Array.isArray(channels) ? channels : []).find(c => c.type === 0 && /verify/i.test(c.name || ''));
+          if (verifyChannel) {
+            const overwrites = Array.isArray(verifyChannel.permission_overwrites) ? verifyChannel.permission_overwrites.slice() : [];
+            const i = overwrites.findIndex(o => o.id === interaction.member.user.id && o.type === 1);
+            const entry = { id: interaction.member.user.id, type: 1, allow: '0', deny: '1024' };
+            if (i >= 0) overwrites[i] = entry; else overwrites.push(entry);
+            await botCall(env, `/channels/${verifyChannel.id}`, 'PATCH', { permission_overwrites: overwrites }, { 'X-Audit-Log-Reason': 'Kyro verification: hide verify channel after verify' });
+          }
+        } catch (e) { /* hiding is best-effort; the role grant already succeeded */ }
       } catch (err) {
         ack = '❌ Could not verify you' + (String(err.message).toLowerCase().includes('permission') || String(err.message).toLowerCase().includes('missing')
           ? ' — ask the Server Owner to re-grant Administrator for the bot.' : ': ' + (err.message || 'try again.'));

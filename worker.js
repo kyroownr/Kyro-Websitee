@@ -244,6 +244,43 @@ const incomingChannelId = (env) => channelId(env, 'DISCORD_INCOMING_CHANNEL_ID',
 const auditChannelId = (env) => channelId(env, 'DISCORD_AUDIT_CHANNEL_ID', '1571403237788221611');
 const alertChannelId = (env) => channelId(env, 'DISCORD_ALERT_CHANNEL_ID', '1570713380778541147');
 
+/* Incoming and release announcements ping the Verified community role. The old
+   "Members" role was deleted, so its hardcoded id pinged nobody. Resolve the
+   role by name (case-insensitive "Verified") so it keeps working if the role is
+   recreated, with an env override for a different audience. Cached per guild for
+   10 minutes so a burst of releases does not hammer the roles endpoint. Returns
+   '' when no Verified role exists — announcements then post without a ping. */
+const _verifiedRoleCache = new Map();
+async function verifiedRoleId(env) {
+  const explicit = String((env && (env.DISCORD_VERIFIED_ROLE_ID || env.DISCORD_NOTIFY_ROLE_ID)) || '').trim();
+  if (/^\d{17,20}$/.test(explicit)) return explicit;
+  const guildId = String((env && (env.KYRO_GUILD_ID || env.DISCORD_GUILD_ID)) || '');
+  const token = env && env.DISCORD_BOT_TOKEN;
+  if (!guildId || !token) return '';
+  const cached = _verifiedRoleCache.get(guildId);
+  if (cached && Date.now() - cached.at < 10 * 60 * 1000) return cached.id;
+  let id = '';
+  try {
+    const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}/roles`, {
+      headers: { authorization: 'Bot ' + token }
+    });
+    if (res.ok) {
+      const roles = await res.json();
+      const match = (Array.isArray(roles) ? roles : []).find(r => String(r.name || '').trim().toLowerCase() === 'verified');
+      if (match) id = String(match.id);
+    }
+  } catch (e) {}
+  _verifiedRoleCache.set(guildId, { id, at: Date.now() });
+  return id;
+}
+/* Content + mention guard for a role ping. allowed_mentions is locked to just
+   that role so an announcement can never escalate to @everyone or user pings. */
+function rolePing(roleId, label) {
+  return roleId
+    ? { content: `${label} — <@&${roleId}>`, allowed_mentions: { parse: [], roles: [roleId] } }
+    : { content: label, allowed_mentions: { parse: [] } };
+}
+
 /* What may be uploaded as an item image. SVG is deliberately absent: it is a
    script container, and Discord serves it back from a host we do not control. */
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -1646,14 +1683,14 @@ async function handleIncomingReleases(request, url, env, cors) {
           timestamp: item.created
         };
 
+        const pingRole = await verifiedRoleId(env);
         const postRes = await fetch(`https://discord.com/api/v10/channels/${incommingChannel}/messages`, {
           method: 'POST',
           headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
           body: JSON.stringify({
-            // Only the owner's own drops may ping the server; a contributor
-            // cannot use the incoming flow as an @everyone button.
-            content: `🚀 **New Incoming Resource Waiting for Approval!**${isOwner ? ' — @everyone' : ''}`,
-            allowed_mentions: isOwner ? { parse: ['everyone'] } : { parse: [] },
+            // Ping the Verified community role (locked to that role only — never
+            // @everyone), so incoming drops reach verified members, not a deleted role.
+            ...rolePing(pingRole, '🚀 **New Incoming Resource Waiting for Approval!**'),
             embeds: [embed],
             components: [
               {
@@ -1897,12 +1934,12 @@ async function publishIncomingRelease(env, item) {
   if (item.discord_msg_id && env.DISCORD_BOT_TOKEN) {
     try {
       const incommingChannel = incomingChannelId(env);
+      const pingRole = await verifiedRoleId(env);
       await fetch(`https://discord.com/api/v10/channels/${incommingChannel}/messages/${item.discord_msg_id}`, {
         method: 'PATCH',
         headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
         body: JSON.stringify({
-          content: `🎉 **COMMUNITY GOAL REACHED — NOW LIVE!** — @everyone`,
-          allowed_mentions: { parse: ['everyone'] },
+          ...rolePing(pingRole, '🎉 **COMMUNITY GOAL REACHED — NOW LIVE!**'),
           embeds: [{
             author: { name: 'Kyro Incoming Release · Community Approval', icon_url: KYRO_ICON },
             title: `✅ JUST DROPPED: ${item.title.toUpperCase()}`,
@@ -2180,13 +2217,14 @@ async function syncModifiedDiscordEmbed(item, env) {
   ];
 
   // 1. Announcements
+  const pingRole = await verifiedRoleId(env);
   if (meta.announcement_msg_id) {
     try {
       await fetch(`https://discord.com/api/v10/channels/1539961971422658571/messages/${meta.announcement_msg_id}`, {
         method: 'PATCH',
         headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
         body: JSON.stringify({
-          content: '📢 **Vault Resource Updated** — <@&1542127783440818226>',
+          ...rolePing(pingRole, '📢 **Vault Resource Updated**'),
           embeds: [embed],
           components
         })
@@ -2269,13 +2307,14 @@ async function dispatchKyroDiscordPublish(item, env) {
 
   let announcementMsgId = null;
   let downloadsMsgId = null;
+  const pingRole = await verifiedRoleId(env);
   try {
     // 1. Announcements
     const annRes = await fetch('https://discord.com/api/v10/channels/1539961971422658571/messages', {
       method: 'POST',
       headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
       body: JSON.stringify({
-        content: isUpdate ? '📢 **Vault Update Alert** — <@&1542127783440818226>' : '🚀 **New Vault Resource Released** — <@&1542127783440818226>',
+        ...rolePing(pingRole, isUpdate ? '📢 **Vault Update Alert**' : '🚀 **New Vault Resource Released**'),
         embeds: [embed],
         components
       })
@@ -2540,12 +2579,13 @@ async function handleVaultPublish(request, url, env, cors) {
 
   if (env.DISCORD_BOT_TOKEN) {
     // 1. Announcements
+    const pingRole = await verifiedRoleId(env);
     try {
       await fetch('https://discord.com/api/v10/channels/1539961971422658571/messages', {
         method: 'POST',
         headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
         body: JSON.stringify({
-          content: isUpdate ? '📢 **Vault Update Alert** — <@&1542127783440818226>' : '🚀 **New Vault Resource Released** — <@&1542127783440818226>',
+          ...rolePing(pingRole, isUpdate ? '📢 **Vault Update Alert**' : '🚀 **New Vault Resource Released**'),
           embeds: [embed],
           components
         })

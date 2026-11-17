@@ -141,7 +141,7 @@ async function main() {
       await navigate('/?uiAuth=out');
       await evaluate("document.querySelector('#applyOpen').scrollIntoView({block:'center',behavior:'instant'});document.querySelector('#applyOpen').click()");
       await waitApply("document.querySelector('#applicationsStatusText').textContent.startsWith('Applications are open!')");
-      assert.equal(await evaluate("document.querySelector('#applicationsStatus').open && getComputedStyle(document.querySelector('#applicationsStatus')).backgroundColor === 'rgb(8, 9, 13)' && document.querySelector('#applicationsStatus').scrollWidth <= document.querySelector('#applicationsStatus').clientWidth"), true);
+      assert.equal(await evaluate("document.querySelector('#applicationsStatus').open && getComputedStyle(document.querySelector('#applicationsStatus')).backgroundColor === 'rgba(18, 20, 26, 0.94)' && document.querySelector('#applicationsStatus').scrollWidth <= document.querySelector('#applicationsStatus').clientWidth"), true);
       assert.equal(await evaluate("document.querySelector('#applicationsStatus a').getAttribute('href')"), '/apply');
       await screenshot('applications-modal-' + width + '.png');
       await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
@@ -229,7 +229,7 @@ async function main() {
       assert.equal(await evaluate("document.querySelector('#requestsDrawer').scrollWidth <= document.querySelector('#requestsDrawer').clientWidth && document.documentElement.scrollWidth <= innerWidth"), true);
       await evaluate("document.querySelector('#requestsClose').click()");
       await navigate('/missing/old-link');
-      assert.equal(await evaluate("document.title === 'Page Not Found — Kyro' && document.querySelector('h1').textContent === '404' && getComputedStyle(document.body).backgroundColor === 'rgb(8, 9, 13)'"), true);
+      assert.equal(await evaluate("document.title === 'Page Not Found — Kyro' && document.querySelector('h1').textContent === '404' && getComputedStyle(document.body).backgroundColor === 'rgb(9, 10, 13)'"), true);
       assert.equal(await evaluate("document.documentElement.scrollWidth <= innerWidth && document.querySelector('.btn-primary').getAttribute('href') === '/' && document.querySelector('.btn-primary').textContent === 'Back to the Vault'"), true);
       assert.equal(await evaluate("document.querySelector('meta[name=robots]').content"), 'noindex, follow');
       assert.equal(await evaluate("(async()=>{const response=await fetch(location.href);return response.status})()"), 404);

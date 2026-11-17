@@ -386,7 +386,9 @@
         </div>
         <div class="card">
           <div class="card-title">Active &amp; past giveaways</div>
-          <div class="card-desc">End early, reroll winners, or remove a giveaway.</div>
+          <div class="card-desc">End early, reroll winners, or remove a giveaway. If a giveaway is live in Discord but missing here, sync it.</div>
+          <div class="btn-row"><button type="button" class="btn ghost sm" id="gvSync">Sync giveaways from Discord</button></div>
+          <div class="status" id="gvSyncStatus"></div>
           <div class="list" id="gvList"></div>
         </div>
       </section>
@@ -580,6 +582,25 @@
           </div>
           <div class="status" id="vfStatus"></div>
           <div class="list" id="vfResult"></div>
+        </div>
+        <div class="card" style="border-left:3px solid #30D158">
+          <div class="card-title">🏷️ Set default role (everyone)</div>
+          <div class="card-desc">Gives the chosen role to <b>every current member</b> of the server — for example, put everyone in <b>Verified</b>. Bots are skipped and members who already have the role are left alone. This only affects people in the server right now; use <b>Auto Role</b> (Engagement tab) to give it to future joins too. Requires Manage Roles and the Kyro Bot role above the target role.</div>
+          <div class="grid g2">
+            <div class="field"><label>Role to give everyone</label><select id="drRole"></select></div>
+            <div class="field"><label>&nbsp;</label><button class="btn" id="drRun" disabled>Give everyone this role</button></div>
+          </div>
+          <label class="check"><input type="checkbox" id="drConfirm"> I understand this adds the role to every current member</label>
+          <div class="status" id="drStatus"></div>
+          <div class="list" id="drResult"></div>
+        </div>
+        <div class="card" style="border-left:3px solid #2997FF">
+          <div class="card-title">📺 Channel visibility (community layout)</div>
+          <div class="card-desc">Opens the community channels to everyone — <b>alert, social-media, partners, requests, feedback, announcements, rules, download-links, questions, suggestions, showcase, general-chat, resources, flexx, incomming, help</b> and <b>staff-applications</b> — and locks the <b>Staff for mods+</b> hub (transcript-log, vault-asset-storage, updates-for-mods) to staff only. The verify channel and private ticket channels are left untouched. Bot review replies stay in private tickets. Requires Manage Channels.</div>
+          <label class="check"><input type="checkbox" id="cvConfirm"> I understand this changes permissions on the channels listed above</label>
+          <div class="btn-row"><button class="btn" id="cvRun" disabled>Apply channel visibility</button></div>
+          <div class="status" id="cvStatus"></div>
+          <div class="list" id="cvResult"></div>
         </div>
         <div class="card">
           <div class="card-title">🎫 Support / Modmail Tickets</div>
@@ -923,16 +944,18 @@
               <div class="field"><label>Title URL (optional)</label><input id="emUrl" placeholder="https://…"></div>
               <div class="grid g2">
                 <div class="field"><label>Author name</label><input id="emAuthor" placeholder="Author"></div>
-                <div class="field"><label>Author icon URL</label><input id="emAuthorIcon" placeholder="https://…"></div>
+                <div class="field"><label>Author icon</label><div style="display:flex;gap:6px"><input id="emAuthorIcon" placeholder="Paste / upload / URL" style="flex:1"><button type="button" class="btn ghost sm em-upload" data-target="emAuthorIcon">📁</button></div></div>
               </div>
               <div class="grid g2">
                 <div class="field"><label>Footer text</label><input id="emFooter" placeholder="Footer"></div>
-                <div class="field"><label>Footer icon URL</label><input id="emFooterIcon" placeholder="https://…"></div>
+                <div class="field"><label>Footer icon</label><div style="display:flex;gap:6px"><input id="emFooterIcon" placeholder="Paste / upload / URL" style="flex:1"><button type="button" class="btn ghost sm em-upload" data-target="emFooterIcon">📁</button></div></div>
               </div>
               <div class="grid g2">
-                <div class="field"><label>Image URL</label><input id="emImage" placeholder="https://…"></div>
-                <div class="field"><label>Thumbnail URL</label><input id="emThumb" placeholder="https://…"></div>
+                <div class="field"><label>Image</label><div style="display:flex;gap:6px"><input id="emImage" placeholder="Paste / upload / URL" style="flex:1"><button type="button" class="btn ghost sm em-upload" data-target="emImage">📁</button></div></div>
+                <div class="field"><label>Thumbnail</label><div style="display:flex;gap:6px"><input id="emThumb" placeholder="Paste / upload / URL" style="flex:1"><button type="button" class="btn ghost sm em-upload" data-target="emThumb">📁</button></div></div>
               </div>
+              <input type="file" id="emFileInput" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none">
+              <div class="card-desc">Images: click 📁 to upload a file, or paste an image (Ctrl+V) anywhere in this panel — no URL needed. Uploaded images are hosted automatically so they always load.</div>
               <label class="check"><input type="checkbox" id="emTimestamp"> Add timestamp</label>
               <div class="field" style="margin-top:12px"><label>Fields</label>
                 <div id="emFields"></div>
@@ -1273,6 +1296,15 @@
     try { await post('/api/giveaway/'+action,{guild:state.guild.id,id}); toast('Giveaway '+action+'ed','success'); refreshConfigOnly(); }
     catch(err){ toast(err.message,'error'); }
   }
+  $('#gvSync').addEventListener('click', async ()=>{
+    clearStatus($('#gvSyncStatus')); $('#gvSync').disabled=true;
+    try{
+      const r=await post('/api/giveaway/sync',{guild:state.guild.id});
+      setStatus($('#gvSyncStatus'), r.adopted&&r.adopted.length ? `Adopted ${r.adopted.length} giveaway(s) from Discord.` : 'No untracked giveaways found in Discord.', 'success');
+      toast('Giveaways synced','success'); refreshConfigOnly();
+    }catch(err){ setStatus($('#gvSyncStatus'), err.message,'error'); }
+    finally{ $('#gvSync').disabled=false; }
+  });
   function renderGiveaways(){
     const gvs = (state.config&&state.config.giveaways)||[];
     $('#gvList').innerHTML = gvs.length ? gvs.map(g=>{
@@ -1393,6 +1425,9 @@
     if($('#psRole') && $('#psRole').options.length <= 1 && state.data){
       $('#psRole').innerHTML = '<option value="">Select role…</option>' + roleOptions($('#psRole').value);
     }
+    if($('#drRole') && $('#drRole').options.length <= 1 && state.data){
+      $('#drRole').innerHTML = '<option value="">Select role…</option>' + roleOptions($('#drRole').value);
+    }
     loadPresetOptions();
     updatePackDesc();
   }
@@ -1464,18 +1499,48 @@
     const thumb=$('#emThumb').value.trim();
     const fields=$$('#emFields .mapping-row').map(r=>({name:r.querySelector('.em-fname').value,value:r.querySelector('.em-fval').value,inline:r.querySelector('.em-finline').checked})).filter(f=>f.name&&f.value);
     let html=`<div class="embed-preview" style="border-left-color:${color}">`;
-    if(author) html+=`<div class="ep-author">${/^https?:/.test(authorIcon)?`<img src="${esc(authorIcon)}" alt="">`:''}${esc(author)}</div>`;
+    if(author) html+=`<div class="ep-author">${/^https?:/.test(authorIcon)?`<img src="${esc(authorIcon)}" alt="" onerror="this.style.display='none'">`:''}${esc(author)}</div>`;
     if(title) html+=`<div class="ep-title">${esc(title)}</div>`;
     if(desc) html+=`<div class="ep-desc">${esc(desc)}</div>`;
     if(fields.length) html+=`<div class="ep-fields">${fields.map(f=>`<div style="${f.inline?'':'grid-column:1/-1'}"><div class="ep-field-name">${esc(f.name)}</div><div class="ep-field-val">${esc(f.value)}</div></div>`).join('')}</div>`;
-    if(/^https?:/.test(image)) html+=`<img class="ep-img" src="${esc(image)}" alt="">`;
-    if(footer) html+=`<div class="ep-footer">${/^https?:/.test(footerIcon)?`<img src="${esc(footerIcon)}" alt="">`:''}${esc(footer)}${$('#emTimestamp').checked?' · today':''}</div>`;
+    if(/^https?:/.test(image)) html+=`<img class="ep-img" src="${esc(image)}" alt="" onerror="this.style.display='none'">`;
+    if(footer) html+=`<div class="ep-footer">${/^https?:/.test(footerIcon)?`<img src="${esc(footerIcon)}" alt="" onerror="this.style.display='none'">`:''}${esc(footer)}${$('#emTimestamp').checked?' · today':''}</div>`;
     if(!title&&!desc&&!author&&!footer&&!fields.length) html+=`<div class="ep-desc" style="color:#949ba4">Your embed preview appears here…</div>`;
     html+=`</div>`;
-    if(/^https?:/.test(thumb)) html+=`<div style="margin-top:10px"><img src="${esc(thumb)}" style="width:72px;height:72px;border-radius:8px;object-fit:cover" alt=""></div>`;
+    if(/^https?:/.test(thumb)) html+=`<div style="margin-top:10px"><img src="${esc(thumb)}" style="width:72px;height:72px;border-radius:8px;object-fit:cover" alt="" onerror="this.style.display='none'"></div>`;
     $('#embedPreview').innerHTML=html;
   }
   ['#emTitle','#emDesc','#emColor','#emAuthor','#emAuthorIcon','#emFooter','#emFooterIcon','#emImage','#emThumb','#emTimestamp'].forEach(sel=>{ const el=$(sel); if(el) el.addEventListener('input',updateEmbedPreview); });
+  // Image upload / paste: no public URL required. The file is hosted by the bot
+  // and the returned CDN URL is dropped into the chosen field.
+  let emUploadTarget='emImage';
+  function readImageFile(file){
+    return new Promise((resolve,reject)=>{
+      if(!file || !/^image\//.test(file.type||'')) return reject(new Error('Pick an image file (PNG, JPEG, GIF or WebP).'));
+      const r=new FileReader();
+      r.onload=()=>resolve({ dataBase64:String(r.result).split(',')[1], contentType:file.type, filename:file.name||'image.png' });
+      r.onerror=()=>reject(new Error('Could not read that file.'));
+      r.readAsDataURL(file);
+    });
+  }
+  async function emUpload(file,target){
+    const t=target||emUploadTarget;
+    clearStatus($('#emStatus')); setStatus($('#emStatus'),'Uploading image…');
+    try{
+      const payload=await readImageFile(file);
+      const r=await post('/api/embed/image',{ guild:state.guild.id, ...payload });
+      $('#'+t).value=r.url; updateEmbedPreview();
+      setStatus($('#emStatus'),'Image uploaded — link filled in automatically.','success');
+    }catch(err){ setStatus($('#emStatus'), err.message,'error'); }
+  }
+  $$('.em-upload').forEach(b=>b.addEventListener('click',()=>{ emUploadTarget=b.dataset.target; $('#emFileInput').click(); }));
+  $('#emFileInput').addEventListener('change',e=>{ const f=e.target.files&&e.target.files[0]; if(f) emUpload(f, emUploadTarget); e.target.value=''; });
+  $('#embedForm').addEventListener('paste',e=>{
+    const items=(e.clipboardData&&e.clipboardData.items)||[];
+    for(const it of items){
+      if(it.type && /^image\//.test(it.type)){ const f=it.getAsFile(); if(f){ e.preventDefault(); emUpload(f, emUploadTarget); return; } }
+    }
+  });
   $('#embedForm').addEventListener('submit', async e=>{
     e.preventDefault(); clearStatus($('#emStatus'));
     const fields=$$('#emFields .mapping-row').map(r=>({name:r.querySelector('.em-fname').value.trim(),value:r.querySelector('.em-fval').value.trim(),inline:r.querySelector('.em-finline').checked})).filter(f=>f.name&&f.value);
@@ -1547,6 +1612,40 @@
       const r=await post('/api/verify/remove',{ guild:state.guild.id });
       setStatus($('#vfStatus'),`Un-hidden ${r.touched||0} channel${(r.touched||0)===1?'':'s'}.`,'success'); toast('Channels un-hidden','success'); refreshGuild();
     }catch(err){ setStatus($('#vfStatus'), err.message,'error'); }
+  });
+
+  $('#drConfirm').addEventListener('change', ()=>{ $('#drRun').disabled = !$('#drConfirm').checked; });
+  $('#drRun').addEventListener('click', async ()=>{
+    clearStatus($('#drStatus')); $('#drResult').innerHTML='';
+    const roleId=$('#drRole').value;
+    if(!roleId){ setStatus($('#drStatus'),'Select a role first.','error'); return; }
+    if(!$('#drConfirm').checked){ setStatus($('#drStatus'),'Tick the confirmation box first.','error'); return; }
+    $('#drRun').disabled=true; $('#drResult').innerHTML='<div class="loading">Giving everyone the role — this can take a moment on large servers…</div>';
+    try{
+      const r=await post('/api/roles/bulk',{ guild:state.guild.id, roleId });
+      $('#drResult').innerHTML=`<div class="list-item"><div class="li-main"><div class="li-title">${esc(r.role)}</div><div class="li-sub">${r.added} added · ${r.skipped} already had it · ${r.failed} failed · ${r.total} members scanned</div></div><span class="tag ${r.failed?'amber':'green'}">${r.failed?'partial':'done'}</span></div>` + (r.errors||[]).map(e=>`<div class="list-item"><div class="li-main"><div class="li-sub">${esc(e)}</div></div><span class="tag amber">error</span></div>`).join('');
+      setStatus($('#drStatus'), r.failed ? `Added to ${r.added} member${r.added===1?'':'s'}; ${r.failed} failed (see below).` : `Done — ${r.added} member${r.added===1?'':'s'} now have ${r.role} (${r.skipped} already had it).`, r.failed?'':'success');
+      toast(r.failed?'Role applied with some errors':'Default role applied to everyone', r.failed?'':'success'); refreshGuild();
+    }catch(err){ $('#drResult').innerHTML=''; setStatus($('#drStatus'), err.message,'error'); }
+    finally{ $('#drRun').disabled=!$('#drConfirm').checked; }
+  });
+
+  $('#cvConfirm').addEventListener('change', ()=>{ $('#cvRun').disabled = !$('#cvConfirm').checked; });
+  $('#cvRun').addEventListener('click', async ()=>{
+    clearStatus($('#cvStatus')); $('#cvResult').innerHTML='';
+    if(!$('#cvConfirm').checked){ setStatus($('#cvStatus'),'Tick the confirmation box first.','error'); return; }
+    $('#cvRun').disabled=true; $('#cvResult').innerHTML='<div class="loading">Updating channel permissions…</div>';
+    try{
+      const r=await post('/api/channels/visibility',{ guild:state.guild.id });
+      const pub=(r.public||[]), priv=(r.private||[]), skip=(r.skipped||[]);
+      $('#cvResult').innerHTML =
+        `<div class="list-item"><div class="li-main"><div class="li-title">Public — ${pub.length}</div><div class="li-sub">${pub.map(esc).join(', ')||'none'}</div></div><span class="tag green">open</span></div>` +
+        `<div class="list-item"><div class="li-main"><div class="li-title">Staff-only — ${priv.length}</div><div class="li-sub">${priv.map(esc).join(', ')||'none'}</div></div><span class="tag amber">locked</span></div>` +
+        skip.map(s=>`<div class="list-item"><div class="li-main"><div class="li-sub">${esc(s)}</div></div><span class="tag">skipped</span></div>`).join('');
+      setStatus($('#cvStatus'), `Done — ${pub.length} channel${pub.length===1?'':'s'} public, ${priv.length} staff-only.`, 'success');
+      toast('Channel visibility applied','success'); refreshGuild();
+    }catch(err){ $('#cvResult').innerHTML=''; setStatus($('#cvStatus'), err.message,'error'); }
+    finally{ $('#cvRun').disabled=!$('#cvConfirm').checked; }
   });
 
   $('#tkPost').addEventListener('click', async ()=>{

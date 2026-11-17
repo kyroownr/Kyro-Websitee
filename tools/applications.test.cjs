@@ -123,7 +123,7 @@ async function main() {
       check(part.embeds.length === 1 && size <= 6000 && embed.fields.length <= 25 && embed.fields.every(f => f.name.length <= 256 && f.value.length <= 1024), 'Discord field and aggregate limits');
       check(part.allowed_mentions.parse.length === 0, 'mentions disabled');
     }
-    check(parts.slice(0, -1).every(part => part.components.length === 0) && parts.at(-1).components.length === 1, 'controls appear only after complete answers');
+    check(parts.slice(0, -1).every(part => part.components.length === 0) && parts.at(-1).components.length === 2, 'controls appear only after complete answers');
     check(parts.flatMap(p => p.embeds[0].fields).filter(f => f.name.startsWith('Previous experience')).map(f => f.value).join('') === '\\*'.repeat(1000), 'full escaped answer retained');
     uncertainChannel = true;
     const uncertain = await call('/applications', 'uncertain', { role: 'moderator', answers });
@@ -179,6 +179,38 @@ async function main() {
     const foreign = await module.handleApplicationInteractions(await signed({ ...button, guild_id: category }), interactionEnv, { waitUntil: work => deferred.push(work) });
     check((await foreign.json()).type === 4 && interactionCalls.length === 1, 'foreign guild button denied');
   } finally { global.fetch = originalFetch; }
+
+  // Verify button: grants Verified, then hides the verify channel for that member only.
+  const verifiedRole = '1571547868647399616';
+  const verifyChan = '1571547868647399700';
+  const rolePuts = [], channelPatches = [], verifyDeferred = [];
+  const verifyFetch = async (url, options = {}) => {
+    const u = new URL(url);
+    if (u.pathname === `/api/v10/guilds/${guild}/members/${userId('member')}/roles/${verifiedRole}` && options.method === 'PUT') { rolePuts.push(u.pathname); return new Response(null, { status: 204 }); }
+    if (u.pathname === `/api/v10/guilds/${guild}/channels` && (options.method || 'GET') === 'GET') return Response.json([{ id: verifyChan, type: 0, name: '✅┃verify', permission_overwrites: [{ id: guild, type: 0, allow: '1024', deny: '2048' }] }]);
+    if (u.pathname === `/api/v10/channels/${verifyChan}` && options.method === 'PATCH') { channelPatches.push(JSON.parse(options.body)); return Response.json({}); }
+    if (u.pathname.includes('/webhooks/') && options.method === 'PATCH') return Response.json({});
+    throw new Error('Unexpected verify endpoint: ' + u.pathname);
+  };
+  try {
+    global.fetch = verifyFetch;
+    const verifyButton = { type: 3, application_id: bot, token: 'verify-token', guild_id: guild, member: { user: { id: userId('member') }, roles: [] }, data: { custom_id: `kyro-verify:${guild}:${verifiedRole}` } };
+    const vr = await module.handleApplicationInteractions(await signed(verifyButton), env, { waitUntil: work => verifyDeferred.push(work) });
+    check((await vr.json()).type === 5, 'verify button acknowledged immediately');
+    await Promise.all(verifyDeferred);
+    check(rolePuts.length === 1, 'verify grants the Verified role');
+    check(channelPatches.length === 1, 'verify hides the verify channel');
+    const memberOverwrite = channelPatches[0].permission_overwrites.find(o => o.id === userId('member') && o.type === 1);
+    check(memberOverwrite && memberOverwrite.deny === '1024' && memberOverwrite.allow === '0', 'member-specific View deny closes verify channel');
+    check(channelPatches[0].permission_overwrites.some(o => o.id === guild && o.type === 0), 'existing everyone overwrite preserved');
+    const already = await module.handleApplicationInteractions(await signed({ ...verifyButton, member: { user: { id: userId('member') }, roles: [verifiedRole] } }), env, { waitUntil: work => verifyDeferred.push(work) });
+    const alreadyBody = await already.json();
+    check(alreadyBody.type === 4 && /already verified/i.test(alreadyBody.data.content), 'already-verified member short-circuits');
+    check(rolePuts.length === 1 && channelPatches.length === 1, 'already-verified triggers no Discord writes');
+    const dm = await module.handleApplicationInteractions(await signed({ ...verifyButton, member: undefined }), env, { waitUntil: work => verifyDeferred.push(work) });
+    check((await dm.json()).type === 4, 'verify outside a guild denied');
+  } finally { global.fetch = originalFetch; }
+
   const rows = new Map();
   let alarm = null, owner = userId('owner'), allowMod = true, patchRateLimit = true;
   const storage = {
