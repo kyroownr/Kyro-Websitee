@@ -297,4 +297,98 @@ async function testWebhookRetries() {
     console.log(JSON.stringify({ webhookRetries: 'fractional 429 delays, shared cooldown, bounded 5xx retries, permanent failures, redirect and destination guards', backgroundDelivery: 'nonblocking durable jobs', result: 'passed' }));
   } finally { global.fetch = originalFetch; }
 }
-main().then(testWebhookRetries).catch(err => { console.error(err); process.exitCode = 1; });
+async function testFulfilled() {
+  const { pathToFileURL } = require('node:url');
+  const { KyroRequests } = await import(pathToFileURL(path.join(__dirname, '..', 'worker.js')).href);
+  const entries = new Map([['board', []]]);
+  let scheduled = null;
+  const storage = {
+    get: async key => structuredClone(entries.get(key)),
+    put: async (key, value) => { entries.set(key, structuredClone(value)); },
+    delete: async key => entries.delete(key),
+    list: async ({ prefix, limit }) => new Map([...entries].filter(([key]) => key.startsWith(prefix)).sort(([a], [b]) => a.localeCompare(b)).slice(0, limit)),
+    getAlarm: async () => scheduled,
+    setAlarm: async time => { scheduled = time; },
+    transaction: async fn => fn(storage)
+  };
+  let ready;
+  const env = { DISCORD_BOT_TOKEN: 'dummy-bot-secret' };
+  const board = new KyroRequests({ storage, blockConcurrencyWhile: fn => { ready = fn(); } }, env);
+  await ready;
+  const row = {
+    id: 'f', title: 'Fulfilled Pack', category: 'preset', os: 'both', ae_versions: ['any'], reference: '',
+    desc: 'desc', status: 'open', created: '2026-11-14T00:00:00.000Z',
+    voters: ['owner'], by: 'owner', author_name: 'owner_editor', author_role: 'owner'
+  };
+  const create = async id => {
+    const result = await board.fetch(new Request('https://requests.internal/', { method: 'POST', body: JSON.stringify({ action: 'create', row: { ...row, id, title: row.title + ' ' + id } }) }));
+    assert.equal(result.status, 200);
+  };
+  const setStatus = async (id, status) => {
+    const result = await board.fetch(new Request('https://requests.internal/', { method: 'POST', body: JSON.stringify({ action: 'status', id, status }) }));
+    assert.equal(result.status, 200);
+  };
+  const fire = async () => { scheduled = null; await board.alarm(); };
+  const fulfilledJobs = () => [...entries.keys()].filter(key => key.startsWith('fulfilled:'));
+  const originalFetch = global.fetch;
+  const channelPosts = [], dmOpens = [], dmPosts = [];
+  let channelResponse = () => Response.json({ id: 'm1' });
+  let dmOpenResponse = () => Response.json({ id: 'dm1' });
+  global.fetch = async (url, options = {}) => {
+    const u = new URL(url);
+    const body = options.body ? JSON.parse(options.body) : {};
+    if (u.pathname === '/api/v10/users/@me/channels') { dmOpens.push(body); return dmOpenResponse(); }
+    if (u.pathname === '/api/v10/channels/dm1/messages') { dmPosts.push({ url: u.pathname, body }); return Response.json({ id: 'm2' }); }
+    if (/^\/api\/v10\/channels\/\d+\/messages$/.test(u.pathname)) { channelPosts.push({ channel: u.pathname.split('/')[4], body }); return channelResponse(); }
+    throw new Error('Unexpected fulfilled endpoint: ' + u.pathname);
+  };
+  try {
+    await create('a');
+    await setStatus('a', 'planned');
+    assert.equal(fulfilledJobs().length, 0, 'non-shipped statuses queue nothing');
+    await setStatus('a', 'shipped');
+    assert.equal(fulfilledJobs().length, 1, 'shipping a request queues the fulfilled announcement');
+    assert.ok(scheduled !== null, 'fulfilled job schedules the alarm');
+    await fire();
+    assert.equal(fulfilledJobs().length, 0, 'delivered fulfilled job is removed');
+    assert.equal(channelPosts.length, 1, 'one channel announcement per shipped request');
+    assert.equal(channelPosts[0].channel, '1539961971422658571', 'announcement lands in the giveaway channel');
+    const embed = channelPosts[0].body.embeds[0];
+    assert.equal(embed.color, 0x23a55a, 'fulfilled card is green');
+    assert.equal(embed.description, 'request fullfilled wait for new updates', 'fulfilled copy verbatim');
+    assert.equal(embed.title, 'Fulfilled Pack a');
+    assert.ok(embed.footer.text.includes('#'), 'footer carries the request number');
+    assert.deepEqual(channelPosts[0].body.allowed_mentions.parse, [], 'fulfilled post pings nobody');
+    assert.equal(channelPosts[0].body.components[0].components[0].url, 'https://kyro.new.tg#requests');
+    assert.deepEqual(dmOpens, [{ recipient_id: 'owner' }], 'requester gets a DM');
+    assert.equal(dmPosts.length, 1, 'DM carries the fulfilled card');
+    assert.equal(dmPosts[0].body.embeds[0].color, 0x23a55a);
+    await setStatus('a', 'shipped');
+    assert.equal(fulfilledJobs().length, 0, 're-saving shipped does not announce twice');
+    await create('b');
+    await setStatus('b', 'shipped');
+    channelResponse = () => Response.json({ retry_after: 0.01 }, { status: 429, headers: { 'retry-after': '0.02' } });
+    await fire();
+    assert.equal(fulfilledJobs().length, 1, 'rate-limited fulfilled post retries');
+    assert.equal(entries.get('fulfilled:b').attempts, 1);
+    assert.equal(dmPosts.length, 1, 'no DM before the channel post succeeds');
+    channelResponse = () => Response.json({ id: 'm3' });
+    await fire();
+    assert.equal(fulfilledJobs().length, 0);
+    assert.equal(channelPosts.length, 3, 'counts the rate-limited attempt plus its retry');
+    assert.equal(dmPosts.length, 2, 'DM follows the successful channel post');
+    await create('c');
+    await setStatus('c', 'shipped');
+    dmOpenResponse = () => Response.json({ message: 'Cannot send messages to this user', code: 50007 }, { status: 403 });
+    await fire();
+    assert.equal(fulfilledJobs().length, 0, 'closed DM inbox never keeps the queue spinning');
+    assert.equal(channelPosts.length, 4, 'channel post still delivered with closed DMs');
+    env.DISCORD_GIVEAWAY_CHANNEL_ID = '999999999999999999';
+    await create('d');
+    await setStatus('d', 'shipped');
+    await fire();
+    assert.equal(channelPosts[4].channel, '999999999999999999', 'giveaway channel is deploy-configurable');
+    console.log(JSON.stringify({ fulfilled: 'green giveaway-channel card + requester DM on ship, durable retries, closed-DM safe, no double announce', result: 'passed' }));
+  } finally { global.fetch = originalFetch; }
+}
+main().then(testWebhookRetries).then(testFulfilled).catch(err => { console.error(err); process.exitCode = 1; });

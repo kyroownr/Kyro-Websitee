@@ -243,6 +243,7 @@ const channelId = (env, key, fallback) => {
 const incomingChannelId = (env) => channelId(env, 'DISCORD_INCOMING_CHANNEL_ID', '1539962334729211934');
 const auditChannelId = (env) => channelId(env, 'DISCORD_AUDIT_CHANNEL_ID', '1571403237788221611');
 const alertChannelId = (env) => channelId(env, 'DISCORD_ALERT_CHANNEL_ID', '1570713380778541147');
+const giveawayChannelId = (env) => channelId(env, 'DISCORD_GIVEAWAY_CHANNEL_ID', '1539961971422658571');
 
 /* Incoming and release announcements ping the Verified community role. The old
    "Members" role was deleted, so its hardcoded id pinged nobody. Resolve the
@@ -406,7 +407,12 @@ export class KyroRequests {
             const voters = row.voters.includes(input.viewerId) ? row.voters.filter(id => id !== input.viewerId) : row.voters.concat([input.viewerId]);
             next = all.map(item => item.id === input.id ? { ...item, voters } : item);
           } else if (input.action === 'status') {
+            const justShipped = input.status === 'shipped' && row.status !== 'shipped';
             next = all.map(item => item.id === input.id ? { ...item, status: input.status } : item);
+            if (justShipped && this.env.DISCORD_BOT_TOKEN) {
+              await storage.put('fulfilled:' + row.id, { row: { ...row, status: 'shipped' }, attempts: 0 });
+              if (await storage.getAlarm() === null) await storage.setAlarm(Date.now());
+            }
           } else if (input.action === 'delete') {
             next = all.filter(item => item.id !== input.id);
           } else throw fail(400, 'bad_action', 'Unknown requests operation.');
@@ -422,11 +428,12 @@ export class KyroRequests {
 
   async alarm() {
     const storage = this.state.storage;
-    const pending = await storage.list({ prefix: 'notification:', limit: 1 });
-    const entry = pending.entries().next().value;
+    let entry = (await storage.list({ prefix: 'fulfilled:', limit: 1 })).entries().next().value;
+    let fulfilled = Boolean(entry);
+    if (!entry) entry = (await storage.list({ prefix: 'notification:', limit: 1 })).entries().next().value;
     if (!entry) return;
     const [key, job] = entry;
-    const result = await notifyRequest(job.row, this.env);
+    const result = fulfilled ? await notifyFulfilled(job.row, this.env) : await notifyRequest(job.row, this.env);
     await storage.transaction(async tx => {
       const current = await tx.get(key);
       if (!current) return;
@@ -437,7 +444,8 @@ export class KyroRequests {
       } else {
         await tx.delete(key);
         if (!result.sent) console.warn('[kyro-requests] Discord notification failed for request #' + job.row.number + '.');
-        if (result.retryAfter !== undefined || (await tx.list({ prefix: 'notification:', limit: 1 })).size) await tx.setAlarm(Date.now() + (result.retryAfter || 0));
+        const more = (await tx.list({ prefix: 'notification:', limit: 1 })).size || (await tx.list({ prefix: 'fulfilled:', limit: 1 })).size;
+        if (result.retryAfter !== undefined || more) await tx.setAlarm(Date.now() + (result.retryAfter || 0));
       }
     });
   }
@@ -538,6 +546,55 @@ async function notifyRequest(row, env) {
     // A timed-out send may already exist in Discord; retrying can duplicate it.
     return { sent: false };
   }
+}
+
+/* Shipped requests get a green fulfilled card in the giveaway channel and the
+   same card DM'd to the requester. The channel post decides retry behaviour;
+   a closed DM inbox must never keep the queue spinning. */
+function fulfilledEmbed(row) {
+  return {
+    author: { name: 'Kyro Requests', icon_url: KYRO_ICON_URL },
+    title: discordText(row.title),
+    description: 'request fullfilled wait for new updates',
+    color: 0x23a55a,
+    footer: { text: 'Kyro Requests · #' + row.number + ' · ✅ SHIPPED', icon_url: KYRO_ICON_URL },
+    timestamp: new Date().toISOString()
+  };
+}
+
+async function notifyFulfilled(row, env) {
+  const token = env.DISCORD_BOT_TOKEN;
+  if (!token) return { sent: false };
+  const site = env.KYRO_SITE_URL || 'https://kyro.new.tg';
+  const payload = {
+    allowed_mentions: { parse: [] },
+    embeds: [fulfilledEmbed(row)],
+    components: [{ type: 1, components: [{ type: 2, style: 5, label: 'View Kyro ↗', url: site + '#requests' }] }]
+  };
+  const headers = { authorization: 'Bot ' + token, 'content-type': 'application/json' };
+  try {
+    const response = await fetch(`https://discord.com/api/v10/channels/${giveawayChannelId(env)}/messages`, {
+      method: 'POST', headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(8000), redirect: 'manual'
+    });
+    if (response.status === 429) return { sent: false, retryAfter: discordRetryAfter(response, await response.json().catch(() => ({}))) };
+    if (response.status >= 500) return { sent: false, retryAfter: 5000 };
+    if (!response.ok) return { sent: false };
+  } catch (err) {
+    console.warn('[kyro-requests] fulfilled send error: ' + err.name);
+    return { sent: false };
+  }
+  try {
+    const dmRes = await fetch('https://discord.com/api/v10/users/@me/channels', {
+      method: 'POST', headers, body: JSON.stringify({ recipient_id: row.by }), signal: AbortSignal.timeout(8000), redirect: 'manual'
+    });
+    if (dmRes.ok) {
+      const dm = await dmRes.json();
+      await fetch(`https://discord.com/api/v10/channels/${dm.id}/messages`, {
+        method: 'POST', headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(8000), redirect: 'manual'
+      });
+    }
+  } catch {}
+  return { sent: true };
 }
 
 /* Voter ids never leave the worker: the board exposes a count and, for the
