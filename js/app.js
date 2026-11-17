@@ -281,6 +281,9 @@
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
   const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  /* Only absolute http(s) URLs may be opened or linked. Blocks javascript:/data:
+     even if a bad value ever reaches the client, mirroring the worker's guard. */
+  const safeHref = (u) => /^https?:\/\//i.test(String(u == null ? '' : u).trim()) ? String(u).trim() : '';
   const fmt = (n) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(n);
   const full = (n) => Number(n).toLocaleString('en-US');
 
@@ -927,8 +930,8 @@
                   <a href="#${esc(item.slug)}" class="btn btn-primary btn-sm" style="flex:1;justify-content:center;text-decoration:none;">
                     Now Live · Get Resource ↗
                   </a>
-                ` : earlyAccess && item.download_url ? `
-                  <a href="${esc(item.download_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm" style="flex:1;justify-content:center;text-decoration:none;background:linear-gradient(90deg,#f59e0b,#fbbf24);border-color:#f59e0b;color:#1a1205;">
+                ` : earlyAccess && safeHref(item.download_url) ? `
+                  <a href="${esc(safeHref(item.download_url))}" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm" style="flex:1;justify-content:center;text-decoration:none;background:linear-gradient(90deg,#f59e0b,#fbbf24);border-color:#f59e0b;color:#1a1205;">
                     Early Access · Download ↗
                   </a>
                 ` : `
@@ -2474,7 +2477,7 @@
             </div>
             ${s.details ? `<div style="font-size:0.82rem;color:#cbd5e1;background:rgba(0,0,0,0.25);padding:8px 10px;border-radius:6px;">${esc(s.details)}</div>` : ''}
             <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
-              <span style="font-size:0.8rem;color:var(--dim);">Download: <a href="${esc(s.download_url)}" target="_blank" rel="noopener noreferrer" style="color:#60a5fa;">${esc(s.download_url)}</a></span>
+              <span style="font-size:0.8rem;color:var(--dim);">Download: ${safeHref(s.download_url) ? `<a href="${esc(safeHref(s.download_url))}" target="_blank" rel="noopener noreferrer" style="color:#60a5fa;">${esc(s.download_url)}</a>` : esc(s.download_url || '—')}</span>
               ${isOwner && isPending ? `
                 <div style="display:flex;gap:8px;">
                   <button type="button" class="btn btn-primary btn-sm" data-sub-approve="${esc(s.id)}">✓ Approve &amp; Publish</button>
@@ -3472,6 +3475,11 @@
         });
         return;
       }
+      const openUrl = safeHref(data.url);
+      if (!openUrl) {
+        toast({ title: 'Link unavailable', sub: 'That download link is not valid.', icon: ICON.lock, warn: true });
+        return;
+      }
       countDownload(r);
       recordDownloadHistory(r, { ext: 'link', name: r.title, size: 'External' });
       if (data.pass) {
@@ -3481,7 +3489,7 @@
           actions: [{ label: 'Copy password', onClick: () => navigator.clipboard && navigator.clipboard.writeText(data.pass) }]
         });
       }
-      window.open(data.url, '_blank', 'noopener,noreferrer');
+      window.open(openUrl, '_blank', 'noopener,noreferrer');
     } catch (err) {
       toast({ title: 'Link unavailable', sub: 'Check your connection and try again.', icon: ICON.lock, warn: true });
     } finally {
@@ -3532,10 +3540,11 @@
 
     const box = el.querySelector('.toast-actions');
     actions.forEach(a => {
-      const b = a.href
-        ? Object.assign(document.createElement('a'), { href: a.href, target: '_blank', rel: 'noopener noreferrer' })
+      const href = safeHref(a.href);
+      const b = href
+        ? Object.assign(document.createElement('a'), { href, target: '_blank', rel: 'noopener noreferrer' })
         : Object.assign(document.createElement('button'), { type: 'button' });
-      b.className = 'btn btn-sm ' + (a.href ? 'btn-discord' : 'btn-ghost');
+      b.className = 'btn btn-sm ' + (href ? 'btn-discord' : 'btn-ghost');
       b.textContent = a.label;
       if (a.onClick) b.addEventListener('click', () => { dismiss(); a.onClick(); });
       box.appendChild(b);

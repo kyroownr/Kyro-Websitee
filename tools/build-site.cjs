@@ -30,6 +30,14 @@ const out = path.join(root, 'docs');
    actual minified bytes instead of a hand-edited number. */
 const bundleHashes = {};
 
+/* GitHub Pages serves static files and ignores _headers, so the CSP that file
+   describes never reaches the browser on kyro.new.tg. Inject it as a <meta> tag
+   into every published page instead. script-src 'self' blocks injected inline
+   script and javascript: URLs; object-src 'none' kills plugin/embed vectors.
+   img/media allow any https host so external preview pictures still load (images
+   cannot execute script). frame-ancestors is omitted — meta CSP cannot set it. */
+const CSP_META = `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; media-src 'self' https:; connect-src 'self' https://kyro-auth.kyro-ownr.workers.dev https://discord.com; base-uri 'self'; form-action 'self'; object-src 'none'">`;
+
 /* Everything a browser legitimately needs. dashboard.html is the staff bot UI
    served by bot_dashboard.js on localhost — it has no business on the public
    site, where its API calls could only 404. */
@@ -110,11 +118,15 @@ function copyFile(relative) {
     fs.writeFileSync(to, content);
     bundleHashes[norm] = crypto.createHash('sha256').update(content).digest('hex').slice(0, 8);
   } else if (ext === '.html' || ext === '.htm') {
-    const html = fs.readFileSync(from, 'utf8');
-    fs.writeFileSync(to, html.replace(/(\/(?:js|css)\/[A-Za-z0-9._-]+\.(?:js|css))\?v=[A-Za-z0-9._-]+/g, (match, ref) => {
+    let html = fs.readFileSync(from, 'utf8');
+    html = html.replace(/(\/(?:js|css)\/[A-Za-z0-9._-]+\.(?:js|css))\?v=[A-Za-z0-9._-]+/g, (match, ref) => {
       const hash = bundleHashes[ref.replace(/^\//, '')];
       return hash ? ref + '?v=' + hash : match;
-    }));
+    });
+    if (!/http-equiv=["']Content-Security-Policy["']/i.test(html)) {
+      html = html.replace(/<head[^>]*>/i, (m) => m + '\n  ' + CSP_META);
+    }
+    fs.writeFileSync(to, html);
   } else {
     fs.copyFileSync(from, to);
   }

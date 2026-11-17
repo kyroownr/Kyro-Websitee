@@ -221,6 +221,13 @@ function safeHttpUrl(value, max = 500) {
   return parsed.href;
 }
 
+/* Output-side guard: legacy KV records may predate safeHttpUrl. Re-validate any
+   URL before it leaves the worker so a stored javascript:/data: link can never
+   reach a browser, regardless of how it got into storage. Returns '' if unsafe. */
+function safeOutputUrl(value) {
+  try { return safeHttpUrl(value, 2000); } catch { return ''; }
+}
+
 /* Identity that can be moved without a code change. Defaults match the Kyro
    server so existing deploys keep working; set the env vars to override. */
 const DEFAULT_OWNER_ID = '1052909930073567232';
@@ -1206,8 +1213,11 @@ async function handleVaultLink(request, url, env, cors) {
   const files = (entry && entry.files) || {};
   const file = name ? files[name] : Object.values(files)[0];
   if (file && file.url) {
-    await limitWrites(env, 'links', session.id, 80);
-    return json({ ok: true, url: file.url, pass: file.pass || '' }, 200, cors);
+    const outUrl = safeOutputUrl(file.url);
+    if (outUrl) {
+      await limitWrites(env, 'links', session.id, 80);
+      return json({ ok: true, url: outUrl, pass: file.pass || '' }, 200, cors);
+    }
   }
 
   // No uploaded archive: fall back to the external link stored on the resource.
@@ -1226,9 +1236,11 @@ async function handleVaultLink(request, url, env, cors) {
     if (found && found.download_url) { linkUrl = found.download_url; linkPass = found.pass || ''; }
   }
   if (!linkUrl) throw fail(404, 'no_file', 'No downloadable file is stored for that resource.');
+  const outUrl = safeOutputUrl(linkUrl);
+  if (!outUrl) throw fail(404, 'no_file', 'No downloadable file is stored for that resource.');
 
   await limitWrites(env, 'links', session.id, 80);
-  return json({ ok: true, url: linkUrl, pass: linkPass }, 200, cors);
+  return json({ ok: true, url: outUrl, pass: linkPass }, 200, cors);
 }
 
 function hiddenTokens(input) {
@@ -2044,11 +2056,11 @@ async function handleVaultSubmissionManage(request, url, env, cors) {
       if (found) {
         if (input.title) found.title = cleanText(input.title, 120);
         if (input.details !== undefined) found.details = cleanText(input.details, 1500);
-        if (input.download_url) found.download_url = String(input.download_url).trim();
+        if (input.download_url !== undefined) found.download_url = safeHttpUrl(input.download_url, 500);
         if (input.password !== undefined) found.pass = cleanText(input.password, 100);
         if (input.size) found.size = cleanText(input.size, 30);
         if (input.category) found.category = cleanText(input.category, 60);
-        if (input.image_url) found.image_url = String(input.image_url).trim();
+        if (input.image_url !== undefined) found.image_url = safeHttpUrl(input.image_url, 500);
         if (input.release_at !== undefined || input.releaseAt !== undefined) {
           found.releaseAt = input.release_at || input.releaseAt || undefined;
         }
@@ -2066,11 +2078,11 @@ async function handleVaultSubmissionManage(request, url, env, cors) {
       if (found) {
         if (input.title) found.title = cleanText(input.title, 120);
         if (input.details !== undefined) found.details = cleanText(input.details, 1500);
-        if (input.download_url) found.download_url = String(input.download_url).trim();
+        if (input.download_url !== undefined) found.download_url = safeHttpUrl(input.download_url, 500);
         if (input.password !== undefined) found.pass = cleanText(input.password, 100);
         if (input.size) found.size = cleanText(input.size, 30);
         if (input.category) found.category = cleanText(input.category, 60);
-        if (input.image_url) found.image_url = String(input.image_url).trim();
+        if (input.image_url !== undefined) found.image_url = safeHttpUrl(input.image_url, 500);
         if (input.release_at !== undefined || input.releaseAt !== undefined) {
           found.releaseAt = input.release_at || input.releaseAt || undefined;
         }
