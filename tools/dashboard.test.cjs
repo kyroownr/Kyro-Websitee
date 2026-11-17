@@ -686,14 +686,16 @@ async function waitForServer() {
     { id: 'ch_staffapp', name: 'staff applications', type: 0, parent_id: 'cat_staff', permission_overwrites: [] },
     { id: 'ch_staffgeneral', name: 'general-chat', type: 0, parent_id: 'cat_staff', permission_overwrites: [] },
     { id: 'ch_help', name: 'help', type: 15, permission_overwrites: [] },
+    { id: 'ch_pubupdates', name: 'updates', type: 0, permission_overwrites: [] },
     { id: 'ch_verify', name: '✅┃verify', type: 0, permission_overwrites: [] },
     { id: 'ch_ticket', name: 'ticket-0001', type: 0, permission_overwrites: [] },
     { id: 'ch_memes', name: 'memes', type: 0, permission_overwrites: [] }
   ];
   const cv = await req('POST', '/api/channels/visibility', { guild: 'guild1' });
   ok(cv.status === 200, 'channel visibility applies');
-  ok(cv.data.public.length === 7, 'seven community channels opened');
+  ok(cv.data.public.length === 8, 'eight community channels opened');
   ok(cv.data.public.includes('📢┃announcements') && cv.data.public.includes('general chat') && cv.data.public.includes('downloads-links') && cv.data.public.includes('incomming') && cv.data.public.includes('flexx') && cv.data.public.includes('help'), 'decorated, spaced, hyphenated and typo names all resolve');
+  ok(cv.data.public.includes('updates') && !cv.data.public.includes('updates-for-mods'), 'public updates opens while the staff updates-for-mods stays locked');
   ok(cv.data.private.length === 4 && cv.data.private.includes('transcript-log-channel') && cv.data.private.includes('vault-asset-storage') && cv.data.private.includes('updates-for-mods'), 'the staff hub is locked to staff');
   ok(cv.data.public.includes('staff applications') && !cv.data.private.includes('staff applications'), 'staff-applications stays public even under the staff category');
   ok(cv.data.public.includes('general chat') && cv.data.private.includes('general-chat') && !cv.data.public.includes('general-chat'), 'the community general-chat opens but the staff-hub namesake stays locked');
@@ -742,6 +744,32 @@ async function waitForServer() {
   ok(upBadType.status === 400, 'non-image uploads are rejected');
   const upEmpty = await req('POST', '/api/embed/image', { guild: 'guild1', filename: 'a.png', contentType: 'image/png', dataBase64: '' });
   ok(upEmpty.status === 400, 'empty image uploads are rejected');
+
+  // Welcome + leave: owner-chosen channels and text, join/leave detection.
+  const lv = await req('POST', '/api/leave', { guild: 'guild1', enabled: true, channelId: 'chan2', message: '{username} left {server} — now {membercount}', useEmbed: true, embedColor: '#8e8e93' });
+  ok(lv.status === 200 && lv.data.leave.enabled && lv.data.leave.channelId === 'chan2', 'leave config saved');
+  const lvt = await req('POST', '/api/leave/test', { guild: 'guild1', username: 'Tester' });
+  ok(lvt.status === 200, 'leave test sends');
+  ok(lastCall((c) => c.method === 'POST' && c.path === '/channels/chan2/messages' && /Tester left Test Server/.test(c.body.embeds[0].description)), 'leave test posts the formatted embed to the chosen channel');
+  await req('POST', '/api/welcome', { guild: 'guild1', enabled: true, channelId: 'chan1', message: 'Welcome {user} to {server}!', useEmbed: false, dm: false });
+  guild1Members = [{ user: { id: '200000000000000003', username: 'alice' } }, { user: { id: '200000000000000004', username: 'bob' } }];
+  const scan1 = await req('POST', '/api/welcome/scan', { guild: 'guild1' });
+  ok(scan1.status === 200 && scan1.data.joined === 0 && scan1.data.left === 0, 'first scan seeds the member list without announcing');
+  guild1Members = [{ user: { id: '200000000000000004', username: 'bob' } }, { user: { id: '200000000000000005', username: 'cara' } }];
+  const scan2 = await req('POST', '/api/welcome/scan', { guild: 'guild1' });
+  ok(scan2.status === 200 && scan2.data.joined === 1 && scan2.data.left === 1, 'second scan detects one join and one leave');
+  ok(calls.some((c) => c.method === 'POST' && c.path === '/channels/chan1/messages' && c.body && /Welcome <@200000000000000005> to Test Server!/.test(c.body.content || '')), 'the join is announced in the configured welcome channel');
+  ok(calls.some((c) => c.method === 'POST' && c.path === '/channels/chan2/messages' && c.body && c.body.embeds && /alice left Test Server/.test(c.body.embeds[0].description)), 'the leave is announced with the last known username');
+
+  // Regression: a poller-style end-of-tick save must not roll back API writes.
+  ok(mod.loadDB() === mod.loadDB(), 'loadDB returns one shared state object');
+  const raceSave = await req('POST', '/api/leave', { guild: 'guild1', enabled: true, channelId: 'chan2', message: 'bye {username}', useEmbed: false, embedColor: '#8e8e93' });
+  ok(raceSave.status === 200, 'leave config re-saved for the race check');
+  mod.saveDB(mod.loadDB());
+  const cfgAfter = await req('GET', '/api/config?guild=guild1');
+  ok(cfgAfter.data.leave && cfgAfter.data.leave.channelId === 'chan2' && cfgAfter.data.leave.message === 'bye {username}', 'poller-style save does not clobber API writes');
+  const diskState = JSON.parse(fs.readFileSync(TMP_DATA, 'utf8'));
+  ok(diskState.guilds.guild1.leave.message === 'bye {username}', 'the shared state is persisted to disk');
 
   console.log(JSON.stringify({ checks: passed, multiServer: 'guild selector + per-guild isolation', features: 'moderation, giveaways, reaction roles, automod, welcome, logging, setup, security, honeypot, utility, embed, engagement, levels, birthdays, suggestions, polls, scheduler, stat channels, role packs, admin gate, slash-command registration, bulk default role, channel visibility, giveaway sync, embed image upload', discord: 'mocked REST', result: 'passed' }));
   shutdown(0);

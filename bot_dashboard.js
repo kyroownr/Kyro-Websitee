@@ -63,19 +63,30 @@ const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || (() => {
 // ---------------------------------------------------------------------------
 const DATA_FILE = process.env.DASHBOARD_DATA_FILE || path.join(__dirname, 'dashboard_data.json');
 
+// One shared in-memory DB: every loadDB() returns the same object so the
+// poller and API handlers mutate one state instead of clobbering each other
+// with stale disk snapshots. Disk is the persistence layer, not the source.
+let dbCache = null;
+
 function loadDB() {
+  if (dbCache) return dbCache;
   try {
     if (fs.existsSync(DATA_FILE)) {
       const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-      if (parsed && typeof parsed === 'object') return parsed.guilds ? parsed : { guilds: parsed };
+      if (parsed && typeof parsed === 'object') {
+        dbCache = parsed.guilds ? parsed : { guilds: parsed };
+        return dbCache;
+      }
     }
   } catch (e) {
     console.error('[DB] Failed to read state, starting fresh:', e.message);
   }
-  return { guilds: {} };
+  dbCache = { guilds: {} };
+  return dbCache;
 }
 
 function saveDB(db) {
+  dbCache = db;
   try {
     fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2), 'utf8');
   } catch (e) {
@@ -102,6 +113,7 @@ function defaultGuild() {
   return {
       automod: { enabled: false, badWords: [], blockInvites: false, maxMentions: 0, maxEmojis: 0, capsPercent: 0, action: 'delete', timeoutSeconds: 300, exemptRoles: [], channels: [], processed: [] },
       welcome: { enabled: false, channelId: '', message: 'Welcome {user} to **{server}**! You are member #{membercount}.', useEmbed: true, embedColor: '#5865f2', dm: false, dmMessage: 'Welcome to {server}!', knownMembers: [], seeded: false },
+      leave: { enabled: false, channelId: '', message: '**{username}** just left **{server}**. We are now {membercount} members.', useEmbed: true, embedColor: '#8e8e93', knownNames: {} },
       logging: { enabled: false, channelId: '', events: { moderation: true, giveaways: true, reactionRoles: true, automod: true, welcome: true, joins: true } },
       reactionRoles: [],
       giveaways: [],
@@ -1032,7 +1044,7 @@ const PUBLIC_CHANNEL_NAMES = new Set([
   'alert', 'socialmedia', 'partners', 'requests', 'feedback', 'announcements',
   'rules', 'downloadlinks', 'downloadslinks', 'downloads', 'questions', 'suggestions', 'showcase',
   'generalchat', 'general', 'resources', 'flexx', 'incomming', 'incoming', 'help',
-  'staffapplications'
+  'updates', 'staffapplications'
 ]);
 const STAFF_HUB_NAMES = new Set(['transcriptlogchannel', 'vaultassetstorage', 'updatesformods']);
 
@@ -2063,33 +2075,60 @@ async function sendWelcome(guildId, w, member, guildName, memberCount) {
   }
 }
 
+async function sendLeave(guildId, l, member, guildName, memberCount) {
+  if (!l || !l.enabled || !l.channelId) return;
+  const text = formatWelcome(l.message, member, guildName, memberCount);
+  const payload = l.useEmbed
+    ? { embeds: [{ description: text.slice(0, 4000), color: hexToInt(l.embedColor), footer: { text: `Member #${memberCount || '?'}` }, timestamp: new Date().toISOString() }] }
+    : { content: text.slice(0, 2000) };
+  try { await discordFetch(`/channels/${l.channelId}/messages`, { method: 'POST', body: JSON.stringify(payload) }); } catch (e) {}
+}
+
 async function runWelcomeGuild(guildId, g) {
   const w = g.welcome;
-  if (!w.enabled || !w.channelId) return;
+  const l = g.leave || (g.leave = {});
+  if ((!w.enabled || !w.channelId) && (!l.enabled || !l.channelId)) return { joined: 0, left: 0 };
   let guild, members;
   try {
     guild = await discordFetch(`/guilds/${guildId}?with_counts=true`);
     members = await discordFetch(`/guilds/${guildId}/members?limit=1000`);
   } catch (e) {
     // Requires the privileged Server Members intent; degrade quietly if absent.
-    return;
+    return { joined: 0, left: 0, note: `Member list unavailable: ${e.message}. Enable the Server Members intent in the Discord Developer Portal (Bot → Privileged Gateway Intents).` };
   }
-  if (!Array.isArray(members)) return;
+  if (!Array.isArray(members)) return { joined: 0, left: 0, note: 'Member list unavailable: unexpected Discord response.' };
   const botId = await getBotUserId();
   const ids = members.filter((m) => m.user && m.user.id !== botId).map((m) => m.user.id);
+  l.knownNames = l.knownNames || {};
+  for (const m of members) if (m.user && m.user.id !== botId) l.knownNames[m.user.id] = m.user.username || l.knownNames[m.user.id] || 'member';
   if (!w.seeded) {
     w.knownMembers = ids;
     w.seeded = true;
-    return;
+    return { joined: 0, left: 0 };
   }
   const known = new Set(w.knownMembers || []);
   const fresh = ids.filter((id) => !known.has(id));
   for (const userId of fresh) {
     const member = members.find((m) => m.user && m.user.id === userId);
-    await sendWelcome(guildId, w, member, guild.name, guild.approximate_member_count || ids.length);
+    if (w.enabled && w.channelId) await sendWelcome(guildId, w, member, guild.name, guild.approximate_member_count || ids.length);
     await logEvent(guildId, 'joins', 'Member joined', `**User:** <@${userId}> (${member && member.user ? member.user.username : userId})\n**Member count:** ${guild.approximate_member_count || ids.length}`, 0x57f287);
   }
+  // A truncated member list (1000 cap) would look like mass departures, so
+  // leave detection only runs when the snapshot is provably complete.
+  if (ids.length < 1000) {
+    const current = new Set(ids);
+    const gone = (w.knownMembers || []).filter((id) => !current.has(id));
+    for (const userId of gone) {
+      const member = { user: { id: userId, username: l.knownNames[userId] || 'member' } };
+      await sendLeave(guildId, l, member, guild.name, guild.approximate_member_count || ids.length);
+      await logEvent(guildId, 'welcome', 'Member left', `**User:** ${l.knownNames[userId] || userId} (<@${userId}>)\n**Member count:** ${guild.approximate_member_count || ids.length}`, 0x95a5a6);
+      delete l.knownNames[userId];
+    }
+    w.knownMembers = ids;
+    return { joined: fresh.length, left: gone.length };
+  }
   w.knownMembers = ids;
+  return { joined: fresh.length, left: 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -2896,7 +2935,7 @@ async function handleRequest(req, res) {
       const g = guildConfig(db, guildId);
       saveDB(db);
       return sendJSON(res, 200, {
-        automod: g.automod, welcome: g.welcome, logging: g.logging,
+        automod: g.automod, welcome: g.welcome, leave: g.leave, logging: g.logging,
         reactionRoles: g.reactionRoles, giveaways: g.giveaways,
         warnings: g.warnings, audit: g.audit, tempbans: g.tempbans,
         verification: g.verification, security: g.security,
@@ -3432,6 +3471,44 @@ async function handleRequest(req, res) {
       await sendWelcome(gid, g.welcome, member, guild.name, guild.approximate_member_count || 1);
       return sendJSON(res, 200, { ok: true, message: 'Test welcome sent.' });
     }
+    if (req.method === 'POST' && p === '/api/leave') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      g.leave = {
+        ...g.leave,
+        enabled: Boolean(body.enabled),
+        channelId: String(body.channelId || ''),
+        message: String(body.message || '').slice(0, 1500),
+        useEmbed: Boolean(body.useEmbed),
+        embedColor: String(body.embedColor || '#8e8e93')
+      };
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true, leave: g.leave });
+    }
+    if (req.method === 'POST' && p === '/api/leave/test') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      let guild = { name: 'the server' };
+      try { guild = await discordFetch(`/guilds/${gid}?with_counts=true`); } catch (e) {}
+      const member = { user: { id: OWNER_ID, username: body.username || 'Test Member' } };
+      await sendLeave(gid, g.leave, member, guild.name, guild.approximate_member_count || 1);
+      return sendJSON(res, 200, { ok: true, message: 'Test leave message sent.' });
+    }
+    if (req.method === 'POST' && p === '/api/welcome/scan') {
+      const body = await readBody(req);
+      const gid = body.guild || guildId;
+      if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
+      const db = loadDB();
+      const g = guildConfig(db, gid);
+      const result = await runWelcomeGuild(gid, g);
+      saveDB(db);
+      return sendJSON(res, 200, { ok: true, ...result });
+    }
 
     if (req.method === 'POST' && p === '/api/logging') {
       const body = await readBody(req);
@@ -3493,7 +3570,7 @@ async function handleRequest(req, res) {
         members = q
           ? await discordFetch(`/guilds/${guildId}/members/search?query=${encodeURIComponent(q)}&limit=25`)
           : await discordFetch(`/guilds/${guildId}/members?limit=50`);
-      } catch (e) { return sendJSON(res, 200, { members: [], note: 'Server Members intent may be required.' }); }
+      } catch (e) { return sendJSON(res, 200, { members: [], note: `Member list unavailable: ${e.message}${e.status ? ` (HTTP ${e.status})` : ''}. If this says Missing Access, enable the Server Members intent in the Discord Developer Portal (Bot → Privileged Gateway Intents).` }); }
       return sendJSON(res, 200, {
         members: (Array.isArray(members) ? members : []).map((m) => ({ id: m.user.id, username: m.user.username, global_name: m.user.global_name, avatar: m.user.avatar, nick: m.nick, bot: m.user.bot, roles: m.roles }))
       });
@@ -3755,4 +3832,4 @@ server6.on('error', (err) => {
 });
 server6.listen(PORT, '::1');
 
-export { server, server6 };
+export { server, server6, loadDB, saveDB };
