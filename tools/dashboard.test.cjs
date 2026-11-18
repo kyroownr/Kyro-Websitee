@@ -38,10 +38,11 @@ function jsonRes(obj, status) {
 }
 
 // Discord REST mock router.
-const mockOverwrites = { chan1: [], chan2: [] };
+const mockOverwrites = { chan1: [], chan2: [], chan_forum: [] };
 // When set, the channel-visibility test serves this fixture instead of the
 // default three-channel list. Reset to null afterwards so nothing else changes.
 let extraChannels = null;
+let extraRoles = null;
 // Giveaway-sync and image-upload fixtures. Empty/null = fall through to the
 // default mock behaviour so earlier assertions are unaffected.
 let giveawayScan = {};
@@ -97,7 +98,7 @@ global.fetch = async (url, opts) => {
       { id: 'chan_forum', name: 'help', type: 15, position: 3, permission_overwrites: [] }
     ]);
   }
-  if ((p === '/channels/chan1' || p === '/channels/chan2') && method === 'PATCH') {
+  if ((p === '/channels/chan1' || p === '/channels/chan2' || p === '/channels/chan_forum') && method === 'PATCH') {
     if (body && body.permission_overwrites) mockOverwrites[p.split('/').pop()] = body.permission_overwrites;
     return jsonRes({ id: p.split('/').pop() });
   }
@@ -106,7 +107,7 @@ global.fetch = async (url, opts) => {
       if (failRoleCreation) return jsonRes({ message: 'Missing Permissions' }, 403);
       return jsonRes({ id: 'role_new_' + String(body && body.name || 'x').replace(/[^a-z0-9]/g, ''), name: body && body.name, managed: false, position: 5 });
     }
-    return jsonRes(guild1Roles);
+    return jsonRes(extraRoles || guild1Roles);
   }
   if (/^\/guilds\/guild1\/roles\/[^/]+$/.test(p) && method === 'DELETE') return jsonRes({}, 204);
   if (p === '/guilds/guild1/members/bot0000000000000001') return jsonRes({ user: { id: BOT_ID, username: 'UtilityBot' }, roles: ['role_bot'] });
@@ -329,29 +330,52 @@ async function waitForServer() {
   ok(perms.data.skipped.some((s) => s.startsWith('Kyro Bot')), 'bot roles skipped');
   ok(lastCall((c) => c.method === 'PATCH' && c.path === '/guilds/guild1/roles/role1' && c.body.permissions), 'Member role permissions PATCHed');
 
-  // Verification setup (no gate) — creates role, channel and posts the button
+  // Verification setup — gate is mandatory: button posted AND channels hidden
   const vf = await req('POST', '/api/verify/setup', { guild: 'guild1' });
   ok(vf.status === 200 && vf.data.steps.length >= 3, 'verification setup steps');
   ok(lastCall((c) => c.method === 'POST' && c.path === '/guilds/guild1/channels' && c.body.name === '✅┃verify'), 'verify channel created');
   const vfMsg = lastCall((c) => c.method === 'POST' && /\/messages$/.test(c.path) && c.body.components);
   ok(vfMsg && /kyro-verify:guild1:/.test(vfMsg.body.components[0].components[0].custom_id), 'verify button custom_id correct');
+  ok(/Gated/.test(vf.data.steps.join(' ')), 'setup hides channels without any opt-in flag');
+  const gatedPatch = lastCall((c) => c.method === 'PATCH' && c.path === '/channels/chan2' && c.body.permission_overwrites);
+  ok(gatedPatch && gatedPatch.body.permission_overwrites.some((o) => o.id === 'guild1' && (BigInt(o.deny) & 1024n) !== 0n), 'gate denies @everyone view on other channels');
+  const vid = (await req('GET', '/api/config?guild=guild1')).data.verification.roleId;
+  const verifiedOw = gatedPatch && gatedPatch.body.permission_overwrites.find((o) => o.type === 0 && o.id === vid);
+  ok(verifiedOw && (BigInt(verifiedOw.allow) & 1024n) !== 0n && (BigInt(verifiedOw.allow) & 2048n) !== 0n, 'Verified gets a role overwrite (type 0) with view + send');
+  ok(gatedPatch && !gatedPatch.body.permission_overwrites.some((o) => o.type === 1 && o.id === vid), 'no member-type overwrite written for a role');
+  const forumPatch = lastCall((c) => c.method === 'PATCH' && c.path === '/channels/chan_forum' && c.body.permission_overwrites);
+  ok(forumPatch && (BigInt(forumPatch.body.permission_overwrites.find((o) => o.id === 'guild1').deny) & 1024n) !== 0n, 'forum channels are gated too');
   const vfcfg = await req('GET', '/api/config?guild=guild1');
   ok(vfcfg.data.verification.enabled === true && vfcfg.data.verification.roleId, 'verification state saved');
+  ok(vfcfg.data.verification.gate === true && vfcfg.data.verification.gatedChannels.includes('chan2'), 'gate state stored with channel ids');
 
-  // Verification with gate — hides the other text channels
-  const vfGate = await req('POST', '/api/verify/setup', { guild: 'guild1', gate: true });
-  ok(vfGate.status === 200 && /Gated/.test(vfGate.data.steps.join(' ')), 'gate enabled step reported');
-  const gatedPatch = lastCall((c) => c.method === 'PATCH' && c.path === '/channels/chan1' && c.body.permission_overwrites);
-  ok(gatedPatch && gatedPatch.body.permission_overwrites.some((o) => o.id === 'guild1' && (BigInt(o.deny) & 1024n) !== 0n), 'gate denies @everyone view on other channels');
-
-  // Un-hide
+  // Un-hide only the gated channels
   const ungate = await req('POST', '/api/verify/remove', { guild: 'guild1' });
   ok(ungate.status === 200 && ungate.data.touched >= 1, 'gate removed');
-  const ungatedPatch = lastCall((c) => c.method === 'PATCH' && c.path === '/channels/chan1' && c.body.permission_overwrites);
+  const ungatedPatch = lastCall((c) => c.method === 'PATCH' && c.path === '/channels/chan2' && c.body.permission_overwrites);
   ok(ungatedPatch && (BigInt(ungatedPatch.body.permission_overwrites.find((o) => o.id === 'guild1').deny) & 1024n) === 0n, 'un-gate clears view deny');
 
+  // Re-run against private tickets, announcement channels and a broken legacy gate
+  extraRoles = guild1Roles.concat([{ id: vid, name: 'Verified', color: 0, position: 5, managed: false }]);
+  extraChannels = [
+    { id: 'chan1', name: 'general', type: 0, permission_overwrites: mockOverwrites.chan1 },
+    { id: 'chan_ticket', name: 'ticket-0001', type: 0, permission_overwrites: [{ id: 'guild1', type: 0, allow: '0', deny: '1024' }] },
+    { id: 'chan_ann', name: 'announcements', type: 5, permission_overwrites: [] },
+    { id: 'chan_legacy', name: 'updates', type: 0, permission_overwrites: [{ id: 'guild1', type: 0, allow: '0', deny: '1024' }, { id: vid, type: 1, allow: '1024', deny: '0' }] }
+  ];
+  const vf2 = await req('POST', '/api/verify/setup', { guild: 'guild1' });
+  ok(vf2.status === 200 && /Gated/.test(vf2.data.steps.join(' ')), 're-run setup gates again');
+  ok(!calls.some((c) => c.method === 'PATCH' && c.path === '/channels/chan_ticket'), 'private ticket channels are never opened to Verified');
+  const gateAnnPatch = lastCall((c) => c.method === 'PATCH' && c.path === '/channels/chan_ann' && c.body.permission_overwrites);
+  ok(gateAnnPatch && (BigInt(gateAnnPatch.body.permission_overwrites.find((o) => o.id === 'guild1').deny) & 1024n) !== 0n, 'announcement channels gated too');
+  const legacyPatch = lastCall((c) => c.method === 'PATCH' && c.path === '/channels/chan_legacy' && c.body.permission_overwrites);
+  ok(legacyPatch && !legacyPatch.body.permission_overwrites.some((o) => o.type === 1 && o.id === vid), 'legacy member-type role overwrite stripped');
+  ok(legacyPatch && legacyPatch.body.permission_overwrites.some((o) => o.type === 0 && o.id === vid && (BigInt(o.allow) & 1024n) !== 0n), 'legacy gate repaired with a real role overwrite');
+  extraChannels = null;
+  extraRoles = null;
+
   // One-click auto setup
-  const asr = await req('POST', '/api/autosetup', { guild: 'guild1', gate: false, permissions: true });
+  const asr = await req('POST', '/api/autosetup', { guild: 'guild1', permissions: true });
   ok(asr.status === 200 && asr.data.steps.some((s) => /#welcome/.test(s)) && asr.data.steps.some((s) => /AutoMod/.test(s)), 'one-click setup steps');
   ok(asr.data.steps.some((s) => /staff-only/.test(s)), 'one-click setup reports the private #mod-log');
   ok(Array.isArray(asr.data.warnings) && asr.data.warnings.length === 0, 'clean one-click setup has no warnings');
@@ -621,7 +645,7 @@ async function waitForServer() {
   const accessNoAdmin = await req('GET', '/api/bot/access?guild=guild1');
   ok(accessNoAdmin.status === 200 && accessNoAdmin.data.isAdmin === false, 'access reports no Administrator honestly');
   ok(!accessNoAdmin.data.missing.includes('Manage Roles') && !accessNoAdmin.data.missing.includes('Manage Channels'), 'access does not claim Manage Roles/Channels are missing when they are granted');
-  const asNoAdmin = await req('POST', '/api/autosetup', { guild: 'guild1', gate: false, permissions: false });
+  const asNoAdmin = await req('POST', '/api/autosetup', { guild: 'guild1', permissions: false });
   ok(asNoAdmin.status === 200, 'one-click setup runs without Administrator when the needed bits are present');
   ok(Array.isArray(asNoAdmin.data.warnings), 'one-click setup reports per-step warnings');
   adminPermissions = '8';

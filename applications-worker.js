@@ -414,7 +414,7 @@ async function setupVerificationInChannel(env, guildId, channelId) {
     if (i >= 0) overwrites[i] = entry; else overwrites.push(entry);
   };
   upsert(guildId, 0, 0n, 2048n | 64n);                  // @everyone: no send / react until verified
-  upsert(role.id, 1, 1024n | 2048n | 65536n | 64n, 0n); // Verified: view / send / history / react
+  upsert(role.id, 0, 1024n | 2048n | 65536n | 64n, 0n); // Verified: view / send / history / react
   await botCall(env, `/channels/${channel.id}`, 'PATCH', { permission_overwrites: overwrites }, { 'X-Audit-Log-Reason': 'Kyro verification setup' });
   await botCall(env, `/channels/${channel.id}/messages`, 'POST', {
     embeds: [{
@@ -425,7 +425,53 @@ async function setupVerificationInChannel(env, guildId, channelId) {
     }],
     components: [{ type: 1, components: [{ type: 2, style: 3, label: '✅ Verify', custom_id: `kyro-verify:${guildId}:${role.id}` }] }]
   }, { 'X-Audit-Log-Reason': 'Kyro verification setup' });
-  return { channelId: channel.id, roleId: role.id, created };
+  const gated = await gateUntilVerified(env, guildId, channel.id, role);
+  return { channelId: channel.id, roleId: role.id, created, gated };
+}
+
+/* Mandatory verification: every channel except the verify channel is hidden
+   from @everyone and opened to the Verified role (plus staff bypass roles).
+   Channels already hidden (staff hub, private tickets) are left untouched, and
+   legacy gates that wrote role allows as member overwrites (type 1) are repaired. */
+async function gateUntilVerified(env, guildId, verifyChannelId, verifiedRole) {
+  const [channels, me, roles] = await Promise.all([
+    botCall(env, `/guilds/${guildId}/channels`),
+    botCall(env, `/users/@me`),
+    botCall(env, `/guilds/${guildId}/roles`)
+  ]);
+  const roleIds = new Set((Array.isArray(roles) ? roles : []).map(r => r.id));
+  const chat = PERM.VIEW | PERM.SEND | PERM.REACT | PERM.EMBED | PERM.ATTACH | PERM.HISTORY | PERM.EXTERN | PERM.STICKER | PERM.CONNECT | PERM.SPEAK | PERM.APPCMD | PERM.THREAD_CREATE | PERM.THREAD_SEND;
+  const allowRoles = (Array.isArray(roles) ? roles : [])
+    .filter(r => !r.managed && /(admin|owner|mod|staff|helper|trial|bot)/i.test(r.name))
+    .concat([verifiedRole]);
+  let gated = 0;
+  for (const ch of Array.isArray(channels) ? channels : []) {
+    if (![0, 2, 5, 15].includes(ch.type) || ch.id === verifyChannelId) continue;
+    let overwrites = Array.isArray(ch.permission_overwrites) ? ch.permission_overwrites.slice() : [];
+    const hadBad = overwrites.some(o => o.type === 1 && roleIds.has(o.id));
+    overwrites = overwrites.filter(o => !(o.type === 1 && roleIds.has(o.id)));
+    const idx = overwrites.findIndex(o => o.id === guildId && o.type === 0);
+    const allow = BigInt(idx >= 0 ? (overwrites[idx].allow || '0') : '0');
+    const deny = BigInt(idx >= 0 ? (overwrites[idx].deny || '0') : '0');
+    if ((deny & PERM.VIEW) !== 0n && !hadBad) continue;
+    const entry = { id: guildId, type: 0, allow: (allow & ~PERM.VIEW).toString(), deny: (deny | PERM.VIEW).toString() };
+    if (idx >= 0) overwrites[idx] = entry; else overwrites.push(entry);
+    for (const r of allowRoles) {
+      const bi = overwrites.findIndex(o => o.id === r.id && o.type === 0);
+      const bAllow = BigInt(bi >= 0 ? (overwrites[bi].allow || '0') : '0') | chat;
+      const e = { id: r.id, type: 0, allow: bAllow.toString(), deny: bi >= 0 ? overwrites[bi].deny : '0' };
+      if (bi >= 0) overwrites[bi] = e; else overwrites.push(e);
+    }
+    const botAllow = PERM.VIEW | PERM.SEND | PERM.REACT | PERM.EMBED | PERM.ATTACH | PERM.HISTORY | PERM.MANAGE_MSG | PERM.THREAD_CREATE | PERM.THREAD_SEND;
+    const oi = overwrites.findIndex(o => o.id === me.id && o.type === 1);
+    const botEntry = { id: me.id, type: 1, allow: String(botAllow), deny: '0' };
+    if (oi >= 0) overwrites[oi] = botEntry; else overwrites.push(botEntry);
+    try {
+      await botCall(env, `/channels/${ch.id}`, 'PATCH', { permission_overwrites: overwrites }, { 'X-Audit-Log-Reason': 'Kyro verification gate' });
+      gated++;
+    } catch {}
+  }
+  return gated;
 }
 
 /* Support / modmail tickets: a member presses "Open Ticket" and gets a private
@@ -1094,7 +1140,7 @@ export async function handleApplicationInteractions(request, env, ctx) {
           } else if (sub === 'verification') {
             const out = await setupVerificationInChannel(env, guildId, subOpts.find(o => o.name === 'channel')?.value || interaction.channel_id);
             payload = {
-              content: `✅ **Verification is live** in <#${out.channelId}>.\nMembers press **Verify** and get <@&${out.roleId}>${out.created ? ' (created just now)' : ''}.\nUse the dashboard's *Server Setup* tab to also hide every channel until members verify.`,
+              content: `✅ **Verification is live** in <#${out.channelId}>.\nMembers press **Verify** and get <@&${out.roleId}>${out.created ? ' (created just now)' : ''}.\n**${out.gated} channels** are hidden until members verify.`,
               allowed_mentions: { parse: [] }
             };
           } else {

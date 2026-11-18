@@ -211,6 +211,65 @@ async function main() {
     check((await dm.json()).type === 4, 'verify outside a guild denied');
   } finally { global.fetch = originalFetch; }
 
+  // /setup verification: mandatory gate hides every open channel, keeps private
+  // tickets private, repairs legacy member-type role overwrites.
+  const setupVerifyChan = '1571547868647399900';
+  const setupNewRole = '1571547868647399950';
+  const setupChat = '1571547868647399901';
+  const setupAnn = '1571547868647399902';
+  const setupTicket = '1571547868647399903';
+  const setupLegacy = '1571547868647399904';
+  let setupRoles = [
+    { id: guild, name: '@everyone', managed: false, permissions: '0' },
+    { id: '1571547868647399960', name: 'Moderator', managed: false, permissions: '0' }
+  ];
+  const setupPatches = [], setupFollowups = [], setupDeferred = [];
+  const setupFetch = async (url, options = {}) => {
+    const u = new URL(url);
+    const method = options.method || 'GET';
+    if (u.pathname === `/api/v10/guilds/${guild}/roles` && method === 'GET') return Response.json(setupRoles);
+    if (u.pathname === `/api/v10/guilds/${guild}/roles` && method === 'POST') {
+      const made = { id: setupNewRole, name: 'Verified', managed: false, permissions: '0' };
+      setupRoles = setupRoles.concat([made]);
+      return Response.json(made);
+    }
+    if (u.pathname === `/api/v10/users/@me`) return Response.json({ id: bot });
+    if (u.pathname === `/api/v10/channels/${setupVerifyChan}` && method === 'GET') return Response.json({ id: setupVerifyChan, guild_id: guild, type: 0, name: '✅┃verify', permission_overwrites: [] });
+    if (u.pathname === `/api/v10/guilds/${guild}/channels` && method === 'GET') return Response.json([
+      { id: setupVerifyChan, type: 0, name: '✅┃verify', permission_overwrites: [] },
+      { id: setupChat, type: 0, name: 'general', permission_overwrites: [] },
+      { id: setupAnn, type: 5, name: 'announcements', permission_overwrites: [] },
+      { id: setupTicket, type: 0, name: 'ticket-0001', permission_overwrites: [{ id: guild, type: 0, allow: '0', deny: '1024' }] },
+      { id: setupLegacy, type: 0, name: 'updates', permission_overwrites: [{ id: guild, type: 0, allow: '0', deny: '1024' }, { id: setupNewRole, type: 1, allow: '1024', deny: '0' }] }
+    ]);
+    if (u.pathname === `/api/v10/channels/${setupVerifyChan}/messages` && method === 'POST') return Response.json({ id: 'setup-msg' });
+    if (/^\/api\/v10\/channels\/\d+$/.test(u.pathname) && method === 'PATCH') { setupPatches.push({ channel: u.pathname.split('/').pop(), body: JSON.parse(options.body) }); return Response.json({}); }
+    if (u.pathname.includes('/webhooks/') && method === 'PATCH') { setupFollowups.push(JSON.parse(options.body)); return Response.json({}); }
+    throw new Error('Unexpected setup endpoint: ' + u.pathname + ' ' + method);
+  };
+  try {
+    global.fetch = setupFetch;
+    const setupCmd = { type: 2, application_id: bot, token: 'setup-token', guild_id: guild, channel_id: category, member: { user: { id: userId('owner') }, permissions: '8', roles: [] }, data: { name: 'setup', options: [{ name: 'verification', type: 1, options: [{ name: 'channel', type: 7, value: setupVerifyChan }] }] } };
+    const sr = await module.handleApplicationInteractions(await signed(setupCmd), env, { waitUntil: work => setupDeferred.push(work) });
+    check((await sr.json()).type === 5, 'setup verification acknowledged immediately');
+    await Promise.all(setupDeferred);
+    check(setupFollowups.length === 1 && /3 channels\*\* are hidden/.test(setupFollowups[0].content), 'setup followup reports the gated channel count');
+    const chatPatch = setupPatches.find(p => p.channel === setupChat);
+    check(chatPatch && (BigInt(chatPatch.body.permission_overwrites.find(o => o.id === guild).deny) & 1024n) !== 0n, 'slash setup hides open channels from @everyone');
+    const chatVerified = chatPatch && chatPatch.body.permission_overwrites.find(o => o.id === setupNewRole && o.type === 0);
+    check(chatVerified && (BigInt(chatVerified.allow) & 1024n) !== 0n && (BigInt(chatVerified.allow) & 2048n) !== 0n, 'Verified role overwrite is type 0 with view + send');
+    check(chatPatch && !chatPatch.body.permission_overwrites.some(o => o.id === setupNewRole && o.type === 1), 'no member-type overwrite for the Verified role');
+    check(setupPatches.some(p => p.channel === setupAnn), 'announcement channels gated by slash setup');
+    check(!setupPatches.some(p => p.channel === setupTicket), 'private ticket channels untouched by slash setup');
+    const legacyPatch = setupPatches.find(p => p.channel === setupLegacy);
+    check(legacyPatch && !legacyPatch.body.permission_overwrites.some(o => o.id === setupNewRole && o.type === 1), 'legacy member-type role overwrite stripped');
+    check(legacyPatch && legacyPatch.body.permission_overwrites.some(o => o.id === setupNewRole && o.type === 0), 'legacy gate repaired with a role overwrite');
+    const verifyPatch = setupPatches.find(p => p.channel === setupVerifyChan);
+    check(verifyPatch && verifyPatch.body.permission_overwrites.some(o => o.id === setupNewRole && o.type === 0), 'verify channel Verified overwrite is role type');
+    const deniedSetup = await module.handleApplicationInteractions(await signed({ ...setupCmd, token: 'setup-token-2', member: { user: { id: userId('member') }, permissions: '0', roles: [] } }), env, { waitUntil: work => setupDeferred.push(work) });
+    check((await deniedSetup.json()).type === 4, 'non-staff cannot run setup verification');
+  } finally { global.fetch = originalFetch; }
+
   // Support tickets: new welcome copy, website-matched color, staff-only claim
   // that locks sending to the claimer, and opener-or-staff close.
   const ticketChan = '1571547868647399800';

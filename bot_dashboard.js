@@ -1163,7 +1163,7 @@ async function setupVerification(guildId, opts = {}) {
     if (i >= 0) overwrites[i] = entry; else overwrites.push(entry);
   };
   upsert(guildId, 0, 0n, 2048n | 64n);
-  upsert(role.id, 1, 1024n | 2048n | 65536n | 64n, 0n);
+  upsert(role.id, 0, 1024n | 2048n | 65536n | 64n, 0n);
   try {
     await discordFetch(`/channels/${channel.id}`, { method: 'PATCH', body: JSON.stringify({ permission_overwrites: overwrites }) });
     steps.push('Locked sending in the verify channel until verified');
@@ -1188,43 +1188,57 @@ async function setupVerification(guildId, opts = {}) {
   g.verification.channelId = channel.id;
   g.verification.roleId = role.id;
   g.verification.messageId = msg.id;
-  // 5. Optional gate: hide every other text channel until verified
-  if (opts.gate) {
-    const gated = await gateChannels(guildId, channel.id, role, true);
-    g.verification.gate = true;
-    g.verification.gatedChannels = gated;
-    steps.push(`Gated **${gated.length} channels** — hidden until members verify`);
-  }
+  // 5. Mandatory gate: every other channel stays hidden until members verify
+  const gated = await gateChannels(guildId, channel.id, role, true);
+  g.verification.gate = true;
+  g.verification.gatedChannels = gated;
+  steps.push(`Gated **${gated.length} channels** — hidden until members verify`);
   saveDB(db);
   await logEvent(guildId, 'moderation', 'Verification setup', steps.map((s) => '• ' + s).join('\n'), 0x30d158);
   return steps;
 }
 
-async function gateChannels(guildId, verifyChannelId, verifiedRole, on) {
+async function gateChannels(guildId, verifyChannelId, verifiedRole, on, onlyIds) {
   const channels = await discordFetch(`/guilds/${guildId}/channels`);
   const roles = await discordFetch(`/guilds/${guildId}/roles`);
+  const botId = await getBotUserId();
+  const roleIds = new Set(roles.map((r) => r.id));
   const bypassRoles = roles.filter((r) => !r.managed && /(admin|owner|mod|staff|helper|trial|bot)/i.test(r.name));
+  const allowRoles = bypassRoles.concat(verifiedRole ? [verifiedRole] : []);
+  const only = on ? null : new Set(onlyIds || []);
   const touched = [];
   for (const ch of channels) {
-    if (ch.type !== 0 || ch.id === verifyChannelId) continue;
-    const overwrites = Array.isArray(ch.permission_overwrites) ? ch.permission_overwrites.slice() : [];
+    if (![0, 2, 5, 15].includes(ch.type) || ch.id === verifyChannelId) continue;
+    if (only && !only.has(ch.id)) continue;
+    let overwrites = Array.isArray(ch.permission_overwrites) ? ch.permission_overwrites.slice() : [];
+    // Older gates wrote role allows as member overwrites (type 1) — strip them.
+    const hadBad = overwrites.some((o) => o.type === 1 && roleIds.has(o.id));
+    overwrites = overwrites.filter((o) => !(o.type === 1 && roleIds.has(o.id)));
     const idx = overwrites.findIndex((o) => o.id === guildId && o.type === 0);
     const allow = BigInt(idx >= 0 ? (overwrites[idx].allow || '0') : '0');
-    let deny = BigInt(idx >= 0 ? (overwrites[idx].deny || '0') : '0');
-    const before = deny;
-    if (on) deny |= 1024n; else deny &= ~1024n;
-    if (deny === before) continue;
-    if (idx >= 0) overwrites[idx] = { id: guildId, type: 0, allow: on ? (allow & ~1024n).toString() : allow.toString(), deny: deny.toString() };
-    else overwrites.push({ id: guildId, type: 0, allow: '0', deny: deny.toString() });
-    if (on) for (const r of bypassRoles.concat(verifiedRole ? [verifiedRole] : [])) {
-      const bi = overwrites.findIndex((o) => o.id === r.id && o.type === 1);
-      const bAllow = BigInt(bi >= 0 ? (overwrites[bi].allow || '0') : '0') | 1024n;
-      const entry = { id: r.id, type: 1, allow: bAllow.toString(), deny: bi >= 0 ? overwrites[bi].deny : '0' };
-      if (bi >= 0) overwrites[bi] = entry; else overwrites.push(entry);
+    const deny = BigInt(idx >= 0 ? (overwrites[idx].deny || '0') : '0');
+    const nextDeny = on ? (deny | PERM.VIEW) : (deny & ~PERM.VIEW);
+    const denyChanged = nextDeny !== deny;
+    // Already-hidden channels (staff hub, private tickets) and already-good
+    // gates are left alone; only open channels and broken legacy gates change.
+    if (!denyChanged && !hadBad) continue;
+    if (idx >= 0) overwrites[idx] = { id: guildId, type: 0, allow: (on ? (allow & ~PERM.VIEW) : allow).toString(), deny: nextDeny.toString() };
+    else overwrites.push({ id: guildId, type: 0, allow: '0', deny: nextDeny.toString() });
+    if (on) {
+      for (const r of allowRoles) {
+        const bi = overwrites.findIndex((o) => o.id === r.id && o.type === 0);
+        const bAllow = BigInt(bi >= 0 ? (overwrites[bi].allow || '0') : '0') | CHAT_BASICS;
+        const entry = { id: r.id, type: 0, allow: bAllow.toString(), deny: bi >= 0 ? overwrites[bi].deny : '0' };
+        if (bi >= 0) overwrites[bi] = entry; else overwrites.push(entry);
+      }
+      const botAllow = PERM.VIEW | PERM.SEND | PERM.REACT | PERM.EMBED | PERM.ATTACH | PERM.HISTORY | PERM.MANAGE_MSG | PERM.THREAD_CREATE | PERM.THREAD_SEND;
+      const oi = overwrites.findIndex((o) => o.id === botId && o.type === 1);
+      const botEntry = { id: botId, type: 1, allow: String(botAllow), deny: '0' };
+      if (oi >= 0) overwrites[oi] = botEntry; else overwrites.push(botEntry);
     }
     try {
       await discordFetch(`/channels/${ch.id}`, { method: 'PATCH', body: JSON.stringify({ permission_overwrites: overwrites }) });
-      touched.push(ch.name);
+      touched.push(ch.id);
     } catch (e) {}
   }
   return touched;
@@ -1239,7 +1253,7 @@ async function clearVerificationGate(guildId) {
   if (v.roleId) {
     try { role = (await discordFetch(`/guilds/${guildId}/roles`)).find((r) => r.id === v.roleId); } catch (e) {}
   }
-  const touched = await gateChannels(guildId, v.channelId, role, false);
+  const touched = await gateChannels(guildId, v.channelId, role, false, gated);
   v.gate = false;
   v.gatedChannels = [];
   v.enabled = false;
@@ -1318,7 +1332,7 @@ async function runAutoSetup(guildId, opts = {}) {
   steps.push('Security: auto-raid detection, anti-nuke and keyword alerts enabled');
   // 6. Verification
   saveDB(db);
-  const vSteps = await step('Set up verification', () => setupVerification(guildId, { gate: Boolean(opts.gate) }));
+  const vSteps = await step('Set up verification', () => setupVerification(guildId, {}));
   if (vSteps) steps.push(...vSteps);
   // 7. Optional permission presets
   if (opts.permissions) {
@@ -3662,7 +3676,7 @@ async function handleRequest(req, res) {
       const gid = body.guild || guildId;
       if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
       try {
-        const steps = await setupVerification(gid, { channelId: body.channelId, gate: Boolean(body.gate) });
+        const steps = await setupVerification(gid, { channelId: body.channelId });
         return sendJSON(res, 200, { steps });
       } catch (err) {
         const hint = permErrorHint(err);
@@ -3684,7 +3698,7 @@ async function handleRequest(req, res) {
       const gid = body.guild || guildId;
       if (!gid) return sendJSON(res, 400, { error: 'guild is required' });
       try {
-        const result = await runAutoSetup(gid, { gate: Boolean(body.gate), permissions: Boolean(body.permissions) });
+        const result = await runAutoSetup(gid, { permissions: Boolean(body.permissions) });
         return sendJSON(res, 200, result);
       } catch (err) {
         const hint = permErrorHint(err);

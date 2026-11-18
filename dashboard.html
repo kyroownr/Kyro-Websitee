@@ -526,8 +526,7 @@
         </div>
         <div class="card" style="border-left:3px solid #0071e3">
           <div class="card-title">⚡ One-Click Server Setup</div>
-          <div class="card-desc">Creates <b>#welcome</b>, <b>#mod-log</b> and <b>#announcements</b>, enables Welcome + full Logging + AutoMod (scam/invite/mention filters on every channel), turns on security defaults and sets up verification. Safe to re-run — existing channels are reused.</div>
-          <label class="check"><input type="checkbox" id="asGate"> Hide every channel until members verify</label>
+          <div class="card-desc">Creates <b>#welcome</b>, <b>#mod-log</b> and <b>#announcements</b>, enables Welcome + full Logging + AutoMod (scam/invite/mention filters on every channel), turns on security defaults and sets up verification with every channel hidden until members verify. Safe to re-run — existing channels are reused.</div>
           <label class="check"><input type="checkbox" id="asPerms"> Also apply best-practice role permissions</label>
           <div class="btn-row"><button class="btn" id="asRun">Run full setup</button></div>
           <div class="status" id="asStatus"></div>
@@ -585,9 +584,8 @@
         </div>
         <div class="card">
           <div class="card-title">✅ Verification</div>
-          <div class="card-desc">Posts a <b>Verify</b> button that grants the Verified role. Members can't type in the verify channel until verified. The button works in Discord directly (handled by the Kyro worker).</div>
+          <div class="card-desc">Posts a <b>Verify</b> button that grants the Verified role and hides every other channel until members press it — verification is mandatory. Members can't type in the verify channel until verified. The button works in Discord directly (handled by the Kyro worker).</div>
           <div class="field"><label>Channel (blank = find or create ✅┃verify)</label><select id="vfChannel"><option value="">Find or create ✅┃verify</option></select></div>
-          <label class="check"><input type="checkbox" id="vfGate"> Hide every other channel until verified</label>
           <div class="btn-row">
             <button class="btn" id="vfSetup">Set up verification</button>
             <button class="btn ghost" id="vfUngate">Un-hide channels</button>
@@ -1605,7 +1603,7 @@
     clearStatus($('#asStatus')); $('#asSteps').innerHTML='<div class="loading">Running full setup — this creates channels and posts messages, give it a few seconds…</div>';
     $('#asRun').disabled=true;
     try{
-      const r=await post('/api/autosetup',{ guild:state.guild.id, gate:$('#asGate').checked, permissions:$('#asPerms').checked });
+      const r=await post('/api/autosetup',{ guild:state.guild.id, permissions:$('#asPerms').checked });
       const failed=Array.isArray(r.warnings)?r.warnings.length:0;
       $('#asSteps').innerHTML=(r.steps||[]).map(s=>`<div class="list-item"><div class="li-main"><div class="li-title">${esc(s)}</div></div><span class="tag ${s.startsWith('⚠️')?'amber':'green'}">${s.startsWith('⚠️')?'needs attention':'done'}</span></div>`).join('');
       setStatus($('#asStatus'), failed ? `Setup finished with ${failed} step${failed===1?'':'s'} needing attention.` : 'Full setup complete.', failed?'':'success');
@@ -1631,7 +1629,7 @@
     clearStatus($('#vfStatus')); $('#vfResult').innerHTML='<div class="loading">Setting up verification…</div>';
     $('#vfSetup').disabled=true;
     try{
-      const r=await post('/api/verify/setup',{ guild:state.guild.id, channelId:$('#vfChannel').value, gate:$('#vfGate').checked });
+      const r=await post('/api/verify/setup',{ guild:state.guild.id, channelId:$('#vfChannel').value });
       $('#vfResult').innerHTML=(r.steps||[]).map(s=>`<div class="list-item"><div class="li-main"><div class="li-title">${esc(s)}</div></div><span class="tag green">done</span></div>`).join('');
       setStatus($('#vfStatus'),'Verification is live — members can press Verify now.','success'); toast('Verification set up','success'); refreshGuild();
     }catch(err){ $('#vfResult').innerHTML=''; setStatus($('#vfStatus'), err.message,'error'); }
