@@ -207,42 +207,6 @@ window.KYRO_SEED = [
     ]
   },
   {
-    id: 'toonboom',
-    title: 'Toon Boom Harmony Premium',
-    desc: 'Toon Boom Harmony Premium is the industry-standard 2D animation software used by major studios (like Disney, Nickelodeon, and Cartoon Network) as well as freelancers to create animated TV shows, feature films, and games.',
-    category: 'software',
-    kind: 'software',
-    os: ['windows'],
-    price: null,
-    version: '',
-    creator: '',
-    downloads: 0,
-    added: '2026-11-13',
-    tags: ['animation', '2d', 'rigging', 'compositing', 'nodes'],
-    gallery: [
-      '/assets/toonboom-scene.webp',
-      '/assets/toonboom-rig.webp'
-    ],
-    files: [
-      {
-        ext: '',
-        name: 'Toon Boom Harmony Premium',
-        size: '',
-        label: 'Windows',
-        gated: true,
-      }
-    ],
-    features: [
-      'As the highest tier of the Harmony lineup, it provides a complete end-to-end pipeline—from sketching and rigging to compositing and special effects.',
-      'Advanced Character Rigging & Deformers: Build complex cut-out character rigs with bones, curves, and master controllers. Deformers allow you to bend, squash, and stretch artwork smoothly so rigs move naturally without redrawing every frame.',
-      'Traditional & Paperless Drawing: Combines vector and bitmap brush engines with stabilizers, onion skinning, and infinite color palettes for fluid frame-by-frame animation.',
-      'Node-Based Compositing & Special Effects: Features a powerful Node View (similar to Nuke or Blender) that lets you build unlimited custom visual effects, lighting, glows, blurs, and particle systems (like rain, fire, and smoke).',
-      '2D/3D Integration: Import 3D models directly into your 2D scenes and arrange layers in a true 3D multiplane space for dynamic camera movements and depth.',
-      'Studio-Ready Workflow: Supports automated lip-syncing, reusable animation libraries, and team pipeline tools for large productions.',
-      'Who it\u2019s for: Professional animators, studios, and serious creators who need maximum control over complex character rigs and high-end visual effects.'
-    ]
-  },
-  {
     id: 'krotos',
     title: 'Krotos Concept 2',
     desc: 'Krotos Concept 2 (v2.0.3) is a modern, creative synthesizer plugin (VST/AU/AAX) designed for music producers, sound designers, and film/game audio creators. It is built to make complex sound design fast, visual, and intuitive.',
@@ -442,12 +406,6 @@ window.KYRO_SEED = [
    which is how the externally hosted SaaSor toolkit is documented.
    -------------------------------------------------------------------------- */
 window.KYRO_INSTALL = {
-  toonboom: {
-    title: 'Toon Boom Installation Guide',
-    blocks: [
-      { p: 'Follow it from the Read me in The folder' }
-    ]
-  },
   autocaption: {
     title: 'AutoCaption Installation Guide',
     blocks: [

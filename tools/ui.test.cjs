@@ -329,17 +329,17 @@ async function main() {
     await expandSoftware();
     assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
     await screenshot('software-expanded-mobile.png');
-    await evaluate("document.querySelector('[data-id=toonboom] [data-inspect]').click()");
-    assert.equal(await evaluate("document.querySelector('[data-ext-link]').getAttribute('href')"), 'https://1024terabox.com/s/1exMINTeowOqb6mzXgZ_TIQ');
+    await evaluate("document.querySelector('[data-id=krotos] [data-inspect]').click()");
+    assert.equal(await evaluate("document.querySelector('[data-ext-link]').getAttribute('href')"), 'https://1024terabox.com/s/1lv5g6zY7PrlBxMpO-KopDg');
     assert.equal(await evaluate("document.querySelector('.pass-value').textContent"), 'Kyro');
-    assert.equal(await evaluate("document.querySelector('.file-name').textContent"), 'Toon Boom Harmony Premium');
-    assert.equal(await evaluate("document.querySelector('.file-ico') === null && !document.querySelector('.spec-row').textContent.includes('File Format')"), true);
+    assert.equal(await evaluate("document.querySelector('.file-name').textContent"), 'Krotos Concept 2.0.3.zip');
+    assert.equal(await evaluate("document.querySelector('.file-ico').textContent"), 'ZIP');
     await evaluate("document.querySelector('.pass-row').scrollIntoView({block:'center',behavior:'instant'})");
-    await screenshot('toonboom-download-mobile.png');
+    await screenshot('krotos-download-mobile.png');
     await evaluate("document.querySelector('[data-pass-copy]').click()");
     assert.equal(await evaluate('window.__copied'), 'Kyro');
     await evaluate("document.querySelector('[data-tab=install]').click()");
-    assert.equal(await evaluate("document.querySelector('[data-panel=install]').textContent.includes('Follow it from the Read me in The folder')"), true);
+    assert.equal(await evaluate("document.querySelector('[data-panel=install]').textContent.includes('Krotos Concept 2.0.3.zip')"), true);
     await evaluate("document.querySelector('.modal-close').click()");
     await toggleSoftware();
     assert.equal(await evaluate("document.querySelector('#softwareSection').open"), false);
@@ -404,11 +404,11 @@ async function main() {
     assert.equal(await evaluate("document.querySelector('#guideMac').hidden"), false);
     await navigate('/windows?uiAuth=out');
     await expandSoftware();
-    await evaluate("document.querySelector('[data-id=toonboom] [data-inspect]').click()");
+    await evaluate("document.querySelector('[data-id=krotos] [data-inspect]').click()");
     assert.equal(await evaluate("document.querySelector('[data-ext-link]') === null && document.querySelector('[data-pass-copy]') === null"), true);
     await navigate('/windows?uiAuth=logged');
     await expandSoftware();
-    await evaluate("document.querySelector('[data-id=toonboom] [data-inspect]').click()");
+    await evaluate("document.querySelector('[data-id=krotos] [data-inspect]').click()");
     assert.equal(await evaluate("document.querySelector('[data-ext-link]') === null && document.querySelector('[data-pass-copy]') === null"), true);
     await navigate('/windows?emptySoftwareFixture');
     await toggleSoftware();
@@ -470,7 +470,7 @@ async function main() {
       await evaluate("document.querySelector('#profileBtn').click()");
       assert.equal(await evaluate("document.querySelector('.pm-state').textContent.includes('Not in the Kyro server') && document.querySelector('.pm-role') === null"), true);
     }
-    console.log(JSON.stringify({ realChrome: 'passed', applications: 'CTA/dialog, three roles, verified forms, single submit, private receipts, duplicates, validation, retry, membership/age/closed gates, logout race, OAuth state and return path at 1366/390/320px', launchPolish: '1200x630 preview, unique Open Graph on five pages, custom 404 status and return button, search/Ctrl+K/drawers at 1366/390/320px', ownerControls: 'role refresh, public owner submission badge, status, confirm/cancel deletion, member/admin gates, spoofed storage, desktop/mobile', mobileWidth: 390, softwareAccordion: 'mouse, Enter, Space, both OS pages, empty state', toolsAccordion: 'mouse, Enter, Space, both OS pages, desktop/mobile, independent shelves, empty state', toolDownloads: 'AutoCaption modal, Kyro copy, install guide', toonboom: 'download URL, Kyro password, install note, auth gates', boardFirst: true, composer: true, publicChecksumCopy: true, malformedAndMissingHashes: 'hidden', guide: '6 sections', authGates: 'passed', searchAndCatalog: 'passed', artifacts }));
+    console.log(JSON.stringify({ realChrome: 'passed', applications: 'CTA/dialog, three roles, verified forms, single submit, private receipts, duplicates, validation, retry, membership/age/closed gates, logout race, OAuth state and return path at 1366/390/320px', launchPolish: '1200x630 preview, unique Open Graph on five pages, custom 404 status and return button, search/Ctrl+K/drawers at 1366/390/320px', ownerControls: 'role refresh, public owner submission badge, status, confirm/cancel deletion, member/admin gates, spoofed storage, desktop/mobile', mobileWidth: 390, softwareAccordion: 'mouse, Enter, Space, both OS pages, empty state', toolsAccordion: 'mouse, Enter, Space, both OS pages, desktop/mobile, independent shelves, empty state', toolDownloads: 'AutoCaption modal, Kyro copy, install guide', krotos: 'download URL, Kyro password, install note, auth gates', boardFirst: true, composer: true, publicChecksumCopy: true, malformedAndMissingHashes: 'hidden', guide: '6 sections', authGates: 'passed', searchAndCatalog: 'passed', artifacts }));
   } finally {
     if (ws && ws.readyState === WebSocket.OPEN) ws.close();
     chrome.kill();
