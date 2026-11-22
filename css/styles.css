@@ -251,12 +251,13 @@ code, .mono { font-family: var(--mono); }
   border: 1px solid var(--line); color: var(--dim); background: rgba(255, 255, 255, 0.04);
 }
 
-.os-toggle { display: flex; gap: 8px; margin-top: 18px; }
+.os-toggle { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 22px; }
 .os-toggle-btn {
   position: relative; overflow: hidden;
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 7px 16px;
-  font-size: 0.8rem; font-weight: 600; letter-spacing: -0.01em;
+  display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+  padding: 13px 26px;
+  min-width: 148px;
+  font-size: 0.94rem; font-weight: 600; letter-spacing: -0.01em;
   color: var(--silver);
   border-radius: 980px;
   border: 1px solid var(--line);
@@ -268,7 +269,7 @@ code, .mono { font-family: var(--mono); }
   background: var(--white); color: var(--ink); border-color: var(--white);
   box-shadow: 0 4px 16px rgba(255, 255, 255, 0.15);
 }
-.os-toggle-btn svg { flex-shrink: 0; }
+.os-toggle-btn svg { flex-shrink: 0; width: 14px; height: 14px; }
 
 /* ------------------------------- notice -------------------------------- */
 .notice {
@@ -292,6 +293,17 @@ code, .mono { font-family: var(--mono); }
 
 /* ---------------------------- access strip ------------------------------ */
 .access-strip { margin-top: 14px; }
+
+/* The free/build note and the membership state sit side by side instead of
+   stacking two full-width banners in the middle of the page. */
+.info-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px; margin-top: 26px; align-items: stretch;
+}
+.info-row .notice { margin: 0; height: 100%; }
+.info-row .access-strip { margin-top: 0; height: 100%; }
+.info-row .access-row { margin-top: 0; height: 100%; }
+@media (max-width: 720px) { .info-row { grid-template-columns: minmax(0, 1fr); } }
 .access-row {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   margin-top: 10px; padding: 14px 18px;
@@ -648,6 +660,10 @@ code, .mono { font-family: var(--mono); }
 .badge-row { position: absolute; display: flex; gap: 5px; z-index: 3; }
 
 .m-body { padding: 22px 24px 24px; }
+/* Downloads sit immediately under the description so the file rows are visible
+   the moment Inspect opens, with no scrolling past the tabs. */
+.dl-block { margin: 0 0 20px; padding-bottom: 4px; border-bottom: 1px solid var(--line-dim); }
+.dl-block .section-label { margin-top: 0; }
 .m-title-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .m-title { margin: 0; font-size: 1.5rem; font-weight: 800; letter-spacing: -0.03em; color: var(--white); }
 .m-version { font-family: var(--mono); font-size: 0.72rem; padding: 2px 7px; color: var(--silver); border: 1px solid var(--line); }
@@ -925,6 +941,11 @@ code, .mono { font-family: var(--mono); }
 .req-head-actions .close-x { position: relative; inset: auto; flex-shrink: 0; }
 .req-head-actions .btn { white-space: nowrap; }
 #requestsDrawer .drawer-head, #feedbackDrawer .drawer-head { flex-shrink: 0; }
+/* Feedback is a reading surface: reviews were cramped in the 450px default. */
+#feedbackDrawer { width: min(660px, 96vw); }
+#feedbackDrawer .req-fields { padding: 18px 22px; gap: 16px; }
+#feedbackDrawer .req-card { padding: 18px 20px; }
+#feedbackDrawer .req-list { padding: 16px 20px; gap: 12px; }
 .req-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 .req-controls { display: grid; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
 .req-compose { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.24s var(--ease); }

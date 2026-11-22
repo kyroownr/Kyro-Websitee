@@ -400,25 +400,28 @@ window.KYRO_SEED = [
       '/assets/saasor-projects.webp'
     ],
     files: [
+      /* The `name` is the KV key behind /vault/link (see vault-links.json), so it
+         cannot be renamed without re-uploading the link map. Only the visible
+         label is safe to edit — done here to stop recommending TeraBox. */
       {
         ext: 'archive',
         name: 'SaaSor Plus — primary link (Terabox) [Recommended]',
         size: '',
-        label: 'Scenes, 3D assets, GLB models and the extension panel (Recommended)',
+        label: 'TeraBox mirror — needs the TeraBox site or app. Use the Google Drive mirror if you can.',
         gated: true,
       },
       {
         ext: 'cloud',
         name: 'SaaSor Plus — alternate link (Google Drive) [Recommended / Good]',
         size: '',
-        label: 'Google Drive mirror for SaaSor Plus toolkit',
+        label: 'Google Drive mirror — fastest route for the SaaSor Plus toolkit',
         gated: true
       },
       {
         ext: 'archive',
         name: 'SaaSor Plus — direct link (Filez) [Sometimes Broken - Not Recommended]',
         size: '',
-        label: 'Direct mirror link (Sometimes broken - Terabox or Drive recommended)',
+        label: 'Direct mirror link (sometimes broken — use the Google Drive mirror)',
         gated: true
       }
     ],

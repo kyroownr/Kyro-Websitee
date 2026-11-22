@@ -1740,6 +1740,7 @@
             (r.starter ? '<span class="req-cat mono">STARTER IDEA</span>' : '') +
             (r.author_name ? '<span class="req-cat mono">' + esc(r.author_name) + '</span>' : '') +
             (r.author_role === 'owner' ? '<span class="badge badge-free mono" title="Discord server owner at submission">OWNER</span>' : '') +
+            (r.priority ? '<span class="badge badge-pro mono" title="Submitted through the EasyKyro extension">⚡ PRIORITY</span>' : '') +
             '<span class="req-cat mono">' + esc((window.KYRO_CATEGORY_LABEL[r.category] || 'Other').toUpperCase()) + '</span>' +
             (r.os ? '<span class="req-cat mono">' + esc(r.os.toUpperCase()) + '</span>' : '') +
             (versions.length ? '<span class="req-cat mono">AE ' + esc(versions.join(' / ').toUpperCase()) + '</span>' : '') +
@@ -1811,7 +1812,7 @@
     requestCount.textContent = reqError ? 'board unavailable' : !reqLoaded ? 'loading…' : requests.length + (requests.length === 1 ? ' request' : ' requests') + (verified && !reqAdmin ? ' · yours' : '');
 
     let rows = requests.filter(row => (reqFilter === 'all' || row.category === reqFilter) && (reqSort !== 'added' || row.status === 'shipped'));
-    rows.sort(reqSort === 'top' ? (a, b) => b.votes - a.votes || String(b.created).localeCompare(String(a.created)) : (a, b) => String(b.created).localeCompare(String(a.created)));
+    rows.sort(reqSort === 'top' ? (a, b) => Number(Boolean(b.priority)) - Number(Boolean(a.priority)) || b.votes - a.votes || String(b.created).localeCompare(String(a.created)) : (a, b) => String(b.created).localeCompare(String(a.created)));
     requestList.innerHTML = reqError ? '<p class="req-empty">' + esc(reqError) + '</p>' : !reqLoaded ? '<p class="req-empty">Loading the board…</p>' : rows.length ? rows.map(requestCardHTML).join('') :
       '<p class="req-empty">' + (reqSort === 'added' ? 'No shipped requests yet.' : requests.length ? 'No requests match this category.' : (verified && !reqAdmin ? 'You have not posted any requests yet. Use + New Request to add one.' : 'Nothing on the board yet. Post the first request.')) + '</p>';
     requestList.querySelectorAll('[data-vote]').forEach(btn => btn.addEventListener('click', () => voteRequest(btn.dataset.vote)));
@@ -3261,6 +3262,12 @@
       '<div class="m-body">' +
         '<div class="m-title-row"><h2 class="m-title">' + esc(r.title) + '</h2>' + version + '</div>' +
         '<p class="m-desc">' + esc(r.desc) + '</p>' +
+        /* Downloads first: the file rows must be reachable without scrolling
+           past the tabs, so nobody hunts for the button below the fold. */
+        '<section class="dl-block">' +
+          '<p class="section-label section-label--tight">Downloads</p>' +
+          '<div class="dl-zone"></div>' +
+        '</section>' +
         specHTML(r) +
         '<div class="tabs" role="tablist">' +
           '<button class="tab" data-tab="overview" role="tab">Overview</button>' +
@@ -3277,8 +3284,6 @@
           '</div>' +
         '</div>' +
         '<div class="tab-panel" data-panel="install">' + installHTML(r) + '</div>' +
-        '<p class="section-label section-label--tight">Downloads</p>' +
-        '<div class="dl-zone"></div>' +
         checksumHTML(r) +
         '<div class="m-actions">' +
           '<button class="save-btn' + (isSaved ? ' is-saved' : '') + '" data-save="' + esc(r.id) + '" aria-pressed="' + isSaved + '" aria-label="Save to vault">' + ICON.bookmark + '</button>' +
@@ -4064,6 +4069,11 @@
     const hash = location.hash;
     if (hash === '#login') {
       if (auth.state === OUT) startLogin();
+      return;
+    }
+    /* The support bot links here — before this, #feedback opened nothing. */
+    if (hash === '#feedback') {
+      openFeedback();
       return;
     }
     if (hash) {
