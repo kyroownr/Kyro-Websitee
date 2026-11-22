@@ -81,6 +81,7 @@ export default {
       if (url.pathname === '/requests/delete') return await handleDelete(request, env, cors);
       if (url.pathname === '/downloads') return await handleDownloads(request, url, env, cors);
       if (url.pathname === '/feedback') return await handleFeedback(request, url, env, cors);
+      if (url.pathname === '/feedback/reply') return await handleFeedbackReply(request, url, env, cors);
       if (url.pathname === '/invite') return await handleInvite(request, url, env, cors);
       if (url.pathname === '/vault/upload-image') return await handleVaultImageUpload(request, url, env, cors);
       if (url.pathname.startsWith('/vault/image/')) return await handleVaultImageServe(request, url, env);
@@ -507,7 +508,7 @@ function requestWebhookPayload(row, env) {
       color: status.color,
       fields: [
         { name: 'Product / Category', value: REQUEST_CATEGORY_LABELS[row.category], inline: true },
-        { name: 'Requested By', value: discordText(row.author_name) + (row.author_role === 'owner' ? '\n✅ OWNER · verified server owner' : ''), inline: true },
+        { name: 'Requested By', value: discordText(row.author_name) + (row.author_role === 'owner' ? '\n✅ OWNER · verified server owner' : '') + (row.source === 'easykyro' ? '\n⚡ PRIORITY · sent with EasyKyro' : ''), inline: true },
         { name: 'Status', value: status.label, inline: true },
         { name: 'AE Version', value: row.ae_versions.includes('any') ? 'Any AE version' : 'AE ' + row.ae_versions.join(' / '), inline: true },
         { name: 'OS Target', value: REQUEST_OS_LABELS[row.os], inline: true },
@@ -616,9 +617,11 @@ function project(rows, viewerId) {
       status: REQ_STATUSES.includes(r.status) ? r.status : 'open',
       created: r.created,
       votes: (r.voters || []).length,
-      you_voted: Boolean(viewerId) && (r.voters || []).indexOf(viewerId) !== -1
+      you_voted: Boolean(viewerId) && (r.voters || []).indexOf(viewerId) !== -1,
+      priority: Boolean(r.priority),
+      source: r.source === 'easykyro' ? 'easykyro' : ''
     }))
-    .sort((a, b) => b.votes - a.votes || String(b.created).localeCompare(String(a.created)));
+    .sort((a, b) => Number(b.priority) - Number(a.priority) || b.votes - a.votes || String(b.created).localeCompare(String(a.created)));
 }
 
 /* A member manages only the requests they posted; the owner and admins keep the
@@ -676,7 +679,10 @@ async function handleRequests(request, url, env, cors) {
     id: crypto.randomUUID(), title, category: input.category, os: input.os,
     ae_versions: versions, reference: requestReference(input.reference), desc: cleanText(input.desc, 280),
     status: 'open', created: new Date().toISOString(), by: session.id, voters: [session.id],
-    author_name: session.username, author_role: session.isOwner ? 'owner' : 'member'
+    author_name: session.username, author_role: session.isOwner ? 'owner' : 'member',
+    // A display label only, never a permission: EasyKyro submissions are labelled
+    // priority and listed first, nothing more.
+    ...(input.source === 'easykyro' ? { source: 'easykyro', priority: true } : {})
   };
   const written = await requestBoard(env, { action: 'create', row });
   const notification = env.DISCORD_REQUESTS_WEBHOOK_URL ? 'queued' : 'not_configured';
@@ -726,36 +732,89 @@ async function handleDelete(request, env, cors) {
 /* ------------------------------ feedback board ---------------------------- */
 const FEEDBACK_KEY = 'kyro.feedback.v1';
 
-/* Author ids never leave the worker; anonymous entries lose their identity for
-   everyone but the person who wrote them (the list is already filtered to them). */
-function feedbackView(items) {
-  return items.map(item => item.anonymous
-    ? {
-        id: item.id, rating: item.rating, feedback: item.feedback,
-        improvements: item.improvements || '', anonymous: true,
-        author_name: 'Anonymous Editor', author_avatar: '', created: item.created
-      }
-    : {
-        id: item.id, rating: item.rating, feedback: item.feedback,
-        improvements: item.improvements || '', anonymous: false,
-        author_name: item.author_name || 'Member', author_avatar: item.author_avatar || '', created: item.created
-      });
+const MAX_FEEDBACK_REPLY = 500;
+
+/* Author ids never leave the worker. The board is public to verified members
+   now, so `mine` is the only per-viewer hint the browser gets — it decides
+   which rows may be edited or deleted, and it is derived from the session. */
+function feedbackReplies(list) {
+  return (Array.isArray(list) ? list : []).map(reply => ({
+    id: reply.id,
+    text: reply.text,
+    author_name: reply.author_name || 'Member',
+    author_avatar: reply.author_avatar || '',
+    created: reply.created
+  }));
+}
+
+function feedbackView(items, viewerId) {
+  const me = String(viewerId || '');
+  return items.map(item => ({
+    id: item.id,
+    rating: item.rating,
+    feedback: item.feedback,
+    improvements: item.improvements || '',
+    anonymous: Boolean(item.anonymous),
+    image_url: item.image_url || '',
+    author_name: item.anonymous ? 'Anonymous Editor' : (item.author_name || 'Member'),
+    author_avatar: item.anonymous ? '' : (item.author_avatar || ''),
+    created: item.created,
+    updated: item.updated || '',
+    mine: Boolean(me) && String(item.author_id || '') === me,
+    replies: feedbackReplies(item.replies)
+  }));
+}
+
+function feedbackAuthor(session) {
+  return {
+    author_id: session.id,
+    author_name: session.username,
+    author_avatar: session.avatar ? `https://cdn.discordapp.com/avatars/${session.id}/${session.avatar}.png?size=64` : ''
+  };
+}
+
+/* A screenshot attached to a review is stored exactly like a vault card image:
+   the bytes are sniffed, so a mislabelled or non-image payload is refused. */
+async function storeFeedbackImage(env, url, dataUri) {
+  const match = String(dataUri || '').match(/^data:(image\/[a-zA-Z+.-]+);base64,([A-Za-z0-9+/=\s]+)$/);
+  if (!match) throw fail(400, 'bad_base64', 'Invalid image data URI.');
+  if (match[2].length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 8) throw fail(413, 'image_too_large', 'Images must be 8 MB or smaller.');
+  let bytes;
+  try { bytes = Uint8Array.from(atob(match[2].replace(/\s+/g, '')), c => c.charCodeAt(0)); } catch { throw fail(400, 'bad_base64', 'Invalid image data URI.'); }
+  if (!bytes.length) throw fail(400, 'empty_image', 'That image file is empty.');
+  if (bytes.length > MAX_IMAGE_BYTES) throw fail(413, 'image_too_large', 'Images must be 8 MB or smaller.');
+  const mime = sniffImage(bytes);
+  if (!IMAGE_EXTENSIONS[mime]) throw fail(415, 'bad_image_type', 'Upload a PNG, JPEG, GIF or WebP image.');
+  const filename = `feedback_${Date.now().toString(36)}.${IMAGE_EXTENSIONS[mime]}`;
+  const stored = await storeItemImage(env, url, new Blob([bytes], { type: mime }), filename, mime);
+  if (!stored.url) throw fail(502, 'image_storage_failed', 'Could not store that image: ' + (stored.detail || 'unknown reason'));
+  return stored.url;
+}
+
+function feedbackBoard(env, session, items, status, cors) {
+  return json({
+    feedback: feedbackView(items, session.id),
+    is_admin: isAdmin(session, env),
+    is_owner: Boolean(session.isOwner)
+  }, status, cors);
 }
 
 async function handleFeedback(request, url, env, cors) {
+  /* Everyone's reviews are readable by any verified member; anonymous rows
+     stay anonymous to the whole board, including to the person who wrote them. */
   if (request.method === 'GET') {
     const token = bearerToken(request, url);
     const session = await requireMember(token, env);
-    const admin = isAdmin(session, env);
     const doc = (await readDoc(env, FEEDBACK_KEY, { items: [] })).value || { items: [] };
     const all = Array.isArray(doc.items) ? doc.items : [];
-    const visible = admin ? all : all.filter(item => item.author_id === session.id);
-    return json({ feedback: feedbackView(visible), is_admin: admin, is_owner: Boolean(session.isOwner) }, 200, cors);
+    return feedbackBoard(env, session, all, 200, cors);
   }
 
-  if (request.method !== 'POST') return json({ error: 'Use GET or POST.' }, 405, cors);
+  if (request.method === 'PATCH') return await editFeedback(request, url, env, cors);
+  if (request.method === 'DELETE') return await deleteFeedback(request, url, env, cors);
+  if (request.method !== 'POST') return json({ error: 'Use GET, POST, PATCH or DELETE.' }, 405, cors);
 
-  const input = await jsonBody(request);
+  const input = await jsonBody(request, 12 * 1024 * 1024);
   const session = await requireMember(bearerToken(request, url) || input.token, env);
   await limitWrites(env, 'feedback', session.id);
 
@@ -771,6 +830,11 @@ async function handleFeedback(request, url, env, cors) {
 
   const improvements = cleanText(input.improvements, 1000);
   const anonymous = Boolean(input.anonymous);
+  // A screenshot is optional and stored before the row exists, so a bad image
+  // never leaves a half-written review behind.
+  const image_url = typeof input.image === 'string' && input.image
+    ? await storeFeedbackImage(env, url, input.image)
+    : '';
 
   const entry = {
     id: crypto.randomUUID(),
@@ -778,6 +842,7 @@ async function handleFeedback(request, url, env, cors) {
     feedback,
     improvements,
     anonymous,
+    image_url,
     author_id: session.id,
     author_name: session.username,
     author_avatar: session.avatar ? `https://cdn.discordapp.com/avatars/${session.id}/${session.avatar}.png?size=64` : '',
@@ -809,7 +874,8 @@ async function handleFeedback(request, url, env, cors) {
           name: entry.anonymous ? 'Anonymous Editor' : session.username,
           icon_url: entry.anonymous || !entry.author_avatar ? 'https://raw.githubusercontent.com/kyroownr/Kyro-Websitee/main/assets/kyro-icon.png' : entry.author_avatar
         },
-        timestamp: entry.created
+        timestamp: entry.created,
+        ...(entry.image_url ? { image: { url: entry.image_url } } : {})
       }]
     };
     try {
@@ -823,10 +889,103 @@ async function handleFeedback(request, url, env, cors) {
     }
   }
 
-  const admin = isAdmin(session, env);
-  const responseItems = feedbackView((written.items || []).filter(item => admin || item.author_id === session.id));
+  return feedbackBoard(env, session, written.items || [], 201, cors);
+}
 
-  return json({ feedback: responseItems, is_admin: admin, is_owner: Boolean(session.isOwner) }, 201, cors);
+/* Editing is the author's own — or an admin's. Identity is never rewritten:
+   flipping `anonymous` only changes what the view shows. */
+async function editFeedback(request, url, env, cors) {
+  const input = await jsonBody(request, 12 * 1024 * 1024);
+  const session = await requireMember(bearerToken(request, url) || input.token, env);
+  await limitWrites(env, 'feedback_edit', session.id);
+
+  const id = cleanText(input.id, 60);
+  if (!id) throw fail(400, 'bad_id', 'Missing feedback id.');
+
+  const doc = (await readDoc(env, FEEDBACK_KEY, { items: [] })).value || { items: [] };
+  const items = Array.isArray(doc.items) ? doc.items : [];
+  const existing = items.find(item => item.id === id);
+  if (!existing) throw fail(404, 'not_found', 'That feedback no longer exists.');
+  if (String(existing.author_id || '') !== String(session.id) && !isAdmin(session, env)) {
+    throw fail(403, 'not_yours', 'You can only edit your own feedback.');
+  }
+
+  const patch = { updated: new Date().toISOString() };
+  if (input.rating !== undefined) {
+    const rating = Number(input.rating);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      throw fail(400, 'bad_rating', 'Rating must be an integer between 1 and 5 stars.');
+    }
+    patch.rating = rating;
+  }
+  if (input.feedback !== undefined) {
+    const text = cleanText(input.feedback, 1000);
+    if (!text || text.length < 5) throw fail(400, 'bad_feedback', 'Please share feedback of at least 5 characters.');
+    patch.feedback = text;
+  }
+  if (input.improvements !== undefined) patch.improvements = cleanText(input.improvements, 1000);
+  if (input.anonymous !== undefined) patch.anonymous = Boolean(input.anonymous);
+  if (typeof input.image === 'string' && input.image) {
+    patch.image_url = await storeFeedbackImage(env, url, input.image);
+  } else if (input.image === null) {
+    patch.image_url = '';
+  }
+
+  const written = await mutateDoc(env, FEEDBACK_KEY, { items: [] }, current => {
+    const list = Array.isArray(current?.items) ? current.items : [];
+    return { items: list.map(item => item.id === id ? Object.assign({}, item, patch) : item) };
+  });
+  return feedbackBoard(env, session, written.items || [], 200, cors);
+}
+
+async function deleteFeedback(request, url, env, cors) {
+  const input = await jsonBody(request);
+  const session = await requireMember(bearerToken(request, url) || input.token, env);
+  await limitWrites(env, 'feedback_delete', session.id);
+
+  const id = cleanText(input.id, 60);
+  if (!id) throw fail(400, 'bad_id', 'Missing feedback id.');
+
+  const doc = (await readDoc(env, FEEDBACK_KEY, { items: [] })).value || { items: [] };
+  const items = Array.isArray(doc.items) ? doc.items : [];
+  const existing = items.find(item => item.id === id);
+  if (!existing) throw fail(404, 'not_found', 'That feedback no longer exists.');
+  if (String(existing.author_id || '') !== String(session.id) && !isAdmin(session, env)) {
+    throw fail(403, 'not_yours', 'You can only delete your own feedback.');
+  }
+
+  const written = await mutateDoc(env, FEEDBACK_KEY, { items: [] }, current => {
+    const list = Array.isArray(current?.items) ? current.items : [];
+    return { items: list.filter(item => item.id !== id) };
+  });
+  return feedbackBoard(env, session, written.items || [], 200, cors);
+}
+
+/* Any verified member can reply to a review. Replies live on the review row so
+   one read paints the whole thread. */
+async function handleFeedbackReply(request, url, env, cors) {
+  if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
+  const input = await jsonBody(request);
+  const session = await requireMember(bearerToken(request, url) || input.token, env);
+  await limitWrites(env, 'feedback_reply', session.id);
+
+  const id = cleanText(input.id, 60);
+  if (!id) throw fail(400, 'bad_id', 'Missing feedback id.');
+  const text = cleanText(input.text, MAX_FEEDBACK_REPLY);
+  if (!text || text.length < 2) throw fail(400, 'bad_reply', 'Write at least 2 characters.');
+
+  const doc = (await readDoc(env, FEEDBACK_KEY, { items: [] })).value || { items: [] };
+  const items = Array.isArray(doc.items) ? doc.items : [];
+  if (!items.some(item => item.id === id)) throw fail(404, 'not_found', 'That feedback no longer exists.');
+
+  const reply = Object.assign({ id: crypto.randomUUID(), text, created: new Date().toISOString() }, feedbackAuthor(session));
+  const written = await mutateDoc(env, FEEDBACK_KEY, { items: [] }, current => {
+    const list = Array.isArray(current?.items) ? current.items : [];
+    return { items: list.map(item => item.id === id
+      ? Object.assign({}, item, { replies: [...(Array.isArray(item.replies) ? item.replies : []), reply].slice(-50) })
+      : item) };
+  });
+  return feedbackBoard(env, session, written.items || [], 200, cors);
 }
 
 async function handleInvite(request, url, env, cors) {

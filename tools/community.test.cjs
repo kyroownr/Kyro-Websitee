@@ -73,15 +73,39 @@ async function main() {
 
     /* ---------------- per-user feedback ---------------- */
     const fa = await call('/feedback', { rating: 5, feedback: 'Great vault A', improvements: '' }, 'memberA');
-    expect(fa.status === 201 && fa.data.feedback.length === 1 && fa.data.feedback[0].feedback === 'Great vault A', 'A feedback response scoped to A');
+    expect(fa.status === 201 && fa.data.feedback.length === 1 && fa.data.feedback[0].feedback === 'Great vault A' && fa.data.feedback[0].mine === true, 'A creates a review and sees it flagged mine');
     const fb = await call('/feedback', { rating: 4, feedback: 'Nice tools B', anonymous: true }, 'memberB');
-    expect(fb.status === 201 && fb.data.feedback.length === 1 && fb.data.feedback[0].anonymous === true, 'B sees their own anonymous feedback');
+    expect(fb.status === 201 && fb.data.feedback.length === 2 && fb.data.feedback[0].anonymous === true && fb.data.feedback[0].mine === true, 'B sees the public board with their anonymous review first');
+    /* The board is public to members now: everyone reads everyone, anonymous
+       rows keep their author hidden, and `mine` decides who may edit. */
     const gfa = await call('/feedback', undefined, 'memberA');
-    expect(gfa.data.feedback.length === 1 && gfa.data.feedback[0].feedback === 'Great vault A', 'A GET returns only their own feedback');
+    const mineA = gfa.data.feedback.find(f => f.feedback === 'Great vault A');
+    const anonB = gfa.data.feedback.find(f => f.feedback === 'Nice tools B');
+    expect(gfa.data.feedback.length === 2, 'A GET returns the whole community board');
+    expect(mineA && mineA.mine === true && mineA.author_name === 'memberA-editor', 'A sees its own row flagged mine');
+    expect(anonB && anonB.anonymous === true && anonB.author_name === 'Anonymous Editor' && anonB.author_avatar === '' && anonB.mine === false, 'anonymous rows hide their author from everyone else');
     const gfb = await call('/feedback', undefined, 'memberB');
-    expect(gfb.data.feedback.length === 1 && gfb.data.feedback[0].author_name === 'Anonymous Editor', 'B GET returns their own anonymous entry');
+    expect(gfb.data.feedback.find(f => f.feedback === 'Nice tools B').mine === true, 'B sees the same board with its own row flagged');
     const gfad = await call('/feedback', undefined, 'admin');
     expect(gfad.data.feedback.length === 2 && gfad.data.is_admin === true, 'admin sees all feedback');
+
+    /* replies, edits and deletes */
+    const reply = await call('/feedback/reply', { id: mineA.id, text: 'Same here — good board.' }, 'memberB');
+    expect(reply.status === 200, 'a member can reply to a review');
+    const replied = reply.data.feedback.find(f => f.id === mineA.id);
+    expect(replied.replies.length === 1 && replied.replies[0].text === 'Same here — good board.', 'the reply is stored on the review');
+    expect((await call('/feedback/reply', { id: mineA.id, text: '' }, 'memberB')).status === 400, 'an empty reply is refused');
+    expect((await call('/feedback/reply', { id: 'nope', text: 'hello' }, 'memberB')).status === 404, 'a reply to a missing review is refused');
+
+    const ownEdit = await call('/feedback', { id: mineA.id, feedback: 'Great vault A — edited', rating: 3 }, 'memberA', 'PATCH');
+    const edited = ownEdit.data.feedback.find(f => f.id === mineA.id);
+    expect(ownEdit.status === 200 && edited.feedback === 'Great vault A — edited' && edited.rating === 3 && edited.updated, 'the author can edit their own review');
+    expect((await call('/feedback', { id: mineA.id, feedback: 'hijacked' }, 'memberB', 'PATCH')).status === 403, "another member cannot edit someone else's review");
+    expect((await call('/feedback', { id: mineA.id }, 'memberB', 'DELETE')).status === 403, "another member cannot delete someone else's review");
+    const adminEdit = await call('/feedback', { id: mineA.id, feedback: 'Great vault A — moderated' }, 'admin', 'PATCH');
+    expect(adminEdit.status === 200, 'an admin can edit any review');
+    const ownDelete = await call('/feedback', { id: mineA.id }, 'memberA', 'DELETE');
+    expect(ownDelete.status === 200 && !ownDelete.data.feedback.some(f => f.id === mineA.id), 'the author can delete their own review');
     expect((await call('/feedback')).status === 401, 'feedback requires a token');
     expect((await call('/feedback', undefined, 'outsider')).status === 403, 'feedback requires membership');
 
@@ -232,7 +256,7 @@ async function main() {
     }
     expect(throttled >= 1 && lastStatus === 429, 'a write flood from one member is throttled');
 
-    console.log(JSON.stringify({ checks, perUserRequests: 'member scoped, admin/owner full, public showcase intact', perUserFeedback: 'author scoped, admin full', earlyAccess: 'owner grant/revoke, waitlist bypass, link gating', result: 'passed' }));
+    console.log(JSON.stringify({ checks, perUserRequests: 'member scoped, admin/owner full, public showcase intact', perUserFeedback: 'public board, mine flag, author/admin edit+delete, replies', earlyAccess: 'owner grant/revoke, waitlist bypass, link gating', result: 'passed' }));
   } finally { await mf.dispose(); }
 }
 main().catch(err => { console.error(err); process.exitCode = 1; });

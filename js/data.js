@@ -621,8 +621,8 @@ window.KYRO_INSTALL = {
       'Allow script file writes in <code>Preferences ▸ Scripting &amp; Components</code> if the panel reports an error.'
     ],
     paths: {
-      windows: 'C:\\Program Files\\Adobe\\Adobe After Effects 2026\\Support Files\\Scripts\\ScriptUI Panels\\',
-      macos: '/Applications/Adobe After Effects 2026/Scripts/ScriptUI Panels/'
+      windows: 'C:\\Program Files\\Adobe\\Adobe After Effects [Version]\\Support Files\\Scripts\\ScriptUI Panels\\',
+      macos: '/Applications/Adobe After Effects [Version]/Scripts/ScriptUI Panels/'
     },
     note: 'The compiled build behaves identically to the .zxp panel — use it when CEP is disabled.'
   },
@@ -634,8 +634,8 @@ window.KYRO_INSTALL = {
       'Sliders stay fully editable — nothing is baked or expression-locked.'
     ],
     paths: {
-      windows: '%AppData%\\Adobe\\After Effects 2026\\User Presets\\',
-      macos: '~/Documents/Adobe/After Effects 2026/User Presets/'
+      windows: '%AppData%\\Adobe\\After Effects [Version]\\User Presets\\',
+      macos: '~/Documents/Adobe/After Effects [Version]/User Presets/'
     },
     note: 'Presets are additive: they never overwrite the panel’s own defaults.'
   }

@@ -28,3 +28,8 @@ worker-configuration.d.ts
 # Local dashboard state (per-guild config, giveaways, warnings) — never committed
 dashboard_data.json
 published_uploads.json
+
+# Chrome Web Store upload artifact (regenerate with tools/package-extension.ps1)
+easykyro-extension.zip
+# ...but the copy the /easykyro page serves is part of the public site.
+!assets/easykyro-extension.zip

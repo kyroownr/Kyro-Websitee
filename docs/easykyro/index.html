@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; media-src 'self' https:; connect-src 'self' https://kyro-auth.kyro-ownr.workers.dev https://discord.com; base-uri 'self'; form-action 'self'; object-src 'none'">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Get EasyKyro — request Kyro assets from any page</title>
+  <meta name="description" content="EasyKyro is a Chrome extension that files Kyro requests from any website: one title, AI-written details, and priority on the requests board. Download the .zip and load it in Chrome in a minute." />
+  <meta name="theme-color" content="#08090d" />
+
+  <!-- Absolute og:url / og:image: link crawlers resolve them outside the page. -->
+  <link rel="canonical" href="https://kyro.new.tg/easykyro" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Kyro" />
+  <meta property="og:url" content="https://kyro.new.tg/easykyro" />
+  <meta property="og:title" content="Get EasyKyro — request Kyro assets from any page" />
+  <meta property="og:description" content="One title is enough: EasyKyro reads the page you are on, writes the request with your own free AI key, and posts it to Kyro as a priority request." />
+  <meta property="og:image" content="https://kyro.new.tg/assets/kyro-preview.png" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="EasyKyro — the Kyro request extension" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Get EasyKyro — request Kyro assets from any page" />
+  <meta name="twitter:description" content="One title is enough: EasyKyro reads the page you are on, writes the request with your own free AI key, and posts it to Kyro as a priority request." />
+  <meta name="twitter:image" content="https://kyro.new.tg/assets/kyro-preview.png" />
+
+  <link rel="icon" type="image/png" href="/assets/kyro-icon.png" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://kyro-auth.kyro-ownr.workers.dev" crossorigin />
+  <link rel="dns-prefetch" href="https://discord.com" />
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="all" />
+  <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
+
+  <link rel="stylesheet" href="/css/styles.css?v=f6f07f35" />
+</head>
+<body>
+
+  <header class="site-nav">
+    <div class="nav-inner">
+      <a class="nav-logo" href="/" aria-label="Kyro — home">
+        <img class="nav-logo-mark" src="/assets/kyro-icon.png" alt="" width="26" height="26" />
+        <span class="nav-logo-text">Kyro</span>
+      </a>
+
+      <nav class="nav-right" aria-label="Site">
+        <a class="nav-link" href="/">Vault</a>
+        <a class="nav-link" href="/incoming">Incoming</a>
+        <a class="nav-link" href="/guide">Guide</a>
+        <a class="nav-link is-current" href="/easykyro" aria-current="page">EasyKyro</a>
+        <a class="nav-link" href="/about">About</a>
+        <a class="nav-link" href="/#discordCard">Community</a>
+        <a class="login-btn" href="/#login"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.3 4.9A17.4 17.4 0 0 0 15.9 3.5l-.3.5a16 16 0 0 0-7.1 0l-.3-.5c-1.6.3-3.1.8-4.4 1.5C.6 9.1-.2 12.7.1 16.2 1.7 17.5 3.7 18.4 5.8 19l1-1.6-1.9-.8.5-.4c3.8 1.7 8 1.7 11.9 0l.5.4-1.9.8 1 1.6c2.1-.6 4.1-1.5 5.7-2.9.4-4-.8-7.5-3.3-11.2ZM8.5 14c-.9 0-1.7-.9-1.7-1.9s.7-1.9 1.7-1.9c.9 0 1.7.9 1.7 1.9s-.8 1.9-1.7 1.9Zm7 0c-.9 0-1.7-.9-1.7-1.9s.8-1.9 1.7-1.9c1 0 1.7.9 1.7 1.9s-.7 1.9-1.7 1.9Z"/></svg><span class="lb-text">Login with Discord</span></a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <header class="page-head ek-hero">
+      <p class="section-label">Get EasyKyro</p>
+      <h1 class="page-title" id="ekTitle">Request anything, from any page</h1>
+      <p class="page-lede">A small Chrome extension for the Kyro vault. Find an effect, a preset or a plugin you want while you are browsing, type one title, and EasyKyro writes the rest of the request for you — then files it on the Kyro requests board.</p>
+
+      <div class="ek-dl-row">
+        <a class="ek-dl" href="/assets/easykyro-extension.zip" download="easykyro-extension.zip">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4 20h16"/></svg>
+          Download EasyKyro .zip
+        </a>
+        <a class="btn btn-ghost application-pill" href="#install">Read the install steps</a>
+      </div>
+      <p class="ek-meta">v1.3.0 · Chrome 127 or newer · Windows &amp; macOS · no account needed to install</p>
+    </header>
+
+    <section class="ek-priority" aria-labelledby="ekPriorityTitle">
+      <h2 class="prose-title" id="ekPriorityTitle">⚡ Using EasyKyro makes your request a priority request</h2>
+      <p>Requests sent with the extension are stored as <b>priority</b>, not as a plain manual entry. They sit at the top of the <b>Requests</b> board with a <code>⚡ PRIORITY</code> chip, and the Discord request card says <b>⚡ PRIORITY · sent with EasyKyro</b> so staff can see where it came from. Same worker, same board, earlier in the queue.</p>
+    </section>
+
+    <section aria-labelledby="ekInstallTitle">
+      <h2 class="prose-title" id="ekInstallTitle" style="margin-top:36px">Step-by-step installation</h2>
+      <ol class="ek-steps" id="install">
+        <li class="ek-step">
+          <h3>Download the .zip</h3>
+          <p>Use the download button above. It saves <code>easykyro-extension.zip</code> to your Downloads folder — about 38 KB.</p>
+        </li>
+        <li class="ek-step">
+          <h3>Extract the archive</h3>
+          <p>Right-click the .zip → <b>Extract All…</b> on Windows, or double-click it on macOS. You get a folder called <code>easykyro-extension</code>. Chrome installs the <i>folder</i>, not the zip file, so keep it somewhere permanent (not your Downloads folder, which you may clean out).</p>
+        </li>
+        <li class="ek-step">
+          <h3>Open <code>chrome://extensions</code></h3>
+          <p>Paste that into Chrome's address bar. Turn on <b>Developer mode</b> with the switch in the top-right corner.</p>
+        </li>
+        <li class="ek-step">
+          <h3>Drag the folder into the page</h3>
+          <p>Drop the extracted <code>easykyro-extension</code> folder anywhere on the <code>chrome://extensions</code> page. Or click <b>Load unpacked</b> and pick the folder. Either way Chrome adds EasyKyro to your list.</p>
+        </li>
+        <li class="ek-step">
+          <h3>Pin it, then connect Discord</h3>
+          <p>Click the puzzle-piece icon and pin <b>EasyKyro</b>. If you are already signed in on <b>kyro.new.tg</b>, the popup shows <b>Connected as @you</b> by itself; otherwise press <b>Connect Discord</b> and sign in on the Kyro tab that opens.</p>
+        </li>
+        <li class="ek-step">
+          <h3>Add a free Google AI key (recommended)</h3>
+          <p>Open EasyKyro's settings and paste a key from <a class="notice-link" href="https://aistudio.google.com/api-keys" target="_blank" rel="noopener noreferrer">aistudio.google.com/api-keys</a>. The key is checked on paste, saved only in your browser, and EasyKyro picks the cheapest Gemini model your key allows. No model picker, no key on Kyro's servers.</p>
+        </li>
+        <li class="ek-step">
+          <h3>Send your first request</h3>
+          <p>Browse to the page with the asset you want, press <code>Alt+Shift+K</code> (or right-click → <b>Send this page to EasyKyro</b>), type a title, then <b>Review &amp; send</b>. It lands on the Kyro requests board and in the Discord requests channel.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section aria-labelledby="ekFeaturesTitle">
+      <h2 class="prose-title" id="ekFeaturesTitle" style="margin-top:36px">What it does</h2>
+      <div class="ek-features">
+        <div class="ek-feature">
+          <h3>One title is enough</h3>
+          <p>Type the name of what you want. EasyKyro reads the page — title, meta description, first heading, your text selection and a short excerpt — and writes the description itself.</p>
+        </div>
+        <div class="ek-feature">
+          <h3>⚡ Priority on the board</h3>
+          <p>Every submission is tagged as coming from EasyKyro, so it is stored as a priority request and listed first, with the chip on the site and on the Discord card.</p>
+        </div>
+        <div class="ek-feature">
+          <h3>Bring your own free key</h3>
+          <p>The AI step runs on a Google Gemini key you own. It is verified on paste, saved in <code>chrome.storage</code> only, and sent to Google alone — never to Kyro.</p>
+        </div>
+        <div class="ek-feature">
+          <h3>Same Discord login as the site</h3>
+          <p>No second Discord app to authorise. A content script on kyro.new.tg picks up the session the website already created.</p>
+        </div>
+        <div class="ek-feature">
+          <h3>Fine-tune the details</h3>
+          <p>Category, OS, After Effects versions, reference link and description are all editable. Anything you change by hand is never overwritten by the next AI pass.</p>
+        </div>
+        <div class="ek-feature">
+          <h3>Duplicate check</h3>
+          <p>While you type, EasyKyro compares your title with your own open requests and offers <b>Upvote instead</b>, so you do not file the same thing twice.</p>
+        </div>
+        <div class="ek-feature">
+          <h3>Right-click, or Alt+Shift+K</h3>
+          <p><i>Send this page to EasyKyro</i>, <i>Request this link in EasyKyro</i> and <i>Request “…” in EasyKyro</i> on a selection all open the popup pre-filled. The shortcut works on any tab.</p>
+        </div>
+        <div class="ek-feature">
+          <h3>Drafts survive</h3>
+          <p>Your title and the generated details are kept per page, so closing the popup does not lose the request. It tells you when you are offline instead of failing silently.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="prose" style="margin-top:36px" aria-labelledby="ekNotesTitle">
+      <h2 class="prose-title" id="ekNotesTitle">Good to know</h2>
+      <ul class="g-list">
+        <li><b>It is not in the Chrome Web Store.</b> EasyKyro installs unpacked, which is why Chrome shows a small “Developer mode extensions” reminder. That badge is expected.</li>
+        <li><b>Updates are manual.</b> Download the new .zip, extract over the old folder, then press the reload arrow on the EasyKyro card in <code>chrome://extensions</code>.</li>
+        <li><b>Requests need a verified Kyro Discord membership</b>, exactly like the website form. Signing into Discord is not enough on its own.</li>
+        <li><b>The AI key is optional.</b> Without it you can still send a request — you just write the description yourself instead of having it filled in.</li>
+      </ul>
+      <p class="ek-meta" style="margin-top:14px">Troubleshooting: if Chrome refuses the folder, confirm you extracted the zip and selected the folder that contains <code>manifest.json</code>. If the popup says it cannot reach Kyro, check you are online and already signed in on kyro.new.tg.</p>
+    </section>
+
+    <p class="page-foot">
+      <a class="ek-dl" href="/assets/easykyro-extension.zip" download="easykyro-extension.zip">Download EasyKyro .zip</a>
+      <a class="banner-link" href="https://discord.gg/5ch7XeNg98" target="_blank" rel="noopener noreferrer">Ask in the Kyro Discord ↗</a>
+    </p>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell">
+      <div class="footer-main">
+        <div class="footer-left">
+          <span class="brand-word mono">KYRO <span class="brand-heart" aria-hidden="true">&lt;3</span></span>
+          <span class="stamp-badge mono" id="siteUpdated">—</span>
+        </div>
+        <div class="footer-links">
+          <a href="/">Vault</a>
+          <a href="/easykyro">EasyKyro</a>
+          <a href="/about">About</a>
+          <a href="https://discord.gg/5ch7XeNg98" target="_blank" rel="noopener noreferrer">Invite ↗</a>
+        </div>
+      </div>
+      <div class="footer-meta mono">
+        <p>© 2026, Est. Nov 2026 · Kyro</p>
+        <p>kyro.new.tg</p>
+      </div>
+    </div>
+  </footer>
+
+  <script defer src="/js/stamp.js"></script>
+</body>
+</html>

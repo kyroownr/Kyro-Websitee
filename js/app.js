@@ -1924,7 +1924,11 @@
     closeScrim();
   }
 
-  /* ------------------------------ feedback drawer ------------------------ */
+  /* ------------------------------ feedback drawer ------------------------
+     The board is public to verified members: everyone reads every review,
+     answers it, and may edit or delete their own (admins: anyone's). A review
+     may carry one screenshot, shrunk in the browser before it is sent.
+     ---------------------------------------------------------------------- */
   const feedbackDrawer = $('#feedbackDrawer');
   const feedbackCompose = $('#feedbackCompose');
   const feedbackGate = $('#feedbackGate');
@@ -1937,10 +1941,14 @@
   const feedbackAnonymous = $('#feedbackAnonymous');
 
   let feedbackRating = 5;
+  let feedbackEditRating = 5;
   let feedbackItems = [];
   let feedbackLoading = false;
   let feedbackComposeOpen = false;
   let feedbackAdmin = false;
+  let feedbackEditingId = '';
+  let feedbackReplyOpenId = '';
+  let feedbackImageData = '';
 
   function setFeedbackRating(val) {
     feedbackRating = Math.max(1, Math.min(5, Number(val) || 5));
@@ -1950,9 +1958,172 @@
     });
   }
 
+  /* ------------------------- screenshot attachment ---------------------- */
+  function ensureFeedbackImageField() {
+    if (!feedbackForm || feedbackForm.querySelector('#feedbackImage')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'field fb-attach-field';
+    wrap.innerHTML =
+      '<span class="field-label mono">Attach a screenshot (optional)</span>' +
+      '<label class="fb-attach">' +
+        '<input type="file" id="feedbackImage" accept="image/png,image/jpeg,image/gif,image/webp" hidden />' +
+        '<span class="fb-attach-btn">+ Add image</span>' +
+        '<span class="fb-attach-note" id="feedbackImageNote">PNG, JPG, GIF or WebP · up to 8 MB</span>' +
+      '</label>' +
+      '<div class="fb-attach-preview" id="feedbackImagePreview" hidden></div>';
+    const submit = feedbackForm.querySelector('#feedbackSubmit');
+    if (submit) feedbackForm.insertBefore(wrap, submit);
+    else feedbackForm.appendChild(wrap);
+
+    const picker = wrap.querySelector('#feedbackImage');
+    picker.addEventListener('change', async () => {
+      const file = picker.files && picker.files[0];
+      if (!file) return;
+      const note = document.getElementById('feedbackImageNote');
+      if (note) note.textContent = 'Preparing…';
+      try {
+        feedbackImageData = await shrinkImage(file);
+        renderFeedbackImagePreview();
+      } catch (err) {
+        feedbackImageData = '';
+        renderFeedbackImagePreview();
+        toast({ title: 'Image not added', sub: err.message, icon: ICON.x, warn: true });
+      } finally {
+        if (note) note.textContent = 'PNG, JPG, GIF or WebP · up to 8 MB';
+        picker.value = '';
+      }
+    });
+  }
+
+  function renderFeedbackImagePreview() {
+    const box = document.getElementById('feedbackImagePreview');
+    if (!box) return;
+    if (!feedbackImageData) { box.hidden = true; box.innerHTML = ''; return; }
+    box.hidden = false;
+    box.innerHTML = '<img src="' + feedbackImageData + '" alt="Screenshot attached to this review" />' +
+      '<button type="button" class="fb-attach-remove" id="feedbackImageRemove">Remove image</button>';
+    const remove = document.getElementById('feedbackImageRemove');
+    if (remove) remove.addEventListener('click', () => { feedbackImageData = ''; renderFeedbackImagePreview(); });
+  }
+
+  /* Screenshots are downscaled and re-encoded so a 6 MB PNG does not become an
+     8 MB request body. Anything unreadable falls back to the original bytes. */
+  function shrinkImage(file, maxEdge = 1600, quality = 0.82) {
+    return new Promise((resolve, reject) => {
+      if (!file.type || !/^image\//.test(file.type)) { reject(new Error('Pick a PNG, JPG, GIF or WebP picture.')); return; }
+      if (file.size > 8 * 1024 * 1024) { reject(new Error('Pictures must be 8 MB or smaller.')); return; }
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Could not read that file.'));
+      reader.onload = () => {
+        const dataUrl = String(reader.result || '');
+        if (!/^data:image\/(png|jpeg|gif|webp)/i.test(dataUrl)) { resolve(dataUrl); return; }
+        const img = new Image();
+        img.onerror = () => resolve(dataUrl);
+        img.onload = () => {
+          const longest = Math.max(img.width || 0, img.height || 0);
+          const scale = longest > maxEdge ? maxEdge / longest : 1;
+          if (scale === 1 && dataUrl.length < 900000) { resolve(dataUrl); return; }
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.round((img.width || maxEdge) * scale));
+            canvas.height = Math.max(1, Math.round((img.height || maxEdge) * scale));
+            canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+            resolve(canvas.toDataURL('image/jpeg', quality));
+          } catch { resolve(dataUrl); }
+        };
+        img.src = dataUrl;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  /* ------------------------------ rendering ----------------------------- */
+  function feedbackStars(n) {
+    const value = Math.max(0, Math.min(5, Number(n) || 0));
+    return '★'.repeat(value) + '☆'.repeat(5 - value);
+  }
+
+  function feedbackWhen(iso) {
+    const t = Date.parse(iso || '');
+    if (isNaN(t)) return '';
+    return new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  function feedbackCardHTML(item) {
+    const editing = feedbackEditingId === item.id;
+    const replying = feedbackReplyOpenId === item.id;
+    const canEdit = item.mine || feedbackAdmin;
+    const avatar = item.anonymous || !item.author_avatar
+      ? '<span class="fb-avatar" aria-hidden="true">?</span>'
+      : '<img class="fb-avatar" src="' + esc(item.author_avatar) + '" alt="" width="32" height="32" />';
+    const name = item.anonymous ? 'Anonymous Editor' : esc(item.author_name);
+    const shot = item.image_url
+      ? '<a class="fb-shot" href="' + esc(item.image_url) + '" target="_blank" rel="noopener noreferrer">' +
+        '<img src="' + esc(item.image_url) + '" alt="Screenshot attached to this review" loading="lazy" decoding="async" /></a>'
+      : '';
+    const improv = item.improvements
+      ? '<div class="fb-improvements"><span class="mono">Requested improvements</span>' + esc(item.improvements) + '</div>'
+      : '';
+    const edited = item.updated ? '<span class="fb-edited mono">edited</span>' : '';
+    const body = editing
+      ? '<div class="fb-edit">' +
+          '<div class="cat-row" role="radiogroup" aria-label="Edit rating">' +
+            [5, 4, 3, 2, 1].map(n => '<button type="button" class="cat-chip mono" data-fb-rate="' + n + '" aria-pressed="' + (n === feedbackEditRating) + '">' + feedbackStars(n) + '</button>').join('') +
+          '</div>' +
+          '<textarea class="field-input" data-fb-text rows="3" maxlength="1000" aria-label="Your review">' + esc(item.feedback) + '</textarea>' +
+          '<textarea class="field-input" data-fb-improvements rows="2" maxlength="1000" aria-label="Requested improvements">' + esc(item.improvements || '') + '</textarea>' +
+          '<p class="fb-edit-note mono">Markdown is not parsed — plain text is fine.</p>' +
+          '<div class="fb-edit-actions">' +
+            '<button type="button" class="btn btn-primary btn-sm" data-fb-save="' + esc(item.id) + '">Save changes</button>' +
+            '<button type="button" class="btn btn-ghost btn-sm" data-fb-cancel="1">Cancel</button>' +
+          '</div>' +
+        '</div>'
+      : '<p class="fb-text">' + esc(item.feedback) + '</p>' + improv + shot;
+
+    const replies = item.replies.length
+      ? '<div class="fb-replies">' + item.replies.map(reply =>
+          '<div class="fb-reply">' +
+            '<div class="fb-reply-head"><span class="fb-reply-name mono">' + esc(reply.author_name) + '</span>' +
+            '<span class="fb-reply-date mono">' + esc(feedbackWhen(reply.created)) + '</span></div>' +
+            '<p class="fb-reply-text">' + esc(reply.text) + '</p>' +
+          '</div>').join('') + '</div>'
+      : '';
+
+    const replyForm = replying
+      ? '<form class="fb-reply-form" data-fb-reply-form="' + esc(item.id) + '">' +
+          '<input class="field-input" name="text" maxlength="500" autocomplete="off" placeholder="Reply to ' + (item.anonymous ? 'this review' : esc(item.author_name)) + '…" />' +
+          '<button type="submit" class="btn btn-primary btn-sm">Post reply</button>' +
+        '</form>'
+      : '';
+
+    const actions = editing ? '' :
+      '<div class="fb-actions">' +
+        '<button type="button" class="fb-action" data-fb-reply="' + esc(item.id) + '">' +
+          (replying ? 'Close' : 'Reply' + (item.replies.length ? ' · ' + item.replies.length : '')) + '</button>' +
+        (canEdit
+          ? '<button type="button" class="fb-action" data-fb-edit="' + esc(item.id) + '">Edit</button>' +
+            '<button type="button" class="fb-action fb-action--danger" data-fb-delete="' + esc(item.id) + '">Delete</button>'
+          : '') +
+      '</div>';
+
+    return '<article class="req-card fb-card" data-feedback-id="' + esc(item.id) + '">' +
+      '<div class="fb-head">' +
+        '<div class="fb-who">' + avatar +
+          '<span class="fb-name mono">' + name + '</span>' +
+          (item.mine ? '<span class="fb-you mono">you</span>' : '') +
+        '</div>' +
+        '<span class="fb-stars mono" aria-label="' + Number(item.rating) + ' out of 5">' + feedbackStars(item.rating) + '</span>' +
+      '</div>' +
+      body + replies + replyForm + actions +
+      '<div class="fb-foot mono">' + esc(feedbackWhen(item.created)) + edited + '</div>' +
+    '</article>';
+  }
+
   function renderFeedback() {
     if (!feedbackDrawer) return;
-    feedbackCount.textContent = feedbackLoading ? 'loading…' : (feedbackItems.length + (feedbackItems.length === 1 ? ' review' : ' reviews') + (feedbackAdmin ? '' : ' · yours'));
+    feedbackCount.textContent = feedbackLoading
+      ? 'loading…'
+      : (feedbackItems.length + (feedbackItems.length === 1 ? ' review' : ' reviews') + ' · community board');
     if (feedbackNewBtn) {
       feedbackNewBtn.setAttribute('aria-expanded', String(feedbackComposeOpen));
       feedbackNewBtn.textContent = feedbackComposeOpen ? 'Cancel' : '+ Give Feedback';
@@ -1968,7 +2139,7 @@
       feedbackGate.innerHTML =
         '<div class="req-gate-card">' +
           '<div class="req-gate-title">Discord verification required</div>' +
-          '<div class="req-gate-sub">Sign in with Discord to see your own feedback and share reviews with the Kyro team.</div>' +
+          '<div class="req-gate-sub">Sign in with Discord to read the community board and share your own review.</div>' +
           '<button type="button" class="btn btn-discord btn-sm mono" id="feedbackGateLogin">' +
             ICON.discord + ' Sign in with Discord' +
           '</button>' +
@@ -1988,38 +2159,11 @@
     }
 
     if (!feedbackItems.length) {
-      feedbackList.innerHTML = '<div class="req-empty mono">' + (feedbackAdmin ? 'No feedback yet.' : 'No feedback from you yet. Use + Give Feedback to review Kyro.') + '</div>';
+      feedbackList.innerHTML = '<div class="req-empty mono">No reviews yet — use + Give Feedback to be the first.</div>';
       return;
     }
 
-    const starStr = (r) => '★'.repeat(r) + '☆'.repeat(5 - r);
-    feedbackList.innerHTML = feedbackItems.map(item => {
-      const avatarHtml = item.anonymous || !item.author_avatar
-        ? '<div class="req-author-avatar-anon" style="width:28px;height:28px;border-radius:50%;background:#222;display:flex;align-items:center;justify-content:center;font-size:12px;border:1px solid #333;">?</div>'
-        : '<img class="req-author-avatar" src="' + esc(item.author_avatar) + '" alt="" width="28" height="28" style="border-radius:50%;" />';
-      const name = item.anonymous ? 'Anonymous Editor' : esc(item.author_name);
-      const stars = starStr(item.rating);
-      const date = item.created ? new Date(item.created).toLocaleDateString() : '';
-      const improv = item.improvements
-        ? '<div style="margin-top:8px;padding-top:8px;border-top:1px dashed rgba(255,255,255,0.08);font-size:13px;color:rgba(255,255,255,0.7);">' +
-            '<span class="mono" style="font-size:11px;color:#888;display:block;margin-bottom:2px;">REQUESTED IMPROVEMENTS:</span>' +
-            esc(item.improvements) +
-          '</div>'
-        : '';
-
-      return '<article class="req-card" style="display:flex;flex-direction:column;gap:6px;">' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;">' +
-          '<div style="display:flex;align-items:center;gap:8px;">' +
-            avatarHtml +
-            '<span class="mono" style="font-weight:600;font-size:13px;">' + name + '</span>' +
-          '</div>' +
-          '<span class="mono" style="color:#f59e0b;letter-spacing:1px;font-size:13px;">' + stars + '</span>' +
-        '</div>' +
-        '<p style="margin:4px 0 0;font-size:14px;line-height:1.45;color:#eee;">' + esc(item.feedback) + '</p>' +
-        improv +
-        '<div style="margin-top:4px;font-size:11px;color:#666;" class="mono">' + date + '</div>' +
-      '</article>';
-    }).join('');
+    feedbackList.innerHTML = feedbackItems.map(feedbackCardHTML).join('');
   }
 
   async function loadFeedback() {
@@ -2074,7 +2218,8 @@
           rating: feedbackRating,
           feedback: text,
           improvements: improv,
-          anonymous: anon
+          anonymous: anon,
+          image: feedbackImageData || undefined
         })
       });
       const data = await res.json();
@@ -2082,6 +2227,8 @@
       feedbackItems = Array.isArray(data.feedback) ? data.feedback : feedbackItems;
       feedbackAdmin = Boolean(data.is_admin);
       feedbackForm.reset();
+      feedbackImageData = '';
+      renderFeedbackImagePreview();
       setFeedbackRating(5);
       feedbackComposeOpen = false;
       renderFeedback();
@@ -2093,8 +2240,136 @@
     }
   }
 
+  /* One delegated click handler covers every card, including cards painted
+     after an edit, a reply or a delete — nothing is rebound per render. */
+  async function onFeedbackListClick(e) {
+    const rate = e.target.closest('[data-fb-rate]');
+    if (rate) {
+      feedbackEditRating = Math.max(1, Math.min(5, Number(rate.dataset.fbRate) || 5));
+      const group = rate.parentNode;
+      if (group) group.querySelectorAll('[data-fb-rate]').forEach(b => b.setAttribute('aria-pressed', String(b === rate)));
+      return;
+    }
+    const replyBtn = e.target.closest('[data-fb-reply]');
+    if (replyBtn) {
+      const id = replyBtn.dataset.fbReply;
+      feedbackReplyOpenId = feedbackReplyOpenId === id ? '' : id;
+      feedbackEditingId = '';
+      renderFeedback();
+      const field = feedbackList.querySelector('[data-fb-reply-form="' + id + '"] input');
+      if (field) field.focus();
+      return;
+    }
+    const editBtn = e.target.closest('[data-fb-edit]');
+    if (editBtn) {
+      const item = feedbackItems.find(x => x.id === editBtn.dataset.fbEdit);
+      feedbackEditRating = item ? Number(item.rating) || 5 : 5;
+      feedbackEditingId = editBtn.dataset.fbEdit;
+      feedbackReplyOpenId = '';
+      renderFeedback();
+      return;
+    }
+    if (e.target.closest('[data-fb-cancel]')) {
+      feedbackEditingId = '';
+      renderFeedback();
+      return;
+    }
+    const saveBtn = e.target.closest('[data-fb-save]');
+    if (saveBtn) { await saveFeedbackEntry(saveBtn.dataset.fbSave); return; }
+    const delBtn = e.target.closest('[data-fb-delete]');
+    if (delBtn) { await deleteFeedbackEntry(delBtn.dataset.fbDelete); }
+  }
+
+  async function saveFeedbackEntry(id) {
+    const card = feedbackList.querySelector('[data-feedback-id="' + id + '"]');
+    if (!card) return;
+    const text = card.querySelector('[data-fb-text]');
+    const improv = card.querySelector('[data-fb-improvements]');
+    const btn = card.querySelector('[data-fb-save]');
+    if (!text) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/feedback', {
+        method: 'PATCH',
+        headers: Object.assign({ 'content-type': 'application/json' }, reqHeaders()),
+        credentials: 'omit',
+        body: JSON.stringify({
+          id,
+          rating: feedbackEditRating,
+          feedback: text.value.trim(),
+          improvements: improv ? improv.value.trim() : ''
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not save that review.');
+      feedbackItems = Array.isArray(data.feedback) ? data.feedback : feedbackItems;
+      feedbackAdmin = Boolean(data.is_admin);
+      feedbackEditingId = '';
+      renderFeedback();
+      toast({ title: 'Review updated', sub: 'The board shows your change now.', icon: ICON.check });
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Save changes'; }
+      toast({ title: 'Could not save', sub: err.message, icon: ICON.x, warn: true });
+    }
+  }
+
+  async function deleteFeedbackEntry(id) {
+    const item = feedbackItems.find(x => x.id === id);
+    if (!confirm('Delete this review for good?' + (item && item.replies.length ? ' Its replies go with it.' : ''))) return;
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/feedback', {
+        method: 'DELETE',
+        headers: Object.assign({ 'content-type': 'application/json' }, reqHeaders()),
+        credentials: 'omit',
+        body: JSON.stringify({ id })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not delete that review.');
+      feedbackItems = Array.isArray(data.feedback) ? data.feedback : feedbackItems.filter(x => x.id !== id);
+      feedbackAdmin = Boolean(data.is_admin);
+      renderFeedback();
+      toast({ title: 'Review deleted', icon: ICON.check });
+    } catch (err) {
+      toast({ title: 'Could not delete', sub: err.message, icon: ICON.x, warn: true });
+    }
+  }
+
+  async function onFeedbackReplySubmit(e) {
+    const form = e.target.closest('[data-fb-reply-form]');
+    if (!form) return;
+    e.preventDefault();
+    const id = form.dataset.fbReplyForm;
+    const input = form.querySelector('input[name="text"]');
+    const text = (input ? input.value : '').trim();
+    if (text.length < 2) {
+      toast({ title: 'Reply is too short', sub: 'Write at least 2 characters.', icon: ICON.x });
+      return;
+    }
+    const btn = form.querySelector('button[type="submit"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Posting…'; }
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/feedback/reply', {
+        method: 'POST',
+        headers: Object.assign({ 'content-type': 'application/json' }, reqHeaders()),
+        credentials: 'omit',
+        body: JSON.stringify({ id, text })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not post that reply.');
+      feedbackItems = Array.isArray(data.feedback) ? data.feedback : feedbackItems;
+      feedbackAdmin = Boolean(data.is_admin);
+      feedbackReplyOpenId = '';
+      renderFeedback();
+      toast({ title: 'Reply posted', icon: ICON.check });
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Post reply'; }
+      toast({ title: 'Could not reply', sub: err.message, icon: ICON.x, warn: true });
+    }
+  }
+
   function initFeedbackDrawer() {
     if (!feedbackDrawer) return;
+    ensureFeedbackImageField();
     if (feedbackNewBtn) {
       feedbackNewBtn.addEventListener('click', () => {
         if (auth.state !== VERIFIED) {
@@ -2110,6 +2385,8 @@
     feedbackDrawer.querySelectorAll('#feedbackRatingGroup [data-rating]').forEach(btn => {
       btn.addEventListener('click', () => setFeedbackRating(btn.dataset.rating));
     });
+    feedbackList.addEventListener('click', onFeedbackListClick);
+    feedbackList.addEventListener('submit', onFeedbackReplySubmit);
   }
 
   function openFeedback() {
@@ -2117,6 +2394,8 @@
     if (drawer.classList.contains('is-open')) hide(drawer);
     if (requestsDrawer && requestsDrawer.classList.contains('is-open')) hide(requestsDrawer);
     feedbackComposeOpen = false;
+    feedbackEditingId = '';
+    feedbackReplyOpenId = '';
     renderFeedback();
     openScrim();
     feedbackDrawer.classList.add('is-open');
@@ -3064,11 +3343,20 @@
     );
   }
 
+  /* Guides write the install path with [Version] instead of a hard-coded
+     release, because nobody's After Effects folder is called the same thing —
+     and a guide that names 2026 breaks the moment someone runs 2025 (or an old
+     CS6 build). The note below is the read-me line that explains the token. */
+  const VERSION_NOTE =
+    '<p class="install-note"><b>Read me:</b> where a path shows <code>[Version]</code>, replace it with the After Effects version you actually have — for example <code>2026</code>, <code>2025</code> or <code>CS6</code>. Include the word “After Effects” only if it is already in the path, and never keep the square brackets. Check yours in <b>Help → About After Effects</b> (Windows) or <b>After Effects → About After Effects</b> (macOS).</p>';
+
   function installHTML(r) {
-    if (window.KYRO_INSTALL[r.id]) return installBlock(r.id);
-    const files = r.files && r.files.length ? r.files : [{ ext: r.format, label: '' }];
-    const blocks = files.map(f => installBlock(f.ext, f.label)).filter(Boolean).join('');
-    return blocks || '<p class="m-desc">No install guide on file for this format.</p>';
+    const guide = window.KYRO_INSTALL[r.id]
+      ? installBlock(r.id)
+      : (r.files && r.files.length ? r.files : [{ ext: r.format, label: '' }])
+          .map(f => installBlock(f.ext, f.label)).filter(Boolean).join('');
+    if (!guide) return '<p class="m-desc">No install guide on file for this format.</p>';
+    return guide.indexOf('[Version]') === -1 ? guide : VERSION_NOTE + guide;
   }
 
   /* A SHA-256 is the only hash Discord-free scanners understand, and it is
