@@ -51,6 +51,11 @@ const mf = new Miniflare(convertV4MiniflareOptions({
       }
       if (url.pathname === '/api/v10/guilds/guild/roles') return Response.json([]);
       if (url.pathname === '/api/v10/guilds/guild/channels') return Response.json([]);
+      const channelGet = url.pathname.match(/^\/api\/v10\/channels\/(\d+)$/);
+      if (channelGet && request.method === 'GET') {
+        if (channelGet[1] === '910000000000000099') return Response.json({ message: 'Unknown Channel' }, { status: 404 });
+        return Response.json({ id: channelGet[1], type: 0, guild_id: 'guild' });
+      }
 
       const messagePost = url.pathname.match(/^\/api\/v10\/channels\/(\d+)\/messages$/);
       if (messagePost && request.method === 'POST') {
@@ -181,6 +186,7 @@ async function main() {
   const scanned = await publishTool('scanned-tool', { scan_requested: true });
   expect(scanned.status === 201, 'opt-in submission accepted');
   expect(vtSubmits === beforeVt + 1, 'URL submitted to VirusTotal only after opt-in');
+  const dbgStatus = await (await call('/vault/virustotal', OWNER_TOKEN, null, 'GET')).json();
   const proofPending = proofPosts().find(post => JSON.stringify(post.body).includes('scanned-tool') || JSON.stringify(post.body).includes('@everyone'));
   expect(Boolean(proofPending), 'pending proof message posted');
   expect(!JSON.stringify(proofPending.body).includes('test-vt-key'), 'API key not exposed');
@@ -212,6 +218,23 @@ async function main() {
   expect(denied.status === 403, 'ordinary member cannot retry');
   const deniedScan = await call('/vault/virustotal', MEMBER_TOKEN, null, 'GET');
   expect(deniedScan.status === 403, 'ordinary member cannot read scan records');
+
+  // 9. Proof channel setup: verified with a test post, clear errors otherwise.
+  const saved = await call('/dashboard/publishing', OWNER_TOKEN, { channel_id: '910000000000000002' });
+  expect(saved.status === 200, 'admin can save a proof channel');
+  const savedBody = await saved.json();
+  expect(savedBody.channel_id === '910000000000000002', 'proof channel id persisted');
+  expect(Boolean(savedBody.test_message_id), 'test post confirmed by Discord');
+  const proofGet = await call('/dashboard/publishing', OWNER_TOKEN, null, 'GET');
+  const proofGetBody = await proofGet.json();
+  expect(proofGetBody.proof_channel_id === '910000000000000002' && proofGetBody.reachable === true, 'saved channel is reachable');
+  const missing = await call('/dashboard/publishing', OWNER_TOKEN, { channel_id: '910000000000000099' });
+  const missingBody = await missing.json();
+  expect(missing.status === 404 && missingBody.code === 'channel_missing', 'missing channel returns a clear setup error');
+  const deniedProof = await call('/dashboard/publishing', MEMBER_TOKEN, { channel_id: '910000000000000002' });
+  expect(deniedProof.status === 403, 'ordinary member cannot configure the proof channel');
+  const tested = await call('/dashboard/publishing', OWNER_TOKEN, { action: 'test' });
+  expect(tested.status === 200, 'saved channel can be re-tested');
 
   console.log(`publishing: ${checks} checks passed`);
   await mf.dispose();

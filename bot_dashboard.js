@@ -25,6 +25,16 @@ import { KYRO_COMMANDS, COMMANDS_VERSION, registerAllCommands } from './bot-comm
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// A local admin dashboard is more useful alive than correct-but-dead: an error
+// thrown from a timer or a stray promise must never take port 4000 down and
+// leave the browser on ERR_CONNECTION_REFUSED. Log it and keep serving.
+process.on('uncaughtException', (err) => {
+  console.error('[Dashboard] Uncaught exception (server kept alive):', (err && err.stack) || err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[Dashboard] Unhandled rejection (server kept alive):', (reason && reason.stack) || reason);
+});
+
 // An ambient PORT=0 (or a blank value from a launcher) made Node bind a random
 // port, so the browser's http://localhost:4000 was refused. Only a real,
 // positive port is honoured; otherwise the dashboard always uses 4000.
@@ -2856,12 +2866,21 @@ async function handleRequest(req, res) {
   // a page the owner visits must not be able to POST to it. A cross-site form
   // or fetch cannot set JSON content type without a CORS preflight, and the
   // Origin/Sec-Fetch-Site check rejects the rest.
-  const localOrigins = [`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`, `http://[::1]:${PORT}`];
-  const origin = req.headers.origin || '';
-  if (origin && !localOrigins.includes(origin)) return sendJSON(res, 403, { error: 'Cross-site request blocked.' });
-  const fetchSite = String(req.headers['sec-fetch-site'] || '');
-  if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') return sendJSON(res, 403, { error: 'Cross-site request blocked.' });
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
+  //
+  // The guard applies to state-changing requests only. Applying it to GET/HEAD
+  // rejected ordinary page loads: Chrome sends Sec-Fetch-Site: same-site when
+  // the dashboard is opened from another localhost page (the preview server on
+  // :4173) and cross-site when it is opened from a link elsewhere, so the
+  // dashboard answered 403 instead of rendering. Reads are safe here: the Host
+  // guard above blocks DNS rebinding and no CORS headers are ever sent, so a
+  // foreign page cannot read the response.
+  const isReadRequest = req.method === 'GET' || req.method === 'HEAD';
+  if (!isReadRequest) {
+    const localOrigins = [`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`, `http://[::1]:${PORT}`];
+    const origin = req.headers.origin || '';
+    if (origin && !localOrigins.includes(origin)) return sendJSON(res, 403, { error: 'Cross-site request blocked.' });
+    const fetchSite = String(req.headers['sec-fetch-site'] || '');
+    if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') return sendJSON(res, 403, { error: 'Cross-site request blocked.' });
     const contentType = String(req.headers['content-type'] || '');
     if (!/^application\/json\b/i.test(contentType)) {
       return sendJSON(res, 415, { error: 'Send JSON with Content-Type: application/json.' });
@@ -2873,6 +2892,21 @@ async function handleRequest(req, res) {
   const guildId = url.searchParams.get('guild') || '';
 
   try {
+    // Liveness probe used by start-dashboard.cmd and by the auto-restart loop.
+    if ((req.method === 'GET' || req.method === 'HEAD') && p === '/health') {
+      return sendJSON(res, 200, {
+        ok: true, service: 'kyro-dashboard', port: PORT,
+        uptimeSeconds: Math.round(process.uptime()),
+        tokenLoaded: Boolean(BOT_TOKEN)
+      });
+    }
+
+    // Browsers always ask for this; answering quietly keeps the console clean.
+    if (req.method === 'GET' && p === '/favicon.ico') {
+      res.writeHead(204, { 'Cache-Control': 'public, max-age=86400' });
+      return res.end();
+    }
+
     if (req.method === 'GET' && p === '/') {
       const html = fs.readFileSync(path.join(__dirname, 'dashboard.html'), 'utf8');
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -2941,6 +2975,31 @@ async function handleRequest(req, res) {
         channels: (Array.isArray(channels) ? channels : []).map((c) => ({ id: c.id, name: c.name, type: c.type, parent_id: c.parent_id })).sort((a, b) => (a.position || 0) - (b.position || 0)),
         roles: (Array.isArray(roles) ? roles : []).map((r) => ({ id: r.id, name: r.name, color: r.color, managed: r.managed, position: r.position })).sort((a, b) => b.position - a.position)
       });
+    }
+
+    if (p === '/api/kyro/publishing') {
+      const secret = String(process.env.BOT_PUBLISH_SECRET || '').trim();
+      if (!secret) {
+        return sendJSON(res, 503, { error: 'Set BOT_PUBLISH_SECRET in the dashboard .env (the same value as the Worker secret) to manage the proof channel.' });
+      }
+      const base = String(process.env.KYRO_AUTH_URL || 'https://kyro-auth.kyro-ownr.workers.dev').replace(/\/+$/, '');
+      let body = null;
+      if (req.method === 'POST') {
+        try { body = await readBody(req); } catch { return sendJSON(res, 400, { error: 'Invalid JSON body.' }); }
+      } else if (req.method !== 'GET') {
+        return sendJSON(res, 405, { error: 'Use GET or POST.' });
+      }
+      try {
+        const upstream = await fetch(base + '/dashboard/publishing', {
+          method: req.method,
+          headers: { 'x-kyro-bot': secret, ...(body ? { 'content-type': 'application/json' } : {}) },
+          body: body ? JSON.stringify(body) : undefined
+        });
+        const data = await upstream.json().catch(() => ({ error: 'The website worker returned an unreadable response.' }));
+        return sendJSON(res, upstream.status, data);
+      } catch (e) {
+        return sendJSON(res, 502, { error: 'Could not reach the website worker: ' + (e.message || 'network error') });
+      }
     }
 
     if (req.method === 'GET' && p === '/api/config') {
@@ -3799,9 +3858,24 @@ server.on('error', (err) => {
   process.exit(1);
 });
 
+// The server binds the IPv4 loopback only, but `localhost` resolves to ::1
+// first on some Windows setups — the browser then shows ERR_CONNECTION_REFUSED
+// while the dashboard is running. Serve the same handler on IPv6 loopback too;
+// the Host guard still rejects every non-loopback address.
+const server6 = http.createServer(handleRequest);
+
 await resolveBotIdentity();
 
-server.listen(PORT, '127.0.0.1', () => {
+let ipv4Ready = false;
+let ipv6Ready = false;
+let announced = false;
+
+function announceWhenListening() {
+  // Open the browser only once BOTH loopback listeners are bound: the IPv4
+  // listen callback can fire before the ::1 bind settles, and an auto-opened
+  // tab that resolves localhost to ::1 then shows ERR_CONNECTION_REFUSED.
+  if (announced || !ipv4Ready || !ipv6Ready) return;
+  announced = true;
   console.log('=======================================================');
   console.log('  Kyro Staff Bot — Multi-Server Command Center');
   console.log(`  http://localhost:${PORT}`);
@@ -3812,7 +3886,9 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log('            scheduler, polls, role packs, utility, embeds');
   console.log('=======================================================');
   if (!process.env.DASHBOARD_DISABLE_POLLER) {
-    setInterval(pollTick, 5000);
+    setInterval(() => {
+      pollTick().catch((e) => console.error('[Dashboard] Poller error:', (e && e.message) || e));
+    }, 5000);
     console.log('  Background poller active (giveaways / roles / automod / welcome).');
     // Register slash commands on boot and re-check every 10 min so newly joined
     // guilds get them automatically. Fail-soft; never blocks the dashboard.
@@ -3832,18 +3908,18 @@ server.listen(PORT, '127.0.0.1', () => {
   // /start-kyro runs on Cloudflare, so it can never open a browser on this
   // machine — opening on boot is what makes the dashboard actually appear.
   if (!process.env.DASHBOARD_DISABLE_OPEN) openLocalDashboard();
-});
+}
 
-// The server binds the IPv4 loopback only, but `localhost` resolves to ::1
-// first on some Windows setups — the browser then shows ERR_CONNECTION_REFUSED
-// while the dashboard is running. Serve the same handler on IPv6 loopback too;
-// the Host guard still rejects every non-loopback address.
-const server6 = http.createServer(handleRequest);
+server.listen(PORT, '127.0.0.1', () => { ipv4Ready = true; announceWhenListening(); });
+
 server6.on('error', (err) => {
   if (err.code !== 'EADDRINUSE' && err.code !== 'EADDRNOTAVAIL' && err.code !== 'EAFNOSUPPORT') {
     console.error('[Dashboard] IPv6 loopback listener failed:', err.message);
   }
+  // IPv6 unavailable: localhost still resolves to 127.0.0.1, so start anyway.
+  ipv6Ready = true;
+  announceWhenListening();
 });
-server6.listen(PORT, '::1');
+server6.listen(PORT, '::1', () => { ipv6Ready = true; announceWhenListening(); });
 
 export { server, server6, loadDB, saveDB };

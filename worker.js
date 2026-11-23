@@ -98,6 +98,7 @@ export default {
       if (url.pathname === '/vault/discord/publish') return await handleDiscordPublishAdmin(request, url, env, cors);
       if (url.pathname === '/vault/virustotal') return await handleVirusTotalAdmin(request, url, env, cors);
       if (url.pathname === '/dashboard/settings') return await handleDashboardSettings(request, url, env, cors);
+      if (url.pathname === '/dashboard/publishing') return await handleDashboardPublishing(request, url, env, cors);
       if (url.pathname === '/dashboard/embed') return await handleDashboardEmbed(request, url, env, cors);
       if (url.pathname === '/dashboard/lockdown') return await handleDashboardLockdown(request, url, env, cors);
       if (url.pathname === '/dashboard/moderate') return await handleDashboardModerate(request, url, env, cors);
@@ -2673,10 +2674,84 @@ async function retireKyroDiscordPost(env, item, reason) {
 }
 
 /* ------------------------- optional VirusTotal flow ----------------------- */
-function proofChannelId(env) {
-  const id = String(env.DISCORD_PROOF_CHANNEL_ID || '').trim();
-  return /^\d{17,20}$/.test(id) ? id : '';
+async function proofChannelId(env) {
+  /* The dashboard setting wins; env is only a deployment fallback so a value
+     set before this setting existed keeps working. */
+  try {
+    const doc = (await readDoc(env, DASHBOARD_CONFIG_KEY, {})).value || {};
+    const configured = String((doc.publishing && doc.publishing.proof_channel_id) || '').trim();
+    if (/^\d{17,20}$/.test(configured)) return configured;
+  } catch {}
+  const fallback = String(env.DISCORD_PROOF_CHANNEL_ID || '').trim();
+  return /^\d{17,20}$/.test(fallback) ? fallback : '';
 }
+
+async function setProofChannelConfig(env, channelId, actor) {
+  const id = /^\d{17,20}$/.test(String(channelId || '').trim()) ? String(channelId).trim() : '';
+  if (!id) throw fail(400, 'bad_channel', 'Enter a text channel ID (17–20 digits).');
+  const channel = await discordCall(env, 'GET', `/channels/${id}`, null);
+  if (!channel.ok) {
+    if (channel.status === 404) throw fail(404, 'channel_missing', 'That channel does not exist, or the bot cannot see it. Check the ID and the bot access.');
+    if (channel.status === 403) throw fail(403, 'channel_forbidden', 'The bot cannot view that channel. Give it View Channel and Send Messages.');
+    throw fail(502, 'channel_lookup_failed', 'Discord could not confirm that channel (' + channel.status + ').');
+  }
+  const type = Number(channel.data && channel.data.type);
+  if (![0, 5].includes(type)) throw fail(400, 'wrong_channel_type', 'Choose a normal text or announcement channel.');
+  const test = await discordCall(env, 'POST', `/channels/${id}/messages`, {
+    content: 'Kyro proof channel connected. Scan reports will appear here.',
+    allowed_mentions: { parse: [] }
+  });
+  if (!test.ok) {
+    if (test.status === 403) throw fail(403, 'channel_no_send', 'The bot cannot post in that channel. Give it View Channel, Send Messages and Embed Links.');
+    throw fail(502, 'test_post_failed', 'Discord rejected the test post (' + test.status + ').');
+  }
+  await mutateDoc(env, DASHBOARD_CONFIG_KEY, {}, curr => {
+    const base = curr && typeof curr === 'object' ? curr : {};
+    return { ...base, publishing: { ...(base.publishing || {}), proof_channel_id: id, verified_at: new Date().toISOString() } };
+  });
+  await logBotAudit(env, 'Proof Channel Updated', actor, `#${id} verified with a test post.`);
+  return { channel_id: id, verified_at: new Date().toISOString(), test_message_id: test.data && test.data.id };
+}
+
+async function handleDashboardPublishing(request, url, env, cors) {
+  let session = null;
+  const botSecret = String(env.BOT_PUBLISH_SECRET || '');
+  const presented = String(request.headers.get('x-kyro-bot') || '');
+  const isBot = botSecret && presented && presented === botSecret;
+  if (!isBot) {
+    session = await requireMember(bearerToken(request, url), env);
+    checkAdminOrOwner(session, env);
+  }
+  if (request.method === 'GET') {
+    const doc = (await readDoc(env, DASHBOARD_CONFIG_KEY, {})).value || {};
+    const configured = (doc.publishing && doc.publishing.proof_channel_id) || '';
+    const channel = configured ? await discordCall(env, 'GET', `/channels/${configured}`, null) : null;
+    return json({
+      proof_channel_id: configured,
+      verified_at: (doc.publishing && doc.publishing.verified_at) || null,
+      reachable: Boolean(channel && channel.ok),
+      error: channel && !channel.ok ? (channel.status === 404 ? 'The saved channel no longer exists or is not visible to the bot.' : 'The bot cannot view the saved channel.') : null
+    }, 200, cors);
+  }
+  if (request.method !== 'POST') return json({ error: 'Use GET or POST.' }, 405, cors);
+  const input = await jsonBody(request);
+  const action = String(input.action || 'save');
+  const actor = isBot ? { id: 'dashboard', username: 'Kyro dashboard' } : session;
+  if (action === 'clear') {
+    await mutateDoc(env, DASHBOARD_CONFIG_KEY, {}, curr => {
+      const base = curr && typeof curr === 'object' ? curr : {};
+      return { ...base, publishing: { ...(base.publishing || {}), proof_channel_id: '', verified_at: null } };
+    });
+    await logBotAudit(env, 'Proof Channel Cleared', actor, 'Removed the configured proof channel.');
+    return json({ ok: true, channel_id: '' }, 200, cors);
+  }
+  if (action !== 'save' && action !== 'test') throw fail(400, 'bad_action', 'Use action "save", "test" or "clear".');
+  const channelId = action === 'test' ? await proofChannelId(env) : input.channel_id;
+  if (!channelId) throw fail(400, 'bad_channel', 'Enter a text channel ID first.');
+  const result = await setProofChannelConfig(env, channelId, actor);
+  return json({ ok: true, ...result }, 200, cors);
+}
+
 async function scanRecords(env) {
   const doc = (await readDoc(env, VIRUSTOTAL_STATE_KEY, { items: {} })).value || {};
   return doc.items && typeof doc.items === 'object' ? doc.items : {};
@@ -2721,7 +2796,7 @@ function proofEmbed(record) {
   };
 }
 async function postOrUpdateProof(env, record) {
-  const channel = proofChannelId(env);
+  const channel = await proofChannelId(env);
   if (!channel) {
     record.proof_error = 'No proof channel is configured (DISCORD_PROOF_CHANNEL_ID).';
     await saveScanRecord(env, record.slug, record);
@@ -2905,7 +2980,7 @@ async function handleVirusTotalAdmin(request, url, env, cors) {
     throw fail(403, 'forbidden', 'Only the owner or an admin can manage VirusTotal scans.');
   }
   if (request.method === 'GET') {
-    return json({ scans: await scanRecords(env), proof_channel_configured: Boolean(proofChannelId(env)) }, 200, cors);
+    return json({ scans: await scanRecords(env), proof_channel_configured: Boolean(await proofChannelId(env)) }, 200, cors);
   }
   if (request.method !== 'POST') return json({ error: 'Use GET or POST.' }, 405, cors);
   await limitWrites(env, 'virustotal-admin', session.id, 10);
