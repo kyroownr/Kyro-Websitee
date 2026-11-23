@@ -531,7 +531,7 @@ window.KYRO_INSTALL = {
 
       { h: '3. Confirm it installed' },
       { p: 'Open the panel, click the gear (Settings) and check the <b>About</b> section. It should show:' },
-      { code: 'AppleFX                         1.2.5\nHost                            After Effects\nDeveloper                       by kyro\nhttps://discord.gg/5TUVVA2hR4' },
+      { code: 'AppleFX                         1.2.5\nHost                            After Effects\nDeveloper                       by kyro\nhttps://discord.gg/N3KJBSWrkR' },
       { p: '<code>by kyro</code> opens <a class="prose-link" href="https://kyro.new.tg/" target="_blank" rel="noopener noreferrer">https://kyro.new.tg/</a> in your browser.' },
 
       { h: '4. Uninstall' },

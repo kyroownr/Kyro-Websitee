@@ -147,7 +147,7 @@ const head = (p) => `<!DOCTYPE html>
         <div class="footer-links">
           <a href="/">Vault</a>
           <a href="/about">About</a>
-          <a href="https://discord.gg/5TUVVA2hR4" target="_blank" rel="noopener noreferrer" id="footerInvite">Invite ↗</a>
+          <a href="https://discord.gg/N3KJBSWrkR" target="_blank" rel="noopener noreferrer" id="footerInvite">Invite ↗</a>
         </div>
       </div>
       <div class="footer-meta mono">

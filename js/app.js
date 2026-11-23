@@ -19,10 +19,10 @@
   /* One invite for the whole site. Links are never rewritten per visitor: the
      Discord join card names whoever created the invite, so swapping in a
      personal code made the site show a random member as the inviter. */
-  const DEFAULT_INVITE_URL = 'https://discord.gg/5TUVVA2hR4';
+  const DEFAULT_INVITE_URL = 'https://discord.gg/N3KJBSWrkR';
   const INVITE_URL = DEFAULT_INVITE_URL;
   const INVITE_CODE = INVITE_URL.replace(/^https?:\/\//, '');
-  const INVITE_SLUG = '5TUVVA2hR4';
+  const INVITE_SLUG = 'N3KJBSWrkR';
 
   const REDIRECT_URI = AUTH_WORKER_URL + '/callback';
 
@@ -850,13 +850,27 @@
     if (!r) { applefxRow.hidden = true; applefxRow.removeAttribute('data-resource'); return; }
     applefxRow.hidden = false;
     applefxRow.dataset.resource = r.id;
+    /* Prefer a picture the site ships itself. A cloud listing's gallery points at
+       a Discord CDN link that expires, which would leave this row blank for
+       everyone arriving later. */
+    const localShots = resources
+      .filter(x => /^applefx\b/i.test(String(x.title || '')))
+      .flatMap(x => (x.gallery || []).filter(Boolean))
+      .filter(src => !/^https?:/i.test(String(src)));
+    const shot = localShots[0] || '/assets/applefx-panel.webp';
     applefxRow.innerHTML =
-      '<span class="applefx-mark mono" aria-hidden="true">' + ICON.apple + '</span>' +
+      '<span class="applefx-thumb">' + (shot
+        ? '<img src="' + esc(shot) + '" alt="" loading="lazy" decoding="async" />'
+        : ICON.apple) + '</span>' +
       '<span class="applefx-copy">' +
         '<span class="applefx-title">' + esc(r.title) + '</span>' +
         '<span class="applefx-sub">' + esc(r.desc) + '</span>' +
       '</span>' +
       '<span class="applefx-cta">View' + ICON.arrow + '</span>';
+    /* A cloud picture can expire; the row falls back to the Apple mark rather
+       than showing a broken image. */
+    const img = applefxRow.querySelector('.applefx-thumb img');
+    if (img) img.addEventListener('error', () => { img.replaceWith(document.createRange().createContextualFragment(ICON.apple)); }, { once: true });
   }
 
   /* Each OS page shows one browse category as its own page; the head reuses

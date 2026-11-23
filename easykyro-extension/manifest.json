@@ -1,0 +1,58 @@
+{
+  "manifest_version": 3,
+  "name": "EasyKyro",
+  "version": "1.3.0",
+  "description": "One title is enough: EasyKyro reads the page you are on, writes the request with your free Google AI key, and posts it to Kyro.",
+  "minimum_chrome_version": "127",
+  "homepage_url": "https://kyro.new.tg",
+  "action": {
+    "default_title": "EasyKyro",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "contextMenus"
+  ],
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+K",
+        "mac": "MacCtrl+Shift+K"
+      },
+      "description": "Open EasyKyro"
+    }
+  },
+  "host_permissions": [
+    "https://kyro-auth.kyro-ownr.workers.dev/*",
+    "https://kyro.new.tg/*",
+    "https://generativelanguage.googleapis.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://kyro.new.tg/*"],
+      "js": ["content/kyro-auth.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

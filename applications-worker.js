@@ -929,7 +929,7 @@ export async function handleApplicationInteractions(request, env, ctx) {
       return response({
         type: 4,
         data: {
-          content: `Here is the official invite link for Kyro:\nhttps://discord.gg/5TUVVA2hR4\nWebsite: https://kyro.new.tg`,
+          content: `Here is the official invite link for Kyro:\nhttps://discord.gg/N3KJBSWrkR\nWebsite: https://kyro.new.tg`,
           flags: 64
         }
       });
