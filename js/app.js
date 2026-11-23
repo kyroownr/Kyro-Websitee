@@ -2563,6 +2563,33 @@
     }
   }
 
+  const publishingBox = $('#accPublishingStatus');
+  if (publishingBox) {
+    publishingBox.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-pub-action]');
+      if (!btn) return;
+      const action = btn.dataset.pubAction;
+      const slug = btn.dataset.slug;
+      const endpoint = action === 'retry' ? '/vault/discord/publish' : '/vault/virustotal';
+      btn.disabled = true;
+      btn.textContent = 'Working…';
+      try {
+        const res = await fetch(AUTH_WORKER_URL + endpoint, {
+          method: 'POST',
+          headers: { authorization: 'Bearer ' + auth.token, 'content-type': 'application/json' },
+          credentials: 'omit',
+          body: JSON.stringify({ slug, action })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'That action was refused.');
+        toast({ title: action === 'release' ? 'Hold released' : 'Discord updated', sub: action === 'retry' ? 'Checked Discord and updated the existing announcement.' : 'Status refreshed below.', icon: ICON.check });
+      } catch (err) {
+        toast({ title: 'Action failed', sub: err && err.message ? err.message : 'Try again in a moment.', icon: ICON.x });
+      }
+      renderPublishingStatus();
+    });
+  }
+
   function switchAccountTab(tabKey) {
     const tabs = $$('[data-acc-tab]');
     tabs.forEach(t => t.classList.toggle('is-active', t.dataset.accTab === tabKey));
@@ -2803,7 +2830,58 @@
     }));
   }
 
+  /* Staff-only status panel. It only renders after both admin endpoints
+     accept the session, so it never exposes queue data to ordinary members. */
+  async function renderPublishingStatus() {
+    const group = $('#accPublishingGroup');
+    const box = $('#accPublishingStatus');
+    if (!group || !box) return;
+    if (auth.state === OUT || !auth.token) { group.style.display = 'none'; return; }
+    const headers = { authorization: 'Bearer ' + auth.token };
+    try {
+      const [pubRes, scanRes] = await Promise.all([
+        fetch(AUTH_WORKER_URL + '/vault/discord/publish', { headers, credentials: 'omit' }),
+        fetch(AUTH_WORKER_URL + '/vault/virustotal', { headers, credentials: 'omit' })
+      ]);
+      if (!pubRes.ok || !scanRes.ok) { group.style.display = 'none'; return; }
+      const pub = ((await pubRes.json()) || {}).publish || {};
+      const scanDoc = await scanRes.json();
+      const scans = scanDoc.scans || {};
+      const slugs = Array.from(new Set(Object.keys(pub).concat(Object.keys(scans))));
+      group.style.display = 'block';
+      if (!slugs.length) {
+        box.innerHTML = '<div class="acc-row-sub">No Discord announcements or scans recorded yet.</div>';
+        return;
+      }
+      const warning = scanDoc.proof_channel_configured === false
+        ? '<div style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);border-radius:8px;padding:8px 10px;font-size:0.78rem;color:#fcd34d;">No <strong>#proof</strong> channel is configured, so scan results cannot be posted. An admin needs to set <code>DISCORD_PROOF_CHANNEL_ID</code>.</div>'
+        : '';
+      const rows = slugs.map(slug => {
+        const post = pub[slug] || {};
+        const scan = scans[slug] || {};
+        const title = (post.snapshot && post.snapshot.title) || scan.title || slug;
+        const pStatus = post.status || 'not posted';
+        const pColor = pStatus === 'posted' || pStatus === 'updated' ? '#34d399' : pStatus === 'failed' ? '#f87171' : pStatus === 'removed' ? '#94a3b8' : '#fbbf24';
+        const scanLabel = scan.status ? scan.status + (scan.gated ? ' · held for review' : '') : 'no scan';
+        const scanColor = scan.flagged ? '#f87171' : scan.status === 'completed' ? '#34d399' : scan.status === 'failed' || scan.status === 'unavailable' ? '#fbbf24' : '#94a3b8';
+        const actions = ['<button type="button" class="acc-action-pill" data-pub-action="retry" data-slug="' + esc(slug) + '">Retry post</button>'];
+        if (scan.status === 'pending') actions.push('<button type="button" class="acc-action-pill" data-pub-action="refresh" data-slug="' + esc(slug) + '">Check scan</button>');
+        if (scan.gated) actions.push('<button type="button" class="acc-action-pill" data-pub-action="release" data-slug="' + esc(slug) + '">Release hold</button>');
+        return '<div style="border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:6px;">' +
+          '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;"><strong style="font-size:0.86rem;color:#e2e8f0;">' + esc(title) + '</strong>' +
+          '<span style="font-size:0.74rem;color:' + pColor + ';">Discord: ' + esc(pStatus) + '</span></div>' +
+          '<div style="font-size:0.75rem;color:' + scanColor + ';">Scan: ' + esc(scanLabel) + (scan.result ? ' — ' + esc(scan.result) : '') + '</div>' +
+          (post.error || scan.proof_error || scan.error ? '<div style="font-size:0.73rem;color:#fca5a5;">' + esc(post.error || scan.proof_error || scan.error) + '</div>' : '') +
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + actions.join('') + '</div></div>';
+      }).join('');
+      box.innerHTML = warning + rows;
+    } catch {
+      group.style.display = 'none';
+    }
+  }
+
   async function renderAccountUploads() {
+    renderPublishingStatus();
     const list = $('#vUpListContent');
     const title = $('#vUpListTitle');
     if (!list) return;

@@ -565,6 +565,13 @@
         <!-- Tab 6: Contributor & Owner Uploads -->
         <div class="acc-panel" id="accPanelUploads">
           <h3 class="acc-heading">Vault Uploads &amp; Contributions</h3>
+          <!-- Staff-only: confirmed Discord publish state and optional scan state. -->
+          <div class="acc-settings-group" id="accPublishingGroup" style="display:none;margin-top:14px;">
+            <div class="acc-group-title"><span>Discord sync &amp; scan status</span></div>
+            <p class="acc-group-desc">Only a status confirmed by Discord is shown as posted. Retrying is safe: it updates the existing announcement instead of creating another.</p>
+            <div id="accPublishingStatus" style="display:flex;flex-direction:column;gap:8px;margin-top:10px;"></div>
+          </div>
+
           <p class="acc-subheading">Contributors and Server Owners can submit new tools, plugins, presets, and packs. Contributor uploads are reviewed and approved by the Owner before publishing to Discord and the Vault.</p>
 
           <!-- Upload Form -->
@@ -794,7 +801,7 @@
   <!-- Modular scripts: data → preview engine → app wiring -->
   <script defer src="/js/data.js?v=7101c45f"></script>
   <script defer src="/js/preview.js?v=53c30c30"></script>
-  <script defer src="/js/app.js?v=1da9950f"></script>
+  <script defer src="/js/app.js?v=a02dc5a8"></script>
   <script defer src="/js/applications.js?v=195770b9"></script>
 </body>
 </html>

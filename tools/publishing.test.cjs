@@ -194,6 +194,14 @@ async function main() {
   expect(scanStatus.scans['scanned-tool'].status === 'completed', 'scan completion stored');
   expect(scanStatus.scans['scanned-tool'].flagged === true, 'detections flagged for moderator review');
 
+  // 6b. Detections hold the listing until a moderator releases it.
+  const publicHeld = await (await call('/vault/public', OWNER_TOKEN, null, 'GET')).json();
+  expect(!(publicHeld.items || []).some(item => item.slug === 'scanned-tool'), 'flagged resource held out of the catalogue');
+  const released = await call('/vault/virustotal', OWNER_TOKEN, { slug: 'scanned-tool', action: 'release' });
+  expect(released.status === 200, 'moderator can release a held resource');
+  const publicReleased = await (await call('/vault/public', OWNER_TOKEN, null, 'GET')).json();
+  expect((publicReleased.items || []).some(item => item.slug === 'scanned-tool'), 'released resource is public again');
+
   // 7. Opt-out: no scan record and no VirusTotal request.
   const beforeOptOut = vtSubmits;
   await publishTool('no-scan-tool');

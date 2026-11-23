@@ -2841,6 +2841,13 @@ async function refreshVirusTotalScan(env, record) {
   record.result = vtStatsText(record.stats);
   record.completed_at = new Date().toISOString();
   record.updated = record.completed_at;
+  if (record.flagged && record.item) {
+    /* Gating policy: detections hold the listing until a moderator releases
+       it. One detection is not treated as proof of malware. */
+    const tokens = [record.slug, record.item.id].filter(Boolean);
+    await hideVaultResources(env, tokens);
+    record.gated = true;
+  }
   await saveScanRecord(env, record.slug, record);
   await postOrUpdateProof(env, record);
   if (record.flagged) {
@@ -2908,13 +2915,23 @@ async function handleVirusTotalAdmin(request, url, env, cors) {
   const existing = records[slug];
   if (!existing || !existing.item) throw fail(404, 'not_found', 'No scan record or snapshot exists for that resource.');
   const action = String(input.action || 'retry');
+  if (action === 'release') {
+    const tokens = [existing.slug, existing.item && existing.item.id].filter(Boolean);
+    await restoreVaultResources(env, tokens);
+    existing.gated = false;
+    existing.released_by = session.username;
+    existing.released_at = new Date().toISOString();
+    await saveScanRecord(env, existing.slug, existing);
+    await logBotAudit(env, 'VirusTotal Hold Released', session, `Released "${existing.title}" back into the catalogue after review.`);
+    return json({ ok: true, scan: existing }, 200, cors);
+  }
   if (action === 'refresh') {
     if (!existing.analysis_id) throw fail(400, 'no_analysis', 'That scan has no analysis ID to check.');
     const refreshed = await refreshVirusTotalScan(env, { ...existing });
     await logBotAudit(env, 'VirusTotal Scan Checked', session, `Checked the optional URL scan for "${existing.title}" (status: ${refreshed.status}).`);
     return json({ ok: refreshed.status !== 'failed', scan: refreshed }, 200, cors);
   }
-  if (action !== 'retry') throw fail(400, 'bad_action', 'Use action "retry" or "refresh".');
+  if (action !== 'retry') throw fail(400, 'bad_action', 'Use action "retry", "refresh" or "release".');
   if (existing.status === 'pending') throw fail(409, 'scan_pending', 'That scan is still processing.');
   const result = await queueVirusTotalScan(env, existing.item, session.id);
   await logBotAudit(env, 'VirusTotal Scan Retried', session, `Retried the optional URL scan for "${existing.title}".`);
