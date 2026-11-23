@@ -5,7 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Kyro — Free Tools &amp; Resources for Editors</title>
-  <meta name="description" content="Free After Effects software and resources for editors. Downloads verified through the Kyro Discord." />
+  <meta name="description" content="Kyro is a small editor community sharing useful After Effects resources and courses for people who can’t afford expensive tools." />
   <meta name="theme-color" content="#08090d" />
 
   <!-- Social preview. og:url / og:image must stay absolute: link crawlers
@@ -37,7 +37,7 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="all" />
   <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
 
-  <link rel="stylesheet" href="/css/styles.css?v=f6f07f35" />
+  <link rel="stylesheet" href="/css/styles.css?v=7ccfd85e" />
 </head>
 <body>
 
@@ -52,6 +52,7 @@
       <nav class="nav-right" aria-label="Site">
         <button type="button" class="nav-link" id="paletteOpen">Search</button>
         <a class="nav-link" href="/incoming">Incoming</a>
+        <a class="nav-link" href="/courses">Courses</a>
         <a class="nav-link" href="/guide">Guide</a>
         <a class="nav-link" href="/easykyro">EasyKyro</a>
         <a class="nav-link" href="/about">About</a>
@@ -73,8 +74,9 @@
   <main class="shell">
     <!-- ============ Centered editorial hero ============ -->
     <section class="hero">
-      <h1 class="hero-title">Kyro</h1>
-      <p class="hero-sub">Free software &amp; resources — created for editors, by editor.</p>
+      <p class="hero-eyebrow mono">Kyro · editor community</p>
+      <h1 class="hero-title">Good tools shouldn’t be out of reach.</h1>
+      <p class="hero-sub">Kyro is a small editor community sharing useful After Effects resources for people who can’t afford expensive tools. Browse the vault, see what each resource does, and join the community to download.</p>
 
       <div class="hero-search-wrap">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
@@ -89,7 +91,7 @@
         </button>
         <button type="button" class="os-toggle-btn" data-os="macos" aria-pressed="false">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.1 8.5c0-1.7 1.4-2.6 1.5-2.6-.8-1.2-2.1-1.3-2.5-1.4-1.1-.1-2.1.6-2.7.6-.6 0-1.4-.6-2.3-.6-1.2 0-2.3.7-2.9 1.7-1.2 2.1-.3 5.3.9 7 .6.9 1.3 1.8 2.2 1.8.9 0 1.2-.6 2.3-.6s1.4.6 2.3.5c1 0 1.6-.8 2.1-1.7.7-1 1-2 1-2-.1 0-1.9-.7-1.9-2.7zM11.3 3.5c.5-.6.8-1.4.7-2.2-.7 0-1.5.5-2 1.1-.4.5-.8 1.3-.7 2.1.8.1 1.5-.4 2-1z"/></svg>
-          MacOS
+          macOS
         </button>
       </div>
     </section>
@@ -112,6 +114,52 @@
      /windows and /macos pages, exactly like keyfla.me ==================== -->
     <p class="section-label">Browse</p>
     <div class="browse" id="browseGrid"></div>
+
+    <!-- ============ Recently added (real listings + previews) ============ -->
+    <section class="recent-section" aria-labelledby="recentTitle">
+      <p class="section-label" style="margin-top:36px;">Recently added</p>
+      <h2 class="sr-only" id="recentTitle">Recently added resources</h2>
+      <div class="grid recent-grid" id="recentGrid"></div>
+    </section>
+
+    <!-- ============ How Kyro works (community, not a pitch) ============ -->
+    <section class="works" aria-labelledby="worksTitle">
+      <p class="section-label">How Kyro works</p>
+      <h2 class="works-title" id="worksTitle">A small vault, kept useful by the people who edit with it.</h2>
+      <div class="works-grid">
+        <article class="works-step">
+          <span class="works-num mono">01</span>
+          <h3>Editors share what they use</h3>
+          <p>Contributors and the Kyro team add software, plugins, presets, project files and courses, with the original creator credited wherever it is known.</p>
+        </article>
+        <article class="works-step">
+          <span class="works-num mono">02</span>
+          <h3>Uploads are reviewed before they publish</h3>
+          <p>Contributor submissions wait for owner approval; owner uploads go live directly. Review details appear on a listing only when they were actually recorded.</p>
+        </article>
+        <article class="works-step">
+          <span class="works-num mono">03</span>
+          <h3>Browse first, join to download</h3>
+          <p>Descriptions, previews and guides are open to everyone. Files and links unlock with a Kyro Discord membership so the vault stays with working editors.</p>
+        </article>
+        <article class="works-step">
+          <span class="works-num mono">04</span>
+          <h3>Requests shape what comes next</h3>
+          <p>The requests board is where the community asks for a tool or an install guide. Shipped requests are marked as added.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- ============ About downloads (transparent access copy) ============ -->
+    <details class="about-downloads" id="aboutDownloads">
+      <summary>About downloads</summary>
+      <div class="about-downloads-body">
+        <p>Everything on Kyro is free to browse. When you press download, the site asks you to sign in with Discord and checks that you are a member of the Kyro server. That check happens at download time only — you never need an account to read a listing, view previews or open an install guide.</p>
+        <p>Some listings point to the creator’s own host instead of a file stored by Kyro. Archive passwords, when a listing has one, are shown next to the download after your membership is confirmed.</p>
+        <p>Scan anything you download before opening it. Unsigned After Effects extensions (<code>.zxp</code>, <code>.jsxbin</code>) commonly trigger antivirus warnings; a warning is not proof that a file is unsafe, and a clean result is not proof that it is safe. We only show review or scan details that a listing actually provides.</p>
+        <p>Found something broken or out of date? Ask in the <a class="prose-link" href="#discordCard">Kyro Discord</a>, or send a request so it can be fixed or replaced.</p>
+      </div>
+    </details>
 
     <section class="application-cta" aria-labelledby="applyCtaTitle">
       <div>
@@ -539,6 +587,7 @@
                   <select id="vUpKind" class="acc-select" style="width:100%;">
                     <option value="tool" selected>Tool / Plugin / Pack</option>
                     <option value="software">Software (Editor)</option>
+                    <option value="course">Course</option>
                   </select>
                 </div>
                 <div>
@@ -720,9 +769,9 @@
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <!-- Modular scripts: data → preview engine → app wiring -->
-  <script defer src="/js/data.js?v=ec861d1f"></script>
+  <script defer src="/js/data.js?v=7101c45f"></script>
   <script defer src="/js/preview.js?v=53c30c30"></script>
-  <script defer src="/js/app.js?v=a7684ee0"></script>
+  <script defer src="/js/app.js?v=99917b1e"></script>
   <script defer src="/js/applications.js?v=195770b9"></script>
 </body>
 </html>

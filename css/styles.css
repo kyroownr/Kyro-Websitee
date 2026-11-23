@@ -19,10 +19,11 @@
   --white: #F5F5F7;
   --silver: #C7C8CC;
   --metal: linear-gradient(180deg, #FFFFFF 0%, #A1A2A8 100%);
-  --muted: #8E9099;
-  --dim: #5C5E68;
-  --accent: #2997FF; /* Apple signature subtle blue accent */
-  --accent-soft: rgba(41, 151, 255, 0.14);
+  --muted: #9A9CA5;
+  --dim: #7A7C87;
+  /* Drawn from the Kyro wordmark: silver type on a near-black plate. */
+  --accent: #C7C8CC;
+  --accent-soft: rgba(199, 200, 204, 0.14);
   --green: #30D158;      /* Apple vibrant green */
   --ink: #090a0d;         /* text on solid white */
 
@@ -61,7 +62,7 @@ code, .mono { font-family: var(--mono); }
 
 ::selection { background: rgba(255, 255, 255, 0.18); color: var(--white); }
 
-:focus-visible { outline: 1px solid var(--silver); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--white); outline-offset: 2px; border-radius: 4px; }
 
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
@@ -116,7 +117,7 @@ code, .mono { font-family: var(--mono); }
 .count-badge {
   position: absolute; top: 2px; right: 0;
   min-width: 15px; height: 15px; padding: 0 4px;
-  background: var(--accent); color: #fff;
+  background: var(--accent); color: var(--ink);
   border-radius: 10px;
   font-size: 0.58rem; font-weight: 700; display: grid; place-items: center;
 }
@@ -208,13 +209,19 @@ code, .mono { font-family: var(--mono); }
 .pm-item.danger:hover { background: rgba(255, 69, 58, 0.15); color: #FF453A; }
 
 /* ------------------------------- hero ---------------------------------- */
-.hero { padding: clamp(48px, 9vh, 88px) 0 0; text-align: center; }
+.hero { padding: clamp(40px, 8vh, 76px) 0 0; text-align: center; }
+
+.hero-eyebrow {
+  margin: 0 0 14px;
+  font-size: 0.64rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--dim);
+}
 
 .hero-title {
-  margin: 0;
-  font-size: clamp(3rem, 9.5vw, 4.8rem);
-  font-weight: 800; line-height: 1.1; letter-spacing: -0.05em;
-  padding-bottom: 0.12em;
+  margin: 0 auto;
+  max-width: 22ch;
+  font-size: clamp(2.1rem, 6.4vw, 3.4rem);
+  font-weight: 800; line-height: 1.12; letter-spacing: -0.045em;
+  padding-bottom: 0.08em;
   background: var(--metal);
   -webkit-background-clip: text; background-clip: text;
   color: transparent;
@@ -342,7 +349,7 @@ code, .mono { font-family: var(--mono); }
 
 /* -------------------------- flush 3x3 browse grid ----------------------- */
 .browse {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px;
   margin-top: 12px;
   border: 0;
   background: transparent;
@@ -416,7 +423,7 @@ code, .mono { font-family: var(--mono); }
 }
 
 .software-card {
-  position: relative;
+  position: relative; overflow: hidden;
   display: block; width: 100%; text-align: left; padding: 20px 22px 18px;
   border-radius: var(--radius-md);
   border: 1px solid var(--line);
@@ -432,6 +439,15 @@ code, .mono { font-family: var(--mono); }
   transform: translateY(-2px);
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
 }
+
+.card-thumb {
+  margin: -20px -22px 16px;
+  aspect-ratio: 16 / 7;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  background: var(--card-subtle);
+}
+.card-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
 
 .card-top { display: flex; align-items: baseline; gap: 10px; }
 .card-title { margin: 0; font-size: 1.08rem; font-weight: 700; letter-spacing: -0.02em; color: var(--white); }
@@ -458,7 +474,7 @@ code, .mono { font-family: var(--mono); }
   padding: 3px 8px; border-radius: 980px; white-space: nowrap; color: var(--muted); border: 1px solid var(--line);
 }
 .badge-free { color: var(--white); border-color: rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.06); }
-.badge-pro { color: var(--accent); border-color: rgba(41, 151, 255, 0.3); background: var(--accent-soft); }
+.badge-pro { color: var(--white); border-color: rgba(255, 255, 255, 0.28); background: var(--accent-soft); }
 .badge-format { color: var(--silver); }
 .badge-locked { color: var(--dim); }
 
@@ -1455,6 +1471,103 @@ textarea.field-input { min-height: 72px; resize: vertical; line-height: 1.6; }
   .acc-main { padding: 20px; }
 }
 
+.recent-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+
+@media (max-width: 720px) {
+  .recent-grid { grid-template-columns: 1fr; }
+}
+
+/* ------------------------- how Kyro works / downloads -------------------- */
+.works { margin-top: 46px; }
+.works-title {
+  margin: 6px 0 16px;
+  font-size: clamp(1.15rem, 3.6vw, 1.45rem);
+  font-weight: 700; letter-spacing: -0.03em;
+}
+.works-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.works-step {
+  padding: 16px 18px;
+  border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.025);
+}
+.works-num {
+  display: block; font-size: 0.62rem; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--dim);
+}
+.works-step h3 { margin: 6px 0; font-size: 0.92rem; font-weight: 700; letter-spacing: -0.02em; }
+.works-step p { margin: 0; color: var(--muted); font-size: 0.82rem; line-height: 1.65; }
+
+.about-downloads {
+  margin-top: 24px;
+  border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.02);
+}
+.about-downloads summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 14px 18px; cursor: pointer; list-style: none;
+  font-size: 0.86rem; font-weight: 600; color: var(--white);
+}
+.about-downloads summary::-webkit-details-marker { display: none; }
+.about-downloads summary::after {
+  content: '+'; color: var(--dim); font-family: var(--mono); font-size: 0.9rem;
+}
+.about-downloads[open] summary::after { content: '–'; }
+.about-downloads-body { padding: 0 18px 16px; color: var(--muted); font-size: 0.82rem; line-height: 1.7; }
+.about-downloads-body p { margin: 0 0 10px; }
+.about-downloads-body p:last-child { margin-bottom: 0; }
+.about-downloads-body code {
+  font-family: var(--mono); font-size: 0.78em;
+  padding: 1px 5px; border-radius: 4px; background: rgba(255, 255, 255, 0.07);
+}
+
+/* ------------------------- resource facts / safety ---------------------- */
+.safety-block {
+  margin: 0 0 18px; padding: 14px 16px;
+  border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.02);
+}
+.safety-list {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px 18px; margin: 10px 0 0;
+}
+.safety-row { display: flex; flex-direction: column; gap: 2px; }
+.safety-row dt {
+  font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--dim);
+}
+.safety-row dd { margin: 0; font-size: 0.84rem; color: var(--silver); }
+.dl-note {
+  margin: 0 0 10px; color: var(--muted); font-size: 0.8rem; line-height: 1.6;
+}
+
+.safety-note {
+  margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--line-dim);
+  color: var(--muted); font-size: 0.78rem; line-height: 1.6;
+}
+
+/* ---------------------------- course filters ---------------------------- */
+.course-filters {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin-top: 18px;
+}
+.course-search {
+  display: flex; align-items: center; gap: 8px;
+  flex: 1 1 220px; min-width: 0; padding: 9px 12px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04); color: var(--dim);
+}
+.course-search:focus-within { border-color: var(--line-hover); }
+.course-search input {
+  flex: 1; min-width: 0; border: 0; background: none; outline: none;
+  font: inherit; font-size: 0.85rem; color: var(--white);
+}
+.course-search input::placeholder { color: var(--dim); }
+
+@media (max-width: 720px) {
+  .works-grid { grid-template-columns: 1fr; }
+  .safety-list { grid-template-columns: 1fr; }
+}
+
 /* ------------------------------- responsive ----------------------------- */
 @media (max-width: 720px) {
   .nav-link { display: none; }
@@ -1466,7 +1579,6 @@ textarea.field-input { min-height: 72px; resize: vertical; line-height: 1.6; }
   .login-btn { padding: 7px 9px; }
   .profile-name { display: none; }
   .browse { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .browse-cell:last-child { grid-column: 1 / -1; }
   .banner { grid-template-columns: 1fr; }
   .banner-visual { min-height: 190px; }
   .m-body { padding: 18px 16px 20px; }

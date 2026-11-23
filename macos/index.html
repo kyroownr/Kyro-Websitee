@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MacOS — Kyro</title>
+  <title>macOS — Kyro</title>
   <meta name="description" content="Free After Effects software, tools and plugins for Mac editors — verified through the Kyro Discord." />
   <meta name="theme-color" content="#08090d" />
 
@@ -12,7 +12,7 @@
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Kyro" />
   <meta property="og:url" content="https://kyro.new.tg/macos" />
-  <meta property="og:title" content="MacOS — Kyro" />
+  <meta property="og:title" content="macOS — Kyro" />
   <meta property="og:description" content="Free After Effects software, tools and plugins for Mac editors — verified through the Kyro Discord." />
   <meta property="og:image" content="https://kyro.new.tg/assets/kyro-preview.png" />
   <meta property="og:image:type" content="image/png" />
@@ -20,7 +20,7 @@
   <meta property="og:image:height" content="630" />
   <meta property="og:image:alt" content="Kyro — free tools and resources for editors" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="MacOS — Kyro" />
+  <meta name="twitter:title" content="macOS — Kyro" />
   <meta name="twitter:description" content="Free After Effects software, tools and plugins for Mac editors — verified through the Kyro Discord." />
   <meta name="twitter:image" content="https://kyro.new.tg/assets/kyro-preview.png" />
 
@@ -34,7 +34,7 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="all" />
   <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
 
-  <link rel="stylesheet" href="/css/styles.css?v=3.2" />
+  <link rel="stylesheet" href="/css/styles.css?v=3.4" />
 </head>
 <body data-page="category" data-category="macos">
 
@@ -48,6 +48,7 @@
       <nav class="nav-right" aria-label="Site">
         <button type="button" class="nav-link" id="paletteOpen">Search</button>
         <a class="nav-link" href="/incoming">Incoming</a>
+        <a class="nav-link" href="/courses">Courses</a>
         <a class="nav-link" href="/guide">Guide</a>
         <a class="nav-link" href="/easykyro">EasyKyro</a>
         <a class="nav-link" href="/about">About</a>
@@ -70,7 +71,7 @@
     <!-- ============ Category head (filled by app.js) ============ -->
     <header class="page-head">
       <p class="section-label">Browse</p>
-      <h1 class="page-title" id="catTitle">MacOS</h1>
+      <h1 class="page-title" id="catTitle">macOS</h1>
       <p class="page-lede" id="catDesc">Software, tools, and plugins for Mac editors.</p>
       <p class="page-meta" id="catCount"></p>
       <nav class="cat-nav" id="catNav" aria-label="Categories"></nav>
@@ -89,7 +90,7 @@
       <div id="softwareContent">
         <div class="grid" id="softwareGrid"></div>
         <div class="empty" id="softwareEmpty" hidden>
-          <p>No editors listed for MacOS yet.</p>
+          <p>No editors listed for macOS yet.</p>
           <a class="btn btn-ghost" href="/#discordCard">Ask in the Kyro Discord</a>
         </div>
       </div>
@@ -527,6 +528,7 @@
                   <select id="vUpKind" class="acc-select" style="width:100%;">
                     <option value="tool" selected>Tool / Plugin / Pack</option>
                     <option value="software">Software (Editor)</option>
+                    <option value="course">Course</option>
                   </select>
                 </div>
                 <div>
@@ -706,9 +708,9 @@
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <!-- Modular scripts: data → preview engine → app wiring -->
-  <script defer src="/js/data.js?v=2.4"></script>
+  <script defer src="/js/data.js?v=2.7"></script>
   <script defer src="/js/preview.js?v=2.3"></script>
-  <script defer src="/js/app.js?v=2.4"></script>
+  <script defer src="/js/app.js?v=2.7"></script>
   <script defer src="/js/applications.js?v=2.3"></script>
 </body>
 </html>

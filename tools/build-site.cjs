@@ -53,6 +53,7 @@ const PUBLIC_DIRS = [
   'easykyro',
   'guide',
   'incoming',
+  'courses',
   'macos',
   'windows',
   'css',

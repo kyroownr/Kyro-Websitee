@@ -105,7 +105,7 @@
         itemSlug = itemSlug.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || item.id;
 
         const osList = item.os === 'both' ? ['windows', 'macos'] : [item.os || 'windows'];
-        const resourceKind = item.kind === 'software' ? 'software' : 'tool';
+        const resourceKind = item.kind === 'software' ? 'software' : item.kind === 'course' ? 'course' : 'tool';
 
         return {
           id: itemSlug,
@@ -268,6 +268,19 @@
 
   const filters = { view: 'all' };
 
+  /* /courses keeps its own lightweight filters: free-text search plus the
+     platforms the catalogue actually declares. Level, duration and language
+     only show on courses that carry those fields — nothing is inferred. */
+  let courseQuery = '';
+  let coursePlatform = 'all';
+  function courseMatches(r) {
+    if (coursePlatform !== 'all' && (r.os || []).indexOf(coursePlatform) === -1) return false;
+    const q = courseQuery.trim().toLowerCase();
+    if (!q) return true;
+    return [r.title, r.desc, r.category, r.level, r.skill_level, r.duration, r.language,
+      (r.tags || []).join(' '), r.creator || ''].join(' ').toLowerCase().indexOf(q) !== -1;
+  }
+
   /* Which OS cell gets the DETECTED pill in the browse grid. */
   function detectedOs() {
     const s = (navigator.userAgent || '') + ' ' + (navigator.platform || '');
@@ -314,7 +327,11 @@
   const toolsGrid = $('#toolsGrid');
   const toolsNote = $('#toolsNote');
   const toolsEmpty = $('#toolsEmpty');
+  const coursesGrid = $('#coursesGrid');
+  const coursesNote = $('#coursesNote');
+  const coursesEmpty = $('#coursesEmpty');
   const browseGrid = $('#browseGrid');
+  const recentGrid = $('#recentGrid');
   const discordCard = $('#discordCard');
   const modalOverlay = $('#modalOverlay');
   const modalBox = $('#modalBox');
@@ -360,6 +377,7 @@
     arrow: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m0 0-5.5-5.5M19 12l-5.5 5.5"/></svg>',
     windows: '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M0 2.3l6.5-.9v6.3H0V2.3zm7.3-1L16 0v7.7H7.3V1.3zM0 8.6h6.5v6.3L0 14V8.6zm7.3 0H16V16l-8.7-1.2V8.6z"/></svg>',
     apple: '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.1 8.5c0-1.7 1.4-2.6 1.5-2.6-.8-1.2-2.1-1.3-2.5-1.4-1.1-.1-2.1.6-2.7.6-.6 0-1.4-.6-2.3-.6-1.2 0-2.3.7-2.9 1.7-1.2 2.1-.3 5.3.9 7 .6.9 1.3 1.8 2.2 1.8.9 0 1.2-.6 2.3-.6s1.4.6 2.3.5c1 0 1.6-.8 2.1-1.7.7-1 1-2 1-2-.1 0-1.9-.7-1.9-2.7zM11.3 3.5c.5-.6.8-1.4.7-2.2-.7 0-1.5.5-2 1.1-.4.5-.8 1.3-.7 2.1.8.1 1.5-.4 2-1z"/></svg>',
+    course: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m10 9 5 3-5 3z" fill="currentColor"/></svg>',
     copy: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.2"/><path d="M15 5.5H6.2A2.2 2.2 0 0 0 4 7.7V15"/></svg>',
     clock: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3.5 2"/></svg>'
   };
@@ -368,17 +386,17 @@
   const ACCESS = {
     out: {
       cls: 'is-out', icon: ICON.lock,
-      text: '<b>Downloads are locked.</b> Sign in with Discord so we can check your Kyro server membership.',
-      prompt: 'Please log in with Discord to access this resource.'
+      text: '<b>Browsing is open to everyone.</b> Downloads unlock with a free Kyro Discord membership — sign in when you are ready to download.',
+      prompt: 'Sign in with Discord to unlock downloads. Browsing and previews stay open.'
     },
     logged: {
       cls: 'is-partial', icon: ICON.shield,
-      text: '<b>Access Denied:</b> You must be a member of the Kyro Discord server to download assets!',
-      prompt: 'You need to join the Kyro Discord server first.'
+      text: '<b>One step left.</b> Join the Kyro Discord, then refresh verification to unlock downloads. Browsing stays open either way.',
+      prompt: 'Join the Kyro Discord, then refresh verification. Browsing stays open.'
     },
-    verified: {
+          verified: {
       cls: 'is-ok', icon: ICON.unlock,
-      text: '<b>Membership verified.</b> The .zxp, .jsxbin and .ffx builds are unlocked for your account.',
+      text: '<b>Membership verified.</b> Download buttons are unlocked for your account.',
       prompt: ''
     }
   };
@@ -658,12 +676,15 @@
      runs inside it under Tools. A listing with no kind is a tool, because that
      is what the vault actually hands out today. */
   function kindOf(r) {
-    return r.kind === 'software' ? 'software' : 'tool';
+    if (r.kind === 'software') return 'software';
+    if (r.kind === 'course' || String(r.category || '').trim().toLowerCase() === 'course') return 'course';
+    return 'tool';
   }
 
   function listFor(b, kind) {
     let list = resources.slice();
     if (b.osValue) list = list.filter(r => (r.os || []).indexOf(b.osValue) !== -1);
+    if (b.kindValue) list = list.filter(r => kindOf(r) === b.kindValue);
     if (b.cats) list = list.filter(r => b.cats.indexOf(r.category) !== -1);
     if (b.free) list = list.filter(r => r.price === 0);
     if (kind) list = list.filter(r => kindOf(r) === kind);
@@ -714,13 +735,32 @@
     return auth.state === VERIFIED && Boolean(auth.user && auth.user.is_owner === true);
   }
 
+  function platformLabel(r) {
+    return (r.os || []).map(o => o === 'windows' ? 'Windows' : o === 'macos' ? 'macOS' : o).join(' & ');
+  }
+
+  function fileSize(r) {
+    const f = (r.files || []).find(x => x && x.size);
+    return (f && f.size) || r.size || '';
+  }
+
   function cardHTML(r, i) {
     const isSaved = saved.has(r.id);
     const locked = isLocked(r);
     const isOwner = userIsOwner();
+    const course = kindOf(r) === 'course';
     const exts = (r.files || [{ ext: r.format }]).map(f => String(f.ext || '').toUpperCase().replace('.', '')).filter(Boolean).join(' · ');
     const version = r.version ? '<span class="version-chip mono">' + esc(r.version) + '</span>' : '';
     const ae = r.aeMin ? '<span class="chip">AE ' + esc(r.aeMin) + '+</span>' : '';
+    const platform = platformLabel(r) ? '<span class="chip">' + esc(platformLabel(r)) + '</span>' : '';
+    const size = fileSize(r) ? '<span class="chip">' + esc(fileSize(r)) + '</span>' : '';
+    const source = (r.creator || r.credits) ? '<span class="chip">' + esc(r.creator || r.credits) + '</span>' : '';
+    const courseFacts = course
+      ? [r.level || r.skill_level, r.duration, r.language].filter(Boolean)
+          .map(v => '<span class="chip">' + esc(v) + '</span>').join('')
+      : '';
+    const shot = (r.gallery || []).filter(Boolean)[0];
+    const thumb = shot ? '<div class="card-thumb"><img src="' + esc(shot) + '" alt="" loading="lazy" decoding="async" /></div>' : '';
     const ownerTools = isOwner ? `
       <div class="card-owner-tools" style="display:inline-flex;gap:4px;margin-left:auto;">
         <button type="button" class="btn btn-ghost btn-sm" data-card-edit="${esc(r.id)}" title="Edit Resource" style="padding:2px 8px;font-size:0.75rem;height:24px;">Edit</button>
@@ -729,6 +769,7 @@
     ` : '';
     return (
       '<article class="software-card" data-id="' + esc(r.id) + '" tabindex="0" role="button" aria-label="Inspect ' + esc(r.title) + '" style="animation-delay:' + (i * 50) + 'ms">' +
+        thumb +
         '<div class="card-top">' +
           '<h3 class="card-title card-title--row">' + esc(r.title) + '</h3>' +
           version +
@@ -737,15 +778,19 @@
         '</div>' +
         '<p class="card-desc">' + esc(r.desc) + '</p>' +
         '<div class="card-meta">' +
-          '<span class="chip"><b>' + full(downloadCount(r)) + '</b> ' + (downloadCount(r) === 1 ? 'download' : 'downloads') + '</span>' +
+          (course ? '' : '<span class="chip"><b>' + full(downloadCount(r)) + '</b> ' + (downloadCount(r) === 1 ? 'download' : 'downloads') + '</span>') +
           ae +
+          platform +
+          size +
+          source +
+          courseFacts +
           (exts ? '<span class="chip">' + esc(exts) + '</span>' : '') +
           (locked ? '<span class="chip chip-soon mono">' + ICON.clock + 'COMING SOON</span>' : '') +
           priceBadge(r) +
         '</div>' +
         '<div class="card-foot">' +
           '<button class="save-btn' + (isSaved ? ' is-saved' : '') + '" data-save="' + esc(r.id) + '" aria-pressed="' + isSaved + '" aria-label="Save ' + esc(r.title) + '">' + ICON.bookmark + '</button>' +
-          '<button class="btn btn-primary" data-inspect>' + (locked ? ICON.clock + 'Coming Soon' : ICON.download + 'Inspect &amp; Download') + '</button>' +
+          '<button class="btn btn-primary" data-inspect>' + (locked ? ICON.clock + 'Coming Soon' : course ? ICON.course + 'Open course' : ICON.download + 'Inspect &amp; Download') + '</button>' +
         '</div>' +
       '</article>'
     );
@@ -753,10 +798,22 @@
 
   /* One shelf: rendered only where its own grid exists, which is the two OS
      pages. The vault page has no lists at all, so both calls just return. */
+  /* Some cloud preview URLs expire. Drop a broken thumbnail rather than
+     leaving a broken-image icon on the card — no invented artwork. */
+  function wireCardThumbs(grid) {
+    grid.querySelectorAll('.card-thumb img').forEach(img => {
+      const drop = () => { const box = img.closest('.card-thumb'); if (box) box.remove(); };
+      img.addEventListener('error', drop);
+      if (img.complete && img.naturalWidth === 0) drop();
+    });
+  }
+
   function renderSection(grid, note, empty, b, kind) {
     if (!grid) return;
-    const list = listFor(b, kind);
+    let list = listFor(b, kind);
+    if (kind === 'course') list = list.filter(courseMatches);
     grid.innerHTML = list.map(cardHTML).join('');
+    wireCardThumbs(grid);
     if (note) {
       note.textContent = '· ' + (list.length ? list.length + (list.length === 1 ? ' item' : ' items') : 'coming soon');
     }
@@ -767,6 +824,12 @@
     const b = currentView();
     renderSection(softwareGrid, softwareNote, softwareEmpty, b, 'software');
     renderSection(toolsGrid, toolsNote, toolsEmpty, b, 'tool');
+    renderSection(coursesGrid, coursesNote, coursesEmpty, b, 'course');
+    /* Home page: three real listings, newest first, with their own previews. */
+    if (recentGrid) {
+      recentGrid.innerHTML = resources.slice().sort(byNewest).slice(0, 3).map(cardHTML).join('');
+      wireCardThumbs(recentGrid);
+    }
   }
 
   /* Each OS page shows one browse category as its own page; the head reuses
@@ -794,19 +857,43 @@
     }).join('');
   }
 
-  /* Flush browse grid. Three cells, three pages, clean paths like keyfla.me:
-     /windows and /macos list the software, /guide is the written start-here. */
+  /* Flush browse grid. Four cells, four pages, clean paths like keyfla.me:
+     /windows and /macos list the software, /courses the video courses and
+     /guide is the written start-here. */
   const BROWSE = [
     { id: 'windows', osValue: 'windows', icon: 'windows', page: '/windows', title: 'Windows',
       desc: 'Software, tools, and plugins for Windows editors.' },
-    { id: 'macos', osValue: 'macos', icon: 'apple', page: '/macos', title: 'MacOS',
+    { id: 'macos', osValue: 'macos', icon: 'apple', page: '/macos', title: 'macOS',
       desc: 'Software, tools, and plugins for Mac editors.' },
+    { id: 'courses', page: '/courses', icon: 'course', title: 'Courses', kindValue: 'course',
+      desc: 'Guided video courses that take you from first cut to pro editor.' },
     { id: 'guide', page: '/guide', noCount: true, title: 'Beginner\'s Guide',
       desc: 'Start here for After Effects setup, plugins, composition settings, and shortcuts.' }
   ];
 
   function categoryHref(b) {
     return b.page;
+  }
+
+  function wireCourseFilters() {
+    const input = $('#courseSearch');
+    const chips = $('#courseFilters');
+    if (!input && !chips) return;
+    if (input) input.addEventListener('input', () => {
+      courseQuery = input.value;
+      renderSoftware();
+    });
+    if (chips) chips.addEventListener('click', e => {
+      const chip = e.target.closest('[data-course-os]');
+      if (!chip) return;
+      coursePlatform = chip.dataset.courseOs;
+      chips.querySelectorAll('[data-course-os]').forEach(c => {
+        const on = c === chip;
+        c.classList.toggle('is-current', on);
+        c.setAttribute('aria-pressed', String(on));
+      });
+      renderSoftware();
+    });
   }
 
   function renderBrowse() {
@@ -1050,7 +1137,7 @@
               });
               const data = await res.json().catch(() => ({}));
               if (res.ok && data.deleted) {
-                toast({ title: 'Incoming item removed', sub: 'Removed from the website and the #incomming announcement.', icon: ICON.check });
+                toast({ title: 'Incoming item removed', sub: 'Removed from the website and the Discord announcement.', icon: ICON.check });
                 loadIncomingReleases();
               } else if (res.ok) {
                 toast({ title: 'Nothing to delete', sub: 'That incoming item was already gone.', icon: ICON.check });
@@ -1809,7 +1896,7 @@
     reqNewRequest.textContent = reqComposeOpen ? '− Close Form' : '+ New Request';
     requestGate.hidden = verified || !reqComposeOpen;
     if (!requestGate.hidden) requestGate.innerHTML = reqGateHTML();
-    requestCount.textContent = reqError ? 'board unavailable' : !reqLoaded ? 'loading…' : requests.length + (requests.length === 1 ? ' request' : ' requests') + (verified && !reqAdmin ? ' · yours' : '');
+          requestCount.textContent = reqError ? 'Requests unavailable right now' : !reqLoaded ? 'Loading requests…' : requests.length + (requests.length === 1 ? ' request' : ' requests') + (verified && !reqAdmin ? ' · yours' : '');
 
     let rows = requests.filter(row => (reqFilter === 'all' || row.category === reqFilter) && (reqSort !== 'added' || row.status === 'shipped'));
     rows.sort(reqSort === 'top' ? (a, b) => Number(Boolean(b.priority)) - Number(Boolean(a.priority)) || b.votes - a.votes || String(b.created).localeCompare(String(a.created)) : (a, b) => String(b.created).localeCompare(String(a.created)));
@@ -2122,7 +2209,7 @@
   function renderFeedback() {
     if (!feedbackDrawer) return;
     feedbackCount.textContent = feedbackLoading
-      ? 'loading…'
+      ? 'Loading feedback…'
       : (feedbackItems.length + (feedbackItems.length === 1 ? ' review' : ' reviews') + ' · community board');
     if (feedbackNewBtn) {
       feedbackNewBtn.setAttribute('aria-expanded', String(feedbackComposeOpen));
@@ -3092,7 +3179,7 @@
     const paintMode = () => {
       const incoming = isIncomingChosen();
       if (incomingOptions) incomingOptions.style.display = incoming ? 'grid' : 'none';
-      if (btn) btn.textContent = incoming ? 'Send to Incoming (#incomming)' : 'Release directly to the Vault';
+      if (btn) btn.textContent = incoming ? 'Send to Incoming' : 'Release directly to the Vault';
     };
     modeRadios.forEach(radio => radio.addEventListener('change', paintMode));
     paintMode();
@@ -3129,16 +3216,17 @@
       if (stagedImageBase64 && !$('#vUpImageUrl')?.value.trim()) {
         toast({ title: 'Image is not stored yet', sub: 'Wait for the upload to finish, or retry the picture — otherwise the card shows the Kyro banner.', icon: ICON.x });
         btn.disabled = false;
-        btn.textContent = isIncoming ? 'Send to Incoming (#incomming)' : 'Release directly to the Vault';
+        btn.textContent = isIncoming ? 'Send to Incoming' : 'Release directly to the Vault';
         return;
       }
 
+      const uploadKind = $('#vUpKind')?.value || 'tool';
       const payload = {
         title: $('#vUpTitle')?.value.trim(),
         slug: cleanSlug,
-        kind: $('#vUpKind')?.value || 'tool',
+        kind: uploadKind,
         os: $('#vUpOs')?.value || 'windows',
-        category: $('#vUpCategory')?.value.trim() || 'Adobe After Effects',
+        category: $('#vUpCategory')?.value.trim() || (uploadKind === 'course' ? 'Course' : 'Adobe After Effects'),
         size: $('#vUpSize')?.value.trim() || 'Vault Build',
         download_url: $('#vUpDownloadUrl')?.value.trim(),
         password: $('#vUpPassword')?.value.trim() || '',
@@ -3161,7 +3249,7 @@
           if (isIncoming) {
             toast({
               title: 'Incoming Release Posted!',
-              sub: 'Live in "Ready to Release" and posted to #incomming for community voting!',
+              sub: 'Live in "Ready to Release" and posted to the community channel for voting!',
               icon: ICON.check
             });
             loadIncomingReleases();
@@ -3240,53 +3328,60 @@
     return (r.files && r.files.length ? r.files[0].ext : r.format) || '';
   }
 
+  /* Resource facts, only the ones the catalogue actually holds. Missing
+     values are omitted rather than guessed at, and the review block below
+     says "Not provided" wherever the vault has no review data. */
   function specHTML(r) {
     const files = (r.files && r.files.length ? r.files : [{ ext: r.format }])
       .map(f => String(f.ext || '').toLowerCase())
       .filter(Boolean)
       .filter((ext, i, all) => all.indexOf(ext) === i);
-
     const group = (label, badges) => badges.length
       ? '<div class="spec"><span class="spec-label mono">' + label + '</span>' +
         '<span class="spec-badges">' + badges.join('') + '</span></div>'
       : '';
 
-    // Calculate or format the 6ure specs
-    const creator = r.creator || (r.credits ? r.credits : 'Kyro Vault');
-    const vaultId = r.vault_id || ('#' + Math.abs((r.id || '').split('').reduce((a, b) => { a = ((a << 5) - a) + b.charCodeAt(0); return a & a; }, 0) % 900000 + 100000));
-    const size = (r.files && r.files[0] && r.files[0].size) ? r.files[0].size : (r.size || 'Vault Build');
-    const category = r.category === 'software' ? 'Software' : (r.category ? r.category.charAt(0).toUpperCase() + r.category.slice(1) : 'Adobe After Effects');
-    const osLabels = (r.os || []).map(o => o === 'windows' ? 'Windows' : o === 'macos' ? 'macOS' : o).join(' & ') || 'Windows';
-    const statusLabel = r.status_label || (r.version ? 'Updated' : 'Verified');
+    const course = kindOf(r) === 'course';
+    const facts = [];
+    const fact = (label, value) => {
+      if (value) facts.push('<div class="safety-row"><dt>' + label + '</dt><dd>' + esc(value) + '</dd></div>');
+    };
+    fact('Platform', platformLabel(r));
+    fact('Version', r.version);
+    fact('File size', fileSize(r));
+    fact('Contributor / source', r.creator || r.credits);
+    fact('Category', r.category && r.category !== 'software' ? r.category.charAt(0).toUpperCase() + r.category.slice(1) : '');
+    fact('Added', r.added);
+    if (course) {
+      fact('Skill level', r.level || r.skill_level);
+      fact('Estimated duration', r.duration);
+      fact('Language', r.language);
+      fact('Licence / source', r.license || r.source_type);
+    }
 
-    const infoGrid =
-      '<div class="vault-6ure-specs" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px 16px;margin:16px 0;font-size:0.85rem;">' +
-        '<div>' +
-          '<div style="font-weight:700;color:#fff;margin-bottom:6px;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--dim);">Information</div>' +
-          '<div style="display:flex;flex-direction:column;gap:4px;color:#cbd5e1;">' +
-            '<div>• <strong>Creator:</strong> <span class="mono" style="background:rgba(255,255,255,0.08);padding:1px 6px;border-radius:4px;font-size:0.8rem;">' + esc(creator) + '</span></div>' +
-            '<div>• <strong>ID:</strong> <span class="mono" style="background:rgba(255,255,255,0.08);padding:1px 6px;border-radius:4px;font-size:0.8rem;">' + esc(vaultId) + '</span></div>' +
-            '<div>• <strong>Size:</strong> <span class="mono" style="background:rgba(255,255,255,0.08);padding:1px 6px;border-radius:4px;font-size:0.8rem;">' + esc(size) + '</span></div>' +
-            '<div>• <strong>Category:</strong> <span class="mono" style="background:rgba(255,255,255,0.08);padding:1px 6px;border-radius:4px;font-size:0.8rem;">' + esc(category) + '</span></div>' +
-          '</div>' +
-        '</div>' +
-        '<div>' +
-          '<div style="font-weight:700;color:#fff;margin-bottom:6px;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--dim);">Platform &amp; Status</div>' +
-          '<div style="display:flex;flex-direction:column;gap:4px;color:#cbd5e1;">' +
-            '<div>• <strong>Platform:</strong> <span class="mono" style="background:rgba(255,255,255,0.08);padding:1px 6px;border-radius:4px;font-size:0.8rem;">' + esc(osLabels) + '</span></div>' +
-            '<div>• <strong>Tier:</strong> <span class="mono" style="background:rgba(16,185,129,0.15);color:#34d399;padding:1px 6px;border-radius:4px;font-size:0.8rem;font-weight:600;">Free</span></div>' +
-            '<div>• <strong>Status:</strong> <span class="mono" style="background:rgba(59,130,246,0.15);color:#60a5fa;padding:1px 6px;border-radius:4px;font-size:0.8rem;font-weight:600;">' + esc(statusLabel) + '</span></div>' +
-          '</div>' +
-        '</div>' +
-      '</div>';
+    /* Never invent a review, a reviewer or a scan. Only real fields render;
+       everything else is honestly labelled as not provided. */
+    const reviewedBy = r.reviewed_by || r.reviewer || '';
+    const reviewedAt = r.reviewed_at || r.reviewedAt || '';
+    const checks = Array.isArray(r.checks) ? r.checks.filter(Boolean) : (r.checks ? [r.checks] : []);
+    const safetyRows =
+      '<div class="safety-row"><dt>Reviewed by</dt><dd>' + esc(reviewedBy || 'Not provided') + '</dd></div>' +
+      '<div class="safety-row"><dt>Review date</dt><dd>' + esc(reviewedAt || 'Not provided') + '</dd></div>' +
+      '<div class="safety-row"><dt>Checks performed</dt><dd>' + esc(checks.length ? checks.join(', ') : 'Not provided') + '</dd></div>' +
+      '<div class="safety-row"><dt>Download access</dt><dd>Kyro Discord membership required</dd></div>';
 
-    return infoGrid + '<div class="spec-row">' +
+    return '<div class="spec-row">' +
       group('AE Compatibility', r.aeMin
         ? ['<span class="badge badge-spec">AE ' + esc(r.aeMin) + '+</span>'] : []) +
-      group('OS / Architecture', OS_BADGES.filter(b => (r.os || []).includes(b.value)).map(b =>
+      group('Platform', OS_BADGES.filter(b => (r.os || []).includes(b.value)).map(b =>
         '<span class="badge badge-spec' + (b.value === os ? ' is-current' : '') + '">' + esc(b.label + (r.architecture ? ' · ' + r.architecture : '')) + '</span>')) +
-      group('File Format', files.map(ext => '<span class="badge badge-format">' + esc(ext) + '</span>')) +
-      '</div>';
+      group('File format', files.map(ext => '<span class="badge badge-format">' + esc(ext) + '</span>')) +
+      '</div>' +
+      '<section class="safety-block" aria-label="Resource details and safety">' +
+        '<p class="section-label section-label--tight">Details &amp; safety</p>' +
+        '<dl class="safety-list">' + facts.join('') + safetyRows + '</dl>' +
+        '<p class="safety-note">We list a review only when the vault actually has one. Scan every download before opening it — unsigned After Effects extensions and scripts often trigger antivirus warnings, and no file here is guaranteed clean.</p>' +
+      '</section>';
   }
 
   /* The AppleFX guide is full prose — headings, sub-headings, paragraphs, fenced
@@ -3496,13 +3591,13 @@
     const a = access();
     if (auth.state === OUT) {
       return '<div class="gate-banner gate-out"><span class="g-icon">' + ICON.lock + '</span>' +
-        '<span class="g-text"><b>' + esc(a.prompt) + '</b><br/>Membership is checked after you sign in.</span>' +
-        '<button type="button" class="btn btn-discord btn-sm" id="gateLogin">' + ICON.discord + 'Login with Discord</button></div>';
+        '<span class="g-text"><b>Downloads need a Kyro Discord membership.</b><br/>Browsing and previews stay open — sign in whenever you want to download.</span>' +
+        '<button type="button" class="btn btn-discord btn-sm" id="gateLogin">' + ICON.discord + 'Sign in with Discord</button></div>';
     }
     if (auth.state === LOGGED) {
       return '<div class="gate-banner gate-denied"><span class="g-icon">' + ICON.shield + '</span>' +
-        '<span class="g-text"><b>Access Denied:</b> You must be a member of the Kyro Discord server to download assets!</span>' +
-        '<a class="btn btn-danger btn-sm" href="' + INVITE_URL + '" target="_blank" rel="noopener noreferrer">' + ICON.discord + 'Join Server</a>' +
+        '<span class="g-text"><b>You are signed in, but not a Kyro member yet.</b><br/>Join the server, then refresh verification to unlock downloads.</span>' +
+        '<a class="btn btn-danger btn-sm" href="' + INVITE_URL + '" target="_blank" rel="noopener noreferrer">' + ICON.discord + 'Join the Kyro Discord</a>' +
         '<button type="button" class="btn btn-ghost btn-sm" id="gateRecheck">Refresh Verification</button></div>';
     }
     return '<div class="gate-banner gate-ok"><span class="g-icon">' + ICON.unlock + '</span>' +
@@ -3554,6 +3649,9 @@
            past the tabs, so nobody hunts for the button below the fold. */
         '<section class="dl-block">' +
           '<p class="section-label section-label--tight">Downloads</p>' +
+          '<p class="dl-note">' + (auth.state === VERIFIED
+            ? 'Downloads are unlocked for your verified account.'
+            : 'Browsing is open to everyone. Sign in with Discord and join the Kyro server to unlock the download buttons.') + '</p>' +
           '<div class="dl-zone"></div>' +
         '</section>' +
         specHTML(r) +
@@ -3666,7 +3764,7 @@
   /* Both grids and the open modal repaint from the same numbers, so a count
      that moved elsewhere on the site shows here without a full re-render. */
   function paintCounts() {
-    [softwareGrid, toolsGrid].forEach(grid => {
+    [softwareGrid, toolsGrid, coursesGrid, recentGrid].forEach(grid => {
       if (!grid) return;
       grid.querySelectorAll('.software-card[data-id]').forEach(card => {
         const b = card.querySelector('.card-meta .chip b');
@@ -3719,10 +3817,13 @@
   function requestFile(r, ext, btn) {
     if (auth.state === OUT) {
       toast({
-        title: 'Login required',
+        title: 'Sign in to download',
         sub: access().prompt,
-        icon: ICON.lock, warn: true, ttl: 6000,
-        actions: [{ label: 'Login with Discord', onClick: startLogin }]
+        icon: ICON.lock, warn: true, ttl: 7000,
+        actions: [
+          { label: 'Sign in with Discord', onClick: startLogin },
+          { label: 'Join the Kyro Discord', href: INVITE_URL }
+        ]
       });
       btn.animate(
         [{ transform: 'translateX(0)' }, { transform: 'translateX(-4px)' }, { transform: 'translateX(4px)' }, { transform: 'translateX(0)' }],
@@ -3733,7 +3834,7 @@
     if (auth.state === LOGGED) {
       toast({
         title: 'Access denied',
-        sub: 'You must be a member of the Kyro Discord server to download assets!',
+        sub: 'Downloads need a Kyro Discord membership. Join the server, then refresh verification.',
         icon: ICON.shield, warn: true, ttl: 7000,
         actions: [{ label: 'Join Server', href: INVITE_URL }, { label: 'Refresh Verification', onClick: recheckMembership }]
       });
@@ -4153,7 +4254,7 @@
   /* ------------------------------ global events ------------------------- */
   /* Both shelves behave identically; the vault page has neither, so the list
      it binds is simply empty there. */
-  [softwareGrid, toolsGrid].forEach(grid => {
+  [softwareGrid, toolsGrid, coursesGrid, recentGrid].forEach(grid => {
     if (!grid) return;
     grid.addEventListener('click', (e) => {
       const editBtn = e.target.closest('[data-card-edit]');
@@ -4339,6 +4440,7 @@
     }
   };
   renderAccess();
+  wireCourseFilters();
   renderSoftware();
   renderCategoryHead();
   renderBrowse();

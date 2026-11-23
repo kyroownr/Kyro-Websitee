@@ -1559,7 +1559,7 @@ async function handleVaultSubmissions(request, url, env, cors) {
     if (!title || title.length < 3) throw fail(400, 'bad_title', 'Provide a valid resource title.');
     if (!slug) throw fail(400, 'bad_slug', 'Provide a URL slug.');
 
-    const kind = input.kind === 'software' ? 'software' : 'tool';
+    const kind = input.kind === 'software' ? 'software' : input.kind === 'course' ? 'course' : 'tool';
     const os = ['windows', 'macos', 'both'].includes(input.os) ? input.os : 'windows';
     const category = cleanText(input.category || 'Adobe After Effects', 60);
     const downloadUrl = safeHttpUrl(input.download_url, 500);
@@ -1846,7 +1846,7 @@ async function handleIncomingReleases(request, url, env, cors) {
     if (!title) throw fail(400, 'bad_input', 'Title is required.');
     let rawSlug = input.slug || title;
     const slug = rawSlug.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || ('incoming-' + Date.now().toString(36));
-    const kind = input.kind === 'software' ? 'software' : 'tool';
+    const kind = input.kind === 'software' ? 'software' : input.kind === 'course' ? 'course' : 'tool';
     const os = ['windows', 'macos', 'both'].includes(input.os) ? input.os : 'both';
     const category = cleanText(input.category || 'Adobe After Effects', 60);
     const downloadUrl = safeHttpUrl(input.download_url, 500);
@@ -1963,7 +1963,7 @@ async function handleIncomingReleases(request, url, env, cors) {
         if (nextTitle) found.title = nextTitle;
       }
       if (input.details !== undefined) found.details = cleanText(input.details, 1500);
-      if (input.kind !== undefined) found.kind = input.kind === 'software' ? 'software' : 'tool';
+      if (input.kind !== undefined) found.kind = input.kind === 'software' ? 'software' : input.kind === 'course' ? 'course' : 'tool';
       if (input.os !== undefined) found.os = ['windows', 'macos', 'both'].includes(input.os) ? input.os : found.os || 'both';
       if (input.category !== undefined) found.category = cleanText(input.category, 60) || found.category;
       if (input.size !== undefined) found.size = cleanText(input.size, 40) || found.size;

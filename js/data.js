@@ -602,5 +602,5 @@ window.KYRO_INSTALL = {
 /* Human-readable labels shared across UI surfaces */
 window.KYRO_CATEGORY_LABEL = {
   extension: 'Extension', script: 'Script', preset: 'Preset', plugin: 'Plugin',
-  project: 'Project File', soundfx: 'Sound FX', software: 'Software', other: 'Other'
+  project: 'Project File', soundfx: 'Sound FX', software: 'Software', course: 'Course', other: 'Other'
 };

@@ -34,7 +34,7 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="all" />
   <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
 
-  <link rel="stylesheet" href="/css/styles.css?v=3.2" />
+  <link rel="stylesheet" href="/css/styles.css?v=3.4" />
 </head>
 <body data-page="incoming">
 
@@ -47,6 +47,7 @@
 
       <nav class="nav-right" aria-label="Site">
         <button type="button" class="nav-link" id="paletteOpen">Search</button>
+        <a class="nav-link" href="/courses">Courses</a>
         <a class="nav-link is-current" href="/incoming" aria-current="page">Incoming</a>
         <a class="nav-link" href="/guide">Guide</a>
         <a class="nav-link" href="/easykyro">EasyKyro</a>
@@ -511,6 +512,7 @@
                   <select id="vUpKind" class="acc-select" style="width:100%;">
                     <option value="tool" selected>Tool / Plugin / Pack</option>
                     <option value="software">Software (Editor)</option>
+                    <option value="course">Course</option>
                   </select>
                 </div>
                 <div>
@@ -690,9 +692,9 @@
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <!-- Modular scripts: data → preview engine → app wiring -->
-  <script defer src="/js/data.js?v=2.4"></script>
+  <script defer src="/js/data.js?v=2.7"></script>
   <script defer src="/js/preview.js?v=2.3"></script>
-  <script defer src="/js/app.js?v=2.4"></script>
+  <script defer src="/js/app.js?v=2.7"></script>
   <script defer src="/js/applications.js?v=2.3"></script>
 </body>
 </html>
