@@ -1495,6 +1495,48 @@ textarea.field-input { min-height: 72px; resize: vertical; line-height: 1.6; }
   .recent-grid { grid-template-columns: 1fr; }
 }
 
+/* ------------------------- AppleFX flagship row ------------------------- */
+/* One thin row under Recently added. Kept small on purpose: it should read as a
+   footnote to the newest listings, not as a second hero. */
+.applefx-row {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  margin-top: 12px; padding: 10px 14px;
+  border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.015));
+  text-align: left; cursor: pointer;
+  transition: border-color 0.24s var(--ease), background 0.24s var(--ease), transform 0.24s var(--ease);
+}
+.applefx-row:hover {
+  border-color: var(--line-hover); transform: translateY(-1px);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.025));
+}
+.applefx-row:focus-visible { outline: 2px solid var(--line-hover); outline-offset: 2px; }
+.applefx-mark {
+  flex: none; width: 30px; height: 30px; display: grid; place-items: center;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--accent-soft); color: var(--white);
+}
+.applefx-mark svg { width: 13px; height: 13px; }
+.applefx-copy { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.applefx-title {
+  font-size: 0.84rem; font-weight: 600; color: var(--white);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.applefx-sub {
+  font-size: 0.73rem; color: var(--dim); line-height: 1.35;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.applefx-cta {
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 0.75rem; color: var(--silver);
+}
+.applefx-row:hover .applefx-cta { color: var(--white); }
+
+@media (max-width: 600px) {
+  .applefx-row { padding: 9px 12px; gap: 10px; }
+  .applefx-sub { display: none; }
+}
+
 /* ------------------------- how Kyro works / downloads -------------------- */
 .works { margin-top: 46px; }
 .works-title {

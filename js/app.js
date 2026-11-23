@@ -16,42 +16,13 @@
   const DISCORD_CLIENT_ID = '1570702041993711706';
   const KYRO_GUILD_ID = '1539961184323772498';
   const AUTH_WORKER_URL = 'https://kyro-auth.kyro-ownr.workers.dev';
+  /* One invite for the whole site. Links are never rewritten per visitor: the
+     Discord join card names whoever created the invite, so swapping in a
+     personal code made the site show a random member as the inviter. */
   const DEFAULT_INVITE_URL = 'https://discord.gg/5TUVVA2hR4';
-  let INVITE_URL = DEFAULT_INVITE_URL;
-  let INVITE_CODE = INVITE_URL.replace(/^https?:\/\//, '');
-  let INVITE_SLUG = '5TUVVA2hR4';
-
-  async function fetchPersonalInvite() {
-    if (!auth.token) {
-      updateInviteLinks(DEFAULT_INVITE_URL);
-      return;
-    }
-    try {
-      const res = await fetch(AUTH_WORKER_URL + '/invite', {
-        headers: { 'authorization': 'Bearer ' + auth.token },
-        credentials: 'omit'
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.invite_url) {
-          updateInviteLinks(data.invite_url);
-        }
-      }
-    } catch {
-      updateInviteLinks(DEFAULT_INVITE_URL);
-    }
-  }
-
-  function updateInviteLinks(url) {
-    INVITE_URL = url;
-    INVITE_CODE = url.replace(/^https?:\/\//, '');
-    INVITE_SLUG = (url.match(/discord\.gg\/([\w-]+)/) || [])[1] || '5TUVVA2hR4';
-    const footerInv = $('#footerInvite');
-    if (footerInv) footerInv.href = INVITE_URL;
-    document.querySelectorAll('a[href^="https://discord.gg/"]').forEach(a => {
-      a.href = INVITE_URL;
-    });
-  }
+  const INVITE_URL = DEFAULT_INVITE_URL;
+  const INVITE_CODE = INVITE_URL.replace(/^https?:\/\//, '');
+  const INVITE_SLUG = '5TUVVA2hR4';
 
   const REDIRECT_URI = AUTH_WORKER_URL + '/callback';
 
@@ -87,9 +58,10 @@
   // Merge approved contributor/owner items from cloud. Rebuild the whole list
   // every time so a deletion (including a built-in catalogue entry) is visible
   // immediately instead of waiting for a cache to clear.
+  let lastVaultSync = 0;
   async function loadPublicVaultItems() {
     try {
-      const res = await fetch(AUTH_WORKER_URL + '/vault/public');
+      const res = await fetch(AUTH_WORKER_URL + '/vault/public', { cache: 'no-store' });
       if (!res.ok) return;
       const data = await res.json();
       hiddenResources = new Set((Array.isArray(data.hidden) ? data.hidden : []).map(value => String(value).toLowerCase()));
@@ -124,6 +96,7 @@
           language: item.language || '',
           downloads: 0,
           added: item.created ? item.created.slice(0, 10) : '2026-11-14',
+          addedTs: item.created ? Date.parse(item.created) || 0 : 0,
           tags: [item.category || 'plugin', ...(osList)],
           gallery: item.image_url ? [item.image_url] : [],
           files: item.download_url ? [{
@@ -148,6 +121,7 @@
         resources.push(item);
       });
 
+      lastVaultSync = Date.now();
       renderSoftware();
       renderCategoryHead();
       renderBrowse();
@@ -157,6 +131,15 @@
     }
   }
   loadPublicVaultItems();
+
+  /* Uploads land on the worker, not in this file, so a tab left open would keep
+     showing the old "Recently added" row. Re-read the public list when the tab
+     comes back into view, at most once a minute. */
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (Date.now() - lastVaultSync < 60000) return;
+    loadPublicVaultItems();
+  });
 
   /* --------------------------- auth state model ------------------------
      out      → not signed in
@@ -336,6 +319,7 @@
   const coursesEmpty = $('#coursesEmpty');
   const browseGrid = $('#browseGrid');
   const recentGrid = $('#recentGrid');
+  const applefxRow = $('#applefxRow');
   const discordCard = $('#discordCard');
   const modalOverlay = $('#modalOverlay');
   const modalBox = $('#modalBox');
@@ -671,8 +655,17 @@
   }
 
   /* ========================= directory rendering ======================== */
+  /* Millisecond timestamps where the source has one (cloud uploads carry
+     `created`), so two listings added the same day still land newest first. */
+  function addedStamp(r) {
+    const ts = Number(r.addedTs);
+    if (ts) return ts;
+    const day = Date.parse(String(r.added || '') + 'T00:00:00Z');
+    return Number.isFinite(day) ? day : 0;
+  }
+
   function byNewest(a, b) {
-    const d = String(b.added || '').localeCompare(String(a.added || ''));
+    const d = addedStamp(b) - addedStamp(a);
     return d !== 0 ? d : String(b.version || '').localeCompare(String(a.version || ''), undefined, { numeric: true });
   }
 
@@ -836,11 +829,34 @@
     renderSection(softwareGrid, softwareNote, softwareEmpty, b, 'software');
     renderSection(toolsGrid, toolsNote, toolsEmpty, b, 'tool');
     renderSection(coursesGrid, coursesNote, coursesEmpty, b, 'course');
-    /* Home page: three real listings, newest first, with their own previews. */
+    /* Home page: three real listings, newest first, with their own previews.
+       AppleFX is skipped here because the row underneath is its permanent slot. */
     if (recentGrid) {
-      recentGrid.innerHTML = resources.slice().sort(byNewest).slice(0, 3).map(cardHTML).join('');
+      recentGrid.innerHTML = resources
+        .filter(r => !/^applefx\b/i.test(String(r.title || '')))
+        .sort(byNewest).slice(0, 3).map(cardHTML).join('');
       wireCardThumbs(recentGrid);
     }
+    renderApplefxRow();
+  }
+
+  /* One thin full-width row under Recently added for AppleFX, built from the
+     newest AppleFX listing on the vault so a re-upload updates its version and
+     text without a code change. Deliberately compact — it sits below the newest
+     listings, not in front of them. */
+  function renderApplefxRow() {
+    if (!applefxRow) return;
+    const r = resources.filter(x => /^applefx\b/i.test(String(x.title || ''))).sort(byNewest)[0];
+    if (!r) { applefxRow.hidden = true; applefxRow.removeAttribute('data-resource'); return; }
+    applefxRow.hidden = false;
+    applefxRow.dataset.resource = r.id;
+    applefxRow.innerHTML =
+      '<span class="applefx-mark mono" aria-hidden="true">' + ICON.apple + '</span>' +
+      '<span class="applefx-copy">' +
+        '<span class="applefx-title">' + esc(r.title) + '</span>' +
+        '<span class="applefx-sub">' + esc(r.desc) + '</span>' +
+      '</span>' +
+      '<span class="applefx-cta">View' + ICON.arrow + '</span>';
   }
 
   /* Each OS page shows one browse category as its own page; the head reuses
@@ -4421,6 +4437,15 @@
     });
   });
 
+  /* The compact AppleFX row below Recently added opens the same listing modal
+     as its card, so downloads, previews and guides stay in one place. */
+  if (applefxRow) {
+    applefxRow.addEventListener('click', () => {
+      const id = applefxRow.dataset.resource;
+      if (id) openModal(id);
+    });
+  }
+
   const requestsBtn = $('#requestsOpen');
   if (requestsBtn) {
     requestsBtn.addEventListener('click', () =>
@@ -4588,7 +4613,6 @@
   initFeedbackDrawer();
   wireAccountModal();
   updateSavedUI();
-  fetchPersonalInvite();
   startServerStats();
   refreshDiscordRole();
 

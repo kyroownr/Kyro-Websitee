@@ -56,6 +56,12 @@
 import { applicationConfiguration, handleApplications, handleApplicationInteractions, KyroApplications } from './applications-worker.js';
 export { KyroApplications };
 
+/* The official Kyro invite. The inviter on Discord's join card is the account
+   that created this code — re-mint it from the owner account and paste the new
+   code here when the invite itself changes. */
+const OFFICIAL_INVITE_URL = 'https://discord.gg/5TUVVA2hR4';
+const OFFICIAL_INVITE_CODE = OFFICIAL_INVITE_URL.split('/').pop();
+
 const DEFAULT_ORIGINS = 'https://kyro.new.tg,http://localhost:4173,http://127.0.0.1:4173,http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000,http://localhost:8080,http://127.0.0.1:8080,http://localhost:8000,http://127.0.0.1:8000,http://localhost:4000,http://127.0.0.1:4000';
 
 export default {
@@ -1014,79 +1020,17 @@ async function handleFeedbackReply(request, url, env, cors) {
   return feedbackBoard(env, session, written.items || [], 200, cors);
 }
 
+/* One official invite for everyone, signed in or not.
+
+   This used to mint a personal invite (or reuse one the member had created) so
+   each visitor saw their own name on the Discord join card. That made the site
+   depend on whoever happened to be signed in and cached those codes in KV, so a
+   shared link could show a random member as the inviter. The official invite is
+   now the only answer — the inviter shown on Discord is the account that created
+   it, which is an ownership decision made in the Discord client, not here. */
 async function handleInvite(request, url, env, cors) {
   if (request.method !== 'GET' && request.method !== 'POST') return json({ error: 'Use GET or POST.' }, 405, cors);
-
-  const token = bearerToken(request, url);
-  if (!token) {
-    return json({ invite_url: 'https://discord.gg/5TUVVA2hR4', code: '5TUVVA2hR4' }, 200, cors);
-  }
-
-  let session = null;
-  try {
-    session = await readSession(token, env);
-  } catch {
-    return json({ invite_url: 'https://discord.gg/5TUVVA2hR4', code: '5TUVVA2hR4' }, 200, cors);
-  }
-
-  if (!session || !session.id) {
-    return json({ invite_url: 'https://discord.gg/5TUVVA2hR4', code: '5TUVVA2hR4' }, 200, cors);
-  }
-
-  // Check KV cache for user's personal invite
-  const cacheKey = 'user_invite:' + session.id;
-  const cached = await env.KYRO_DATA.get(cacheKey);
-  if (cached) {
-    return json({ invite_url: `https://discord.gg/${cached}`, code: cached }, 200, cors);
-  }
-
-  // Look for any existing invite created by this user first
-  if (env.DISCORD_BOT_TOKEN) {
-    try {
-      const guildId = String(env.DISCORD_GUILD_ID || env.KYRO_GUILD_ID);
-      const listRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/invites`, {
-        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
-      });
-      if (listRes.ok) {
-        const invites = await listRes.json();
-        const existing = invites.find(i => i.inviter && i.inviter.id === session.id);
-        if (existing && existing.code) {
-          await env.KYRO_DATA.put(cacheKey, existing.code, { expirationTtl: 86400 * 30 });
-          return json({ invite_url: `https://discord.gg/${existing.code}`, code: existing.code }, 200, cors);
-        }
-      }
-
-      // If user is owner sxii123, return the official 5TUVVA2hR4
-      if (String(session.id) === ownerId(env)) {
-        return json({ invite_url: 'https://discord.gg/5TUVVA2hR4', code: '5TUVVA2hR4' }, 200, cors);
-      }
-
-      // Otherwise generate a fresh invite for this user
-      const channelId = env.DISCORD_PUBLIC_APPS_CHANNEL_ID || '1542135796369457182';
-      const invRes = await fetch(`https://discord.com/api/v10/channels/${channelId}/invites`, {
-        method: 'POST',
-        headers: {
-          authorization: 'Bot ' + env.DISCORD_BOT_TOKEN,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          max_age: 0,
-          max_uses: 0,
-          unique: true
-        })
-      });
-
-      const invData = await invRes.json();
-      if (invData && invData.code) {
-        await env.KYRO_DATA.put(cacheKey, invData.code, { expirationTtl: 86400 * 30 });
-        return json({ invite_url: `https://discord.gg/${invData.code}`, code: invData.code }, 200, cors);
-      }
-    } catch (invErr) {
-      console.warn('[kyro-invite] Failed to create personal invite:', invErr);
-    }
-  }
-
-  return json({ invite_url: 'https://discord.gg/5TUVVA2hR4', code: '5TUVVA2hR4' }, 200, cors);
+  return json({ invite_url: OFFICIAL_INVITE_URL, code: OFFICIAL_INVITE_CODE }, 200, cors);
 }
 
 /* ------------------------------ download counts -------------------------- */
