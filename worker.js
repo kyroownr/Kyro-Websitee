@@ -1019,18 +1019,18 @@ async function handleInvite(request, url, env, cors) {
 
   const token = bearerToken(request, url);
   if (!token) {
-    return json({ invite_url: 'https://discord.gg/5ch7XeNg98', code: '5ch7XeNg98' }, 200, cors);
+    return json({ invite_url: 'https://discord.gg/5TUVVA2hR4', code: '5TUVVA2hR4' }, 200, cors);
   }
 
   let session = null;
   try {
     session = await readSession(token, env);
   } catch {
-    return json({ invite_url: 'https://discord.gg/5ch7XeNg98', code: '5ch7XeNg98' }, 200, cors);
+    return json({ invite_url: 'https://discord.gg/5TUVVA2hR4', code: '5TUVVA2hR4' }, 200, cors);
   }
 
   if (!session || !session.id) {
-    return json({ invite_url: 'https://discord.gg/5ch7XeNg98', code: '5ch7XeNg98' }, 200, cors);
+    return json({ invite_url: 'https://discord.gg/5TUVVA2hR4', code: '5TUVVA2hR4' }, 200, cors);
   }
 
   // Check KV cache for user's personal invite
@@ -1056,9 +1056,9 @@ async function handleInvite(request, url, env, cors) {
         }
       }
 
-      // If user is owner sxii123, return the official 5ch7XeNg98
+      // If user is owner sxii123, return the official 5TUVVA2hR4
       if (String(session.id) === ownerId(env)) {
-        return json({ invite_url: 'https://discord.gg/5ch7XeNg98', code: '5ch7XeNg98' }, 200, cors);
+        return json({ invite_url: 'https://discord.gg/5TUVVA2hR4', code: '5TUVVA2hR4' }, 200, cors);
       }
 
       // Otherwise generate a fresh invite for this user
@@ -1086,7 +1086,7 @@ async function handleInvite(request, url, env, cors) {
     }
   }
 
-  return json({ invite_url: 'https://discord.gg/5ch7XeNg98', code: '5ch7XeNg98' }, 200, cors);
+  return json({ invite_url: 'https://discord.gg/5TUVVA2hR4', code: '5TUVVA2hR4' }, 200, cors);
 }
 
 /* ------------------------------ download counts -------------------------- */

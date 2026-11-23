@@ -16,10 +16,10 @@
   const DISCORD_CLIENT_ID = '1570702041993711706';
   const KYRO_GUILD_ID = '1539961184323772498';
   const AUTH_WORKER_URL = 'https://kyro-auth.kyro-ownr.workers.dev';
-  const DEFAULT_INVITE_URL = 'https://discord.gg/5ch7XeNg98';
+  const DEFAULT_INVITE_URL = 'https://discord.gg/5TUVVA2hR4';
   let INVITE_URL = DEFAULT_INVITE_URL;
   let INVITE_CODE = INVITE_URL.replace(/^https?:\/\//, '');
-  let INVITE_SLUG = '5ch7XeNg98';
+  let INVITE_SLUG = '5TUVVA2hR4';
 
   async function fetchPersonalInvite() {
     if (!auth.token) {
@@ -45,7 +45,7 @@
   function updateInviteLinks(url) {
     INVITE_URL = url;
     INVITE_CODE = url.replace(/^https?:\/\//, '');
-    INVITE_SLUG = (url.match(/discord\.gg\/([\w-]+)/) || [])[1] || '5ch7XeNg98';
+    INVITE_SLUG = (url.match(/discord\.gg\/([\w-]+)/) || [])[1] || '5TUVVA2hR4';
     const footerInv = $('#footerInvite');
     if (footerInv) footerInv.href = INVITE_URL;
     document.querySelectorAll('a[href^="https://discord.gg/"]').forEach(a => {
