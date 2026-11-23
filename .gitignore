@@ -34,3 +34,5 @@ easykyro-extension.zip
 # ...but the copy the /easykyro page serves is part of the public site.
 !assets/easykyro-extension.zip
 !docs/assets/easykyro-extension.zip
+
+.secrets/

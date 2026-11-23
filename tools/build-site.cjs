@@ -36,7 +36,7 @@ const bundleHashes = {};
    script and javascript: URLs; object-src 'none' kills plugin/embed vectors.
    img/media allow any https host so external preview pictures still load (images
    cannot execute script). frame-ancestors is omitted — meta CSP cannot set it. */
-const CSP_META = `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; media-src 'self' https:; connect-src 'self' https://kyro-auth.kyro-ownr.workers.dev https://discord.com; base-uri 'self'; form-action 'self'; object-src 'none'">`;
+  const CSP_META = `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; media-src 'self' https:; connect-src 'self' https://kyro-auth.kyro-ownr.workers.dev https://discord.com; base-uri 'self'; form-action 'self'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; manifest-src 'self'">`;
 
 /* Everything a browser legitimately needs. dashboard.html is the staff bot UI
    served by bot_dashboard.js on localhost — it has no business on the public

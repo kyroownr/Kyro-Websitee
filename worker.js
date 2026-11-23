@@ -95,6 +95,8 @@ export default {
       if (url.pathname === '/vault/incoming/vote') return await handleIncomingVote(request, url, env, cors);
       if (url.pathname === '/early-access') return await handleEarlyAccess(request, url, env, cors);
       if (url.pathname === '/api/vault/publish') return await handleVaultPublish(request, url, env, cors);
+      if (url.pathname === '/vault/discord/publish') return await handleDiscordPublishAdmin(request, url, env, cors);
+      if (url.pathname === '/vault/virustotal') return await handleVirusTotalAdmin(request, url, env, cors);
       if (url.pathname === '/dashboard/settings') return await handleDashboardSettings(request, url, env, cors);
       if (url.pathname === '/dashboard/embed') return await handleDashboardEmbed(request, url, env, cors);
       if (url.pathname === '/dashboard/lockdown') return await handleDashboardLockdown(request, url, env, cors);
@@ -117,7 +119,10 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runAlertSectionMemberMonitor(env));
+    ctx.waitUntil(Promise.all([
+      runAlertSectionMemberMonitor(env),
+      processVirusTotalScans(env)
+    ]));
   }
 };
 
@@ -210,6 +215,22 @@ async function jsonBody(request, maxBytes = 64 * 1024) {
 /* Absolute http(s) only, no credentials. This is what keeps a contributor from
    storing `javascript:alert(1)` as a download/image URL and turning a
    "Download" click on the public site into script execution. */
+function isPrivateHost(hostname) {
+  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (!host) return true;
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host === '0.0.0.0') return true;
+  if (host === '::1' || host.startsWith('fe80:') || host.startsWith('fc') || host.startsWith('fd')) return true;
+  const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return false;
+  const a = Number(m[1]);
+  const b = Number(m[2]);
+  return a === 10 || a === 127 || a === 0 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127);
+}
+
 function safeHttpUrl(value, max = 500) {
   const raw = String(value == null ? '' : value).trim();
   if (!raw) return '';
@@ -219,6 +240,10 @@ function safeHttpUrl(value, max = 500) {
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw fail(400, 'bad_url', 'Only http:// and https:// URLs are allowed.');
   if (parsed.username || parsed.password) throw fail(400, 'bad_url', 'URLs with embedded login details are not allowed.');
   if (parsed.href.length > max) throw fail(400, 'bad_url', 'That URL is too long.');
+  /* These links are only ever returned to a browser, never fetched by this
+     Worker, so this is defence in depth: never accept a link that points back
+     into a private network or at the Worker's own host. */
+  if (isPrivateHost(parsed.hostname)) throw fail(400, 'bad_url', 'Links to private or local network addresses are not allowed.');
   return parsed.href;
 }
 
@@ -1564,6 +1589,12 @@ async function handleVaultSubmissions(request, url, env, cors) {
     const category = cleanText(input.category || 'Adobe After Effects', 60);
     const downloadUrl = safeHttpUrl(input.download_url, 500);
     const imageUrl = safeHttpUrl(input.image_url, 500);
+    const sourceUrl = safeHttpUrl(input.source_url, 500);
+    if (kind === 'course' && !sourceUrl) throw fail(400, 'course_source', 'Courses need a link to the original source.');
+    if (kind === 'course' && input.rights_confirmed !== true) throw fail(400, 'course_rights', 'Confirm you have the right to share or link this course.');
+    /* Optional and opt-in only: no file or URL is ever sent to VirusTotal
+       unless the uploader ticked the consent box. */
+    const scanRequested = input.scan_requested === true;
     const size = cleanText(input.size || 'Vault Build', 40);
     const creator = cleanText(input.creator || session.username, 60);
     const details = cleanText(input.details || input.desc, 2000);
@@ -1580,6 +1611,10 @@ async function handleVaultSubmissions(request, url, env, cors) {
       category,
       download_url: downloadUrl,
       image_url: imageUrl,
+      source_url: sourceUrl || undefined,
+      rights_confirmed: kind === 'course' ? true : undefined,
+      scan_requested: scanRequested || undefined,
+      scan_consent_at: scanRequested ? new Date().toISOString() : undefined,
       size,
       creator,
       details,
@@ -1604,8 +1639,13 @@ async function handleVaultSubmissions(request, url, env, cors) {
         const items = Array.isArray(curr?.items) ? curr.items : [];
         return { items: [submission, ...items.filter(i => i.slug !== submission.slug)] };
       });
-      // Post to Discord
+      // Post to Discord, then queue the optional scan separately so a slow or
+      // unavailable VirusTotal API never blocks a successful publication.
       await dispatchKyroDiscordPublish(submission, env);
+      if (scanRequested) {
+        try { await queueVirusTotalScan(env, submission, session.id); }
+        catch (e) { console.warn('[virustotal] queue failed:', e && e.message); }
+      }
       await createNotification(env, session.id, 'Resource Published Directly', `Your resource "${submission.title}" is live on the Vault and posted to Discord!`, 'approved');
     } else {
       // User notification: Upload submitted waiting for confirmation
@@ -1695,6 +1735,10 @@ async function handleVaultSubmissionReview(request, url, env, cors) {
     });
     // Publish automatically to Discord channels
     await dispatchKyroDiscordPublish(reviewedSub, env);
+    if (reviewedSub.scan_requested) {
+      try { await queueVirusTotalScan(env, reviewedSub, reviewedSub.by || ''); }
+      catch (e) { console.warn('[virustotal] queue failed:', e && e.message); }
+    }
 
     // Notify uploader: approval accepted thanks for sharing
     if (reviewedSub.by) {
@@ -1851,6 +1895,12 @@ async function handleIncomingReleases(request, url, env, cors) {
     const category = cleanText(input.category || 'Adobe After Effects', 60);
     const downloadUrl = safeHttpUrl(input.download_url, 500);
     const imageUrl = safeHttpUrl(input.image_url, 500);
+    const sourceUrl = safeHttpUrl(input.source_url, 500);
+    if (kind === 'course' && !sourceUrl) throw fail(400, 'course_source', 'Courses need a link to the original source.');
+    if (kind === 'course' && input.rights_confirmed !== true) throw fail(400, 'course_rights', 'Confirm you have the right to share or link this course.');
+    /* Optional and opt-in only: no file or URL is ever sent to VirusTotal
+       unless the uploader ticked the consent box. */
+    const scanRequested = input.scan_requested === true;
     const size = cleanText(input.size || 'Vault Build', 40);
     const creator = cleanText(input.creator || session.username, 60);
     const details = cleanText(input.details || '', 1500);
@@ -1866,6 +1916,10 @@ async function handleIncomingReleases(request, url, env, cors) {
       category,
       download_url: downloadUrl,
       image_url: imageUrl,
+      source_url: sourceUrl || undefined,
+      rights_confirmed: kind === 'course' ? true : undefined,
+      scan_requested: scanRequested || undefined,
+      scan_consent_at: scanRequested ? new Date().toISOString() : undefined,
       size,
       creator,
       details,
@@ -2145,6 +2199,10 @@ async function publishIncomingRelease(env, item) {
 
   // Publish automatically to announcements & downloads
   await dispatchKyroDiscordPublish(vaultItem, env);
+  if (vaultItem.scan_requested) {
+    try { await queueVirusTotalScan(env, vaultItem, vaultItem.by || ''); }
+    catch (e) { console.warn('[virustotal] queue failed:', e && e.message); }
+  }
 
   // Update the Discord message in #incomming to show "Now Live"
   if (item.discord_msg_id && env.DISCORD_BOT_TOKEN) {
@@ -2204,10 +2262,10 @@ async function syncIncomingDiscordEmbed(env, item) {
       body: JSON.stringify({
         embeds: [{
           author: { name: 'Kyro Incoming Release · Community Approval', icon_url: KYRO_ICON },
-          title: `⏳ INCOMING: ${item.title.toUpperCase()}`,
+          title: `⏳ INCOMING: ${embedText(item.title, 100).toUpperCase()}`,
           url: `https://kyro.new.tg#incoming`,
           description: `**Section Tagline:** *"Items waiting for community approval. Vote to bring them live."*\n\n` +
-            (item.details ? `${item.details}\n\n` : '') +
+            (item.details ? `${embedText(item.details, 400)}\n\n` : '') +
             `• **Creator:** \`${item.creator || item.by_username || 'Kyro'}\`\n• **Platform:** \`${osLabel}\`\n• **Size:** \`${item.size || 'Vault Build'}\`\n• **Category:** \`${item.category || 'Adobe After Effects'}\`\n\n` +
             `🎯 **Goal:** \`${Number(item.votes || 0)} / ${Number(item.vote_limit || 5)}\` Votes to Push Live!`,
           color: 0x38bdf8,
@@ -2261,28 +2319,15 @@ async function handleVaultSubmissionManage(request, url, env, cors) {
     await hideVaultResources(env, tombstones);
 
     if (targetSub) {
-      // If Discord messages were recorded, remove or edit them
-      const vaultItemsDoc = (await readDoc(env, VAULT_ITEMS_KEY, { items: {} })).value;
-      const meta = vaultItemsDoc.items && vaultItemsDoc.items[targetSub.slug];
-      if (meta && env.DISCORD_BOT_TOKEN) {
-        if (meta.announcement_msg_id) {
-          fetch(`https://discord.com/api/v10/channels/1539961971422658571/messages/${meta.announcement_msg_id}`, {
-            method: 'DELETE',
-            headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
-          }).catch(() => {});
-        }
-        if (meta.downloads_msg_id) {
-          fetch(`https://discord.com/api/v10/channels/1539961998601756722/messages/${meta.downloads_msg_id}`, {
-            method: 'DELETE',
-            headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN }
-          }).catch(() => {});
-        }
-        await mutateDoc(env, VAULT_ITEMS_KEY, { items: {} }, curr => {
-          const items = curr?.items && typeof curr.items === 'object' ? { ...curr.items } : {};
-          delete items[targetSub.slug];
-          return { items };
-        });
-      }
+      // Replace the announcements with a removal notice so nobody follows a
+      // dead or withdrawn resource. Failures here never undo the deletion.
+      try { await retireKyroDiscordPost(env, targetSub, 'Resource removed by the server owner'); }
+      catch (e) { console.warn('[discord] removal notice failed:', e && e.message); }
+      await mutateDoc(env, VAULT_ITEMS_KEY, { items: {} }, curr => {
+        const items = curr?.items && typeof curr.items === 'object' ? { ...curr.items } : {};
+        delete items[targetSub.slug];
+        return { items };
+      });
     }
 
     const title = cleanText(input.title, 120) || targetSub?.title || subId;
@@ -2362,243 +2407,520 @@ async function handleVaultSubmissionManage(request, url, env, cors) {
 }
 
 async function syncModifiedDiscordEmbed(item, env) {
-  if (!env.DISCORD_BOT_TOKEN) return;
-  const slug = item.slug;
-  const vaultItemsDoc = (await readDoc(env, VAULT_ITEMS_KEY, { items: {} })).value;
-  const meta = vaultItemsDoc.items && vaultItemsDoc.items[slug];
-  if (!meta) return;
+  /* One embed builder and one record store for create, edit and retry. */
+  return dispatchKyroDiscordPublish(item, env);
+}
 
-  const os = (item.os || 'windows').toLowerCase();
-  const pageUrl = (os === 'macos') ? `https://kyro.new.tg/macos#${slug}` : `https://kyro.new.tg/windows#${slug}`;
-  const creator = item.by_username || item.creator || 'Kyro Vault';
-  const size = item.size || 'Vault Build';
-  const category = item.category || 'Adobe After Effects';
-  const osLabel = os === 'both' ? 'Windows & macOS' : os === 'macos' ? 'macOS' : 'Windows';
-  const vaultId = item.id_code || ('#' + Math.floor(100000 + Math.random() * 900000));
-  const tier = item.tier || 'Free';
-  const password = item.pass || item.password;
+/* ------------------------ Discord publishing module ----------------------- */
+const PUBLISH_STATE_KEY = 'kyro.discord_publish.v1';
+const VIRUSTOTAL_STATE_KEY = 'kyro.virustotal_scans.v1';
+const PUBLISH_CHANNELS = {
+  announcements: '1539961971422658571',
+  downloads: '1539961998601756722',
+  showcase: '1541775088901292042',
+  showcaseTag: '1541775995395379310'
+};
 
-  const embed = {
-    author: {
-      name: item.author_tag || 'Kyro Vault',
-      icon_url: item.author_icon || KYRO_ICON
-    },
-    title: '🔄 UPDATE: ' + item.title.toUpperCase(),
+function resourceKind(item) {
+  return (item.kind === 'course' || String(item.category || '').trim().toLowerCase() === 'course') ? 'course' : 'download';
+}
+function resourceSlug(item) {
+  let raw = String(item.slug || '').trim();
+  if (/^https?:\/\//i.test(raw)) {
+    try { const parts = new URL(raw).pathname.split('/').filter(Boolean); raw = parts[parts.length - 1] || ''; } catch {}
+  }
+  return raw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || String(item.id || 'resource');
+}
+function resourcePageUrl(item) {
+  const slug = resourceSlug(item);
+  if (resourceKind(item) === 'course') return `https://kyro.new.tg/courses#${slug}`;
+  return String(item.os || '').toLowerCase() === 'macos'
+    ? `https://kyro.new.tg/macos#${slug}`
+    : `https://kyro.new.tg/windows#${slug}`;
+}
+/* Embed copy is data, never markup. Every @ is defused so a submitted title or
+   description cannot ping @everyone, a role or a user from inside an embed. */
+function embedText(value, max = 300) {
+  return cleanText(value, max).replace(/@/g, '@\u200b').replace(/`/g, '\u02cb');
+}
+function embedHash(item) {
+  const raw = [item.title, item.details, item.category, item.creator, item.by_username, item.source_url, item.kind, item.os, item.download_url].join('|');
+  let hash = 2166136261;
+  for (let i = 0; i < raw.length; i++) { hash ^= raw.charCodeAt(i); hash = Math.imul(hash, 16777619); }
+  return (hash >>> 0).toString(36);
+}
+function resourceEmbed(item, options = {}) {
+  const removed = Boolean(options.removed);
+  const updated = Boolean(options.updated);
+  const flagged = Boolean(options.flagged);
+  const course = resourceKind(item) === 'course';
+  const pageUrl = resourcePageUrl(item);
+  const title = embedText(item.title || 'Untitled resource', 100);
+  const creator = embedText(item.creator || item.by_username || 'Kyro community', 60);
+  let sourceLabel = creator;
+  if (course && item.source_url) {
+    try { sourceLabel = embedText(new URL(item.source_url).hostname.replace(/^www\./, ''), 60); } catch {}
+  }
+  const fields = [{ name: 'Type', value: '`' + (course ? 'Course' : 'Download') + '`', inline: true }];
+  if (!course) {
+    const os = String(item.os || '').toLowerCase();
+    fields.push({ name: 'Platform', value: '`' + (os === 'both' ? 'Windows & macOS' : os === 'macos' ? 'macOS' : 'Windows') + '`', inline: true });
+  }
+  fields.push({ name: 'Category', value: '`' + (embedText(item.category || 'General', 60) || 'General') + '`', inline: true });
+  fields.push({ name: course ? 'Instructor / source' : 'Shared by', value: '`' + (sourceLabel || 'Kyro community') + '`', inline: true });
+  fields.push({ name: 'Membership tier', value: '`Free`', inline: true });
+  fields.push({ name: 'Status', value: '`' + (removed ? 'Removed' : flagged ? 'Flagged for review' : updated ? 'Updated' : 'Live') + '`', inline: true });
+
+  const description = removed
+    ? 'This resource was removed from Kyro. This notice replaces the earlier announcement so it does not keep sending people to a withdrawn listing.'
+    : (embedText(item.details || (course ? 'A course shared with the Kyro community.' : 'A free resource shared with the Kyro community.'), 220) +
+       '\n\nType, source and safety notes: ' + pageUrl);
+
+  return {
+    author: { name: course ? 'Kyro Courses' : 'Kyro Vault', icon_url: KYRO_ICON },
+    title: (removed ? 'REMOVED: ' : updated ? 'UPDATED: ' : '') + title,
     url: pageUrl,
-    description: (item.details || `${item.title} is now available in the Kyro Vault. Free resources and tools for verified editors.`) +
-      (password ? `\n\n🔑 **Archive Password:** \`${password}\`` : '') +
-      `\n\n**Website Link:** ${pageUrl}`,
-    color: 0x1f232b,
-    fields: [
-      {
-        name: 'Information',
-        value: `• **Creator:** \`${creator}\`\n• **ID:** \`${vaultId}\`\n• **Size:** \`${size}\`\n• **Category:** \`${category}\`\n• **Platform:** \`${osLabel}\``,
-        inline: true
-      },
-      {
-        name: 'Membership',
-        value: `• **Tier:** \`${tier}\`\n• **Status:** \`Updated\``,
-        inline: true
-      }
-    ],
-    footer: {
-      text: 'Kyro™ Website | Resource Monitor',
-      icon_url: KYRO_ICON
-    },
-    timestamp: new Date().toISOString()
+    description,
+    color: removed ? 0x6b7280 : flagged ? 0xb45309 : course ? 0x38bdf8 : 0x1f232b,
+    fields,
+    footer: { text: 'Kyro · kyro.new.tg', icon_url: KYRO_ICON },
+    timestamp: new Date().toISOString(),
+    ...(item.image_url && /^https:\/\//i.test(item.image_url) ? { image: { url: item.image_url } } : {})
   };
+}
+function resourceComponents(item) {
+  const course = resourceKind(item) === 'course';
+  return [{
+    type: 1,
+    components: [
+      { type: 2, style: 5, label: course ? 'Open course ↗' : 'View resource ↗', url: resourcePageUrl(item) },
+      { type: 2, style: 5, label: 'Browse Kyro ↗', url: 'https://kyro.new.tg' }
+    ]
+  }];
+}
 
-  if (item.image_url && /^https?:\/\//.test(item.image_url)) {
-    embed.image = { url: item.image_url };
-  }
-
-  const components = [
-    {
-      type: 1,
-      components: [
-        {
-          type: 2,
-          style: 5,
-          label: 'View Resource ↗',
-          url: pageUrl
-        },
-        {
-          type: 2,
-          style: 5,
-          label: 'Browse Vault ↗',
-          url: 'https://kyro.new.tg'
-        }
-      ]
+/* Retries are deliberately short: the queue is synchronous, and a hard failure
+   is recorded for the admin retry route instead of hanging the publish flow. */
+async function discordCall(env, method, apiPath, payload) {
+  let last = { ok: false, status: 0, error: 'Discord is unreachable' };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt) await new Promise(resolve => setTimeout(resolve, attempt === 1 ? 600 : 1800));
+    let res;
+    try {
+      res = await fetch('https://discord.com/api/v10' + apiPath, {
+        method,
+        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
+        body: payload ? JSON.stringify(payload) : undefined
+      });
+    } catch {
+      last = { ok: false, status: 0, error: 'Discord connection failed' };
+      continue;
     }
-  ];
-
-  // 1. Announcements
-  const pingRole = await verifiedRoleId(env);
-  if (meta.announcement_msg_id) {
-    try {
-      await fetch(`https://discord.com/api/v10/channels/1539961971422658571/messages/${meta.announcement_msg_id}`, {
-        method: 'PATCH',
-        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
-        body: JSON.stringify({
-          ...rolePing(pingRole, '📢 **Vault Resource Updated**'),
-          embeds: [embed],
-          components
-        })
-      });
-    } catch (e) {}
+    if (res.ok) {
+      let data = null;
+      try { data = await res.json(); } catch {}
+      return { ok: true, status: res.status, data };
+    }
+    last = { ok: false, status: res.status, error: 'Discord rejected the request (' + res.status + ')' };
+    if (res.status !== 429 && res.status < 500) break;
+    const wait = Math.min(3000, Number(res.headers.get('retry-after') || 0) * 1000);
+    if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
   }
+  return last;
+}
 
-  // 2. Downloads-links
-  if (meta.downloads_msg_id) {
-    try {
-      await fetch(`https://discord.com/api/v10/channels/1539961998601756722/messages/${meta.downloads_msg_id}`, {
-        method: 'PATCH',
-        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
-        body: JSON.stringify({ embeds: [embed], components })
-      });
-    } catch (e) {}
-  }
+async function publishRecords(env) {
+  const doc = (await readDoc(env, PUBLISH_STATE_KEY, { items: {} })).value || {};
+  return doc.items && typeof doc.items === 'object' ? doc.items : {};
+}
+async function savePublishRecord(env, slug, record) {
+  await mutateDoc(env, PUBLISH_STATE_KEY, { items: {} }, curr => {
+    const items = curr && curr.items && typeof curr.items === 'object' ? curr.items : {};
+    return { items: { ...items, [slug]: record } };
+  });
+}
+async function legacyPublishMeta(env, slug) {
+  try {
+    const doc = (await readDoc(env, VAULT_ITEMS_KEY, { items: {} })).value || {};
+    return doc.items && doc.items[slug] ? doc.items[slug] : null;
+  } catch { return null; }
 }
 
 async function dispatchKyroDiscordPublish(item, env) {
-  if (!env.DISCORD_BOT_TOKEN) return;
-  let rawSlug = item.slug || '';
-  if (/^https?:\/\//i.test(rawSlug)) {
-    try {
-      const u = new URL(rawSlug);
-      const parts = u.pathname.split('/').filter(Boolean);
-      rawSlug = parts[parts.length - 1] || u.hash.replace(/^#\/?/, '') || u.hostname.replace(/\./g, '-');
-    } catch {}
+  const slug = resourceSlug(item);
+  if (!env.DISCORD_BOT_TOKEN) return { slug, status: 'skipped', error: 'Discord bot token is not configured.' };
+
+  const records = await publishRecords(env);
+  const previous = { ...(records[slug] || {}) };
+  const hash = embedHash(item);
+  if (previous.content_hash === hash && ['posted', 'updated'].includes(previous.status) && previous.announcement_msg_id) {
+    return { ...previous, deduplicated: true };
   }
-  const slug = rawSlug.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || item.id;
-  const os = (item.os || 'windows').toLowerCase();
-  const pageUrl = (os === 'macos') ? `https://kyro.new.tg/macos#${slug}` : `https://kyro.new.tg/windows#${slug}`;
+  if (!previous.announcement_msg_id) {
+    const meta = await legacyPublishMeta(env, slug);
+    if (meta) {
+      previous.announcement_msg_id = meta.announcement_msg_id || '';
+      previous.downloads_msg_id = meta.downloads_msg_id || '';
+      previous.thread_id = meta.thread_id || '';
+    }
+  }
 
-  const vaultDoc = (await readDoc(env, VAULT_ITEMS_KEY, { items: {} })).value;
-  const existing = vaultDoc.items && vaultDoc.items[slug];
-  const isUpdate = Boolean(existing);
-  const password = item.pass || item.password;
-
-  const creator = item.by_username || item.creator || 'Kyro Vault';
-  const size = item.size || 'Vault Build';
-  const category = item.category || 'Adobe After Effects';
-  const osLabel = os === 'both' ? 'Windows & macOS' : os === 'macos' ? 'macOS' : 'Windows';
-  const vaultId = '#' + Math.floor(100000 + Math.random() * 900000);
-
-  const embed = {
-    author: { name: 'Kyro Vault', icon_url: KYRO_ICON },
-    title: (isUpdate ? '🔄 UPDATE: ' : '') + item.title.toUpperCase(),
-    url: pageUrl,
-    description: (item.details || `${item.title} is now live in the Kyro Vault.`) +
-      (password ? `\n\n🔑 **Archive Password:** \`${password}\`` : '') +
-      `\n\n**Website Link:** ${pageUrl}`,
-    color: 0x1f232b,
-    fields: [
-      {
-        name: 'Information',
-        value: `• **Creator:** \`${creator}\`\n• **ID:** \`${vaultId}\`\n• **Size:** \`${size}\`\n• **Category:** \`${category}\`\n• **Platform:** \`${osLabel}\``,
-        inline: true
-      },
-      {
-        name: 'Membership',
-        value: `• **Tier:** \`Free\`\n• **Status:** \`${isUpdate ? 'Updated' : 'Verified'}\``,
-        inline: true
-      }
-    ],
-    footer: { text: 'Kyro™ Website | Resource Monitor', icon_url: KYRO_ICON },
-    timestamp: new Date().toISOString()
+  const now = new Date().toISOString();
+  const record = {
+    ...previous,
+    slug,
+    resource_id: String(item.id || slug),
+    event_id: (item.id || slug) + ':' + hash,
+    content_hash: hash,
+    status: 'pending',
+    attempts: Number(previous.attempts || 0) + 1,
+    updated: now,
+    snapshot: {
+      id: item.id, title: item.title, slug, kind: item.kind, os: item.os,
+      category: item.category, details: String(item.details || '').slice(0, 1500),
+      creator: item.creator, by_username: item.by_username, source_url: item.source_url,
+      download_url: item.download_url, image_url: item.image_url, version: item.version
+    }
   };
 
-  if (item.image_url && /^https?:\/\//.test(item.image_url)) embed.image = { url: item.image_url };
+  const embed = resourceEmbed(item, { updated: Boolean(previous.announcement_msg_id) });
+  const components = resourceComponents(item);
 
-  const components = [
-    {
-      type: 1,
-      components: [
-        { type: 2, style: 5, label: 'View Resource ↗', url: pageUrl },
-        { type: 2, style: 5, label: 'Browse Vault ↗', url: 'https://kyro.new.tg' }
-      ]
+  // Existing posts are corrected in place so an edit or retry cannot duplicate.
+  if (previous.announcement_msg_id || previous.downloads_msg_id) {
+    const results = [];
+    if (previous.announcement_msg_id) {
+      results.push(await discordCall(env, 'PATCH', `/channels/${PUBLISH_CHANNELS.announcements}/messages/${previous.announcement_msg_id}`, { embeds: [embed], components, allowed_mentions: { parse: [] } }));
     }
-  ];
+    if (previous.downloads_msg_id) {
+      results.push(await discordCall(env, 'PATCH', `/channels/${PUBLISH_CHANNELS.downloads}/messages/${previous.downloads_msg_id}`, { embeds: [embed], components, allowed_mentions: { parse: [] } }));
+    }
+    const failed = results.find(result => !result.ok && result.status !== 404);
+    record.status = failed ? 'failed' : 'updated';
+    record.error = failed ? failed.error : undefined;
+    await savePublishRecord(env, slug, record);
+    return record;
+  }
 
-  let announcementMsgId = null;
-  let downloadsMsgId = null;
   const pingRole = await verifiedRoleId(env);
-  try {
-    // 1. Announcements
-    const annRes = await fetch('https://discord.com/api/v10/channels/1539961971422658571/messages', {
-      method: 'POST',
-      headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        ...rolePing(pingRole, isUpdate ? '📢 **Vault Update Alert**' : '🚀 **New Vault Resource Released**'),
-        embeds: [embed],
-        components
-      })
-    });
-    if (annRes.ok) {
-      const annData = await annRes.json();
-      announcementMsgId = annData.id;
-    }
-  } catch (e) {}
+  const ann = await discordCall(env, 'POST', `/channels/${PUBLISH_CHANNELS.announcements}/messages`, {
+    ...rolePing(pingRole, '🚀 New Kyro resource'),
+    embeds: [embed],
+    components
+  });
+  if (ann.ok && ann.data && ann.data.id) record.announcement_msg_id = ann.data.id;
 
-  try {
-    // 2. Downloads-links
-    const dlRes = await fetch('https://discord.com/api/v10/channels/1539961998601756722/messages', {
-      method: 'POST',
-      headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
-      body: JSON.stringify({ embeds: [embed], components })
-    });
-    if (dlRes.ok) {
-      const dlData = await dlRes.json();
-      downloadsMsgId = dlData.id;
-    }
-  } catch (e) {}
+  const dl = await discordCall(env, 'POST', `/channels/${PUBLISH_CHANNELS.downloads}/messages`, {
+    embeds: [embed], components, allowed_mentions: { parse: [] }
+  });
+  if (dl.ok && dl.data && dl.data.id) record.downloads_msg_id = dl.data.id;
 
-  let showcaseThreadId = existing?.thread_id || null;
+  // Showcase forum: one thread per resource, follow-up posts on updates.
   try {
-    // 3. Showcase forum
-    if (isUpdate && existing?.thread_id) {
-      await fetch(`https://discord.com/api/v10/channels/${existing.thread_id}/messages`, {
-        method: 'POST',
-        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
-        body: JSON.stringify({
-          content: `🔄 **New Update Released** for **${item.title}**!`,
-          embeds: [embed],
-          components
-        })
+    if (previous.thread_id) {
+      await discordCall(env, 'POST', `/channels/${previous.thread_id}/messages`, {
+        content: 'Updated listing: ' + embedText(item.title, 100),
+        embeds: [embed], components, allowed_mentions: { parse: [] }
       });
     } else {
-      const scRes = await fetch('https://discord.com/api/v10/channels/1541775088901292042/threads', {
-        method: 'POST',
-        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
-        body: JSON.stringify({
-          name: (isUpdate ? '[UPDATE] ' : '') + item.title,
-          applied_tags: ['1541775995395379310'],
-          message: { embeds: [embed], components }
-        })
+      const thread = await discordCall(env, 'POST', `/channels/${PUBLISH_CHANNELS.showcase}/threads`, {
+        name: embedText(item.title || 'Kyro resource', 90),
+        applied_tags: [PUBLISH_CHANNELS.showcaseTag],
+        message: { embeds: [embed], components, allowed_mentions: { parse: [] } }
       });
-      if (scRes.ok) {
-        const scData = await scRes.json();
-        showcaseThreadId = scData.id;
-      }
+      if (thread.ok && thread.data && thread.data.id) record.thread_id = thread.data.id;
     }
-  } catch (e) {}
+  } catch {}
+
+  const delivered = ann.ok || dl.ok;
+  record.status = delivered ? 'posted' : 'failed';
+  record.error = delivered ? undefined : (ann.error || dl.error || 'Discord did not accept the announcement.');
+  record.posted_at = delivered ? now : previous.posted_at;
+  await savePublishRecord(env, slug, record);
+  return record;
+}
+
+async function retireKyroDiscordPost(env, item, reason) {
+  const slug = resourceSlug(item);
+  if (!env.DISCORD_BOT_TOKEN) return;
+  const records = await publishRecords(env);
+  const record = { ...(records[slug] || {}) };
+  if (!record.announcement_msg_id && !record.downloads_msg_id) {
+    const meta = await legacyPublishMeta(env, slug);
+    if (meta) {
+      record.announcement_msg_id = meta.announcement_msg_id || '';
+      record.downloads_msg_id = meta.downloads_msg_id || '';
+    }
+  }
+  const embed = resourceEmbed(item, { removed: true });
+  const targets = [
+    record.announcement_msg_id ? [PUBLISH_CHANNELS.announcements, record.announcement_msg_id] : null,
+    record.downloads_msg_id ? [PUBLISH_CHANNELS.downloads, record.downloads_msg_id] : null
+  ].filter(Boolean);
+  for (const [channel, messageId] of targets) {
+    await discordCall(env, 'PATCH', `/channels/${channel}/messages/${messageId}`, {
+      content: 'Resource removed from Kyro',
+      embeds: [embed],
+      components: [],
+      allowed_mentions: { parse: [] }
+    });
+  }
+  record.slug = slug;
+  record.status = 'removed';
+  record.removal_reason = cleanText(reason, 200);
+  record.updated = new Date().toISOString();
+  await savePublishRecord(env, slug, record);
+}
+
+/* ------------------------- optional VirusTotal flow ----------------------- */
+function proofChannelId(env) {
+  const id = String(env.DISCORD_PROOF_CHANNEL_ID || '').trim();
+  return /^\d{17,20}$/.test(id) ? id : '';
+}
+async function scanRecords(env) {
+  const doc = (await readDoc(env, VIRUSTOTAL_STATE_KEY, { items: {} })).value || {};
+  return doc.items && typeof doc.items === 'object' ? doc.items : {};
+}
+async function saveScanRecord(env, slug, record) {
+  await mutateDoc(env, VIRUSTOTAL_STATE_KEY, { items: {} }, curr => {
+    const items = curr && curr.items && typeof curr.items === 'object' ? curr.items : {};
+    return { items: { ...items, [slug]: record } };
+  });
+}
+function vtStatsText(stats) {
+  if (!stats) return 'Result pending';
+  const detections = Number(stats.malicious || 0) + Number(stats.suspicious || 0);
+  const total = detections + Number(stats.harmless || 0) + Number(stats.undetected || 0) + Number(stats.timeout || 0);
+  return detections > 0 ? `Detections reported: ${detections} of ${total}` : `No detections reported (${total} engines)`;
+}
+function proofEmbed(record) {
+  const item = record.item || { title: record.title, slug: record.slug };
+  const statusLabel = record.status === 'pending' ? 'Pending' : record.status === 'failed' ? 'Scan failed'
+    : record.status === 'unavailable' ? 'Scan unavailable' : record.flagged ? 'Detections reported' : 'Finished';
+  const lines = [
+    '**Scan type:** URL',
+    '**Requested:** ' + String(record.requested_at || '').replace('T', ' ').slice(0, 19) + ' UTC',
+    '**VirusTotal analysis:** ' + (record.report_url || 'Not available'),
+    '',
+    '**Result:** ' + (record.result || (record.status === 'pending' ? 'Analysis is still processing.' : 'No result was returned.')),
+    '',
+    'This optional scan is a point-in-time check, not a guarantee that a resource is safe.'
+  ];
+  return {
+    author: { name: 'Kyro Proof · Optional scan', icon_url: KYRO_ICON },
+    title: 'VirusTotal scan: ' + embedText(item.title || record.title || record.slug, 100),
+    url: record.page_url,
+    description: lines.join('\n'),
+    color: record.flagged ? 0xb45309 : record.status === 'completed' ? 0x10b981 : record.status === 'pending' ? 0x38bdf8 : 0x6b7280,
+    fields: [
+      { name: 'Status', value: '`' + statusLabel + '`', inline: true },
+      { name: 'Detections', value: '`' + (record.detections == null ? 'n/a' : String(record.detections)) + '`', inline: true }
+    ],
+    footer: { text: 'Kyro · optional VirusTotal scan', icon_url: KYRO_ICON },
+    timestamp: new Date().toISOString()
+  };
+}
+async function postOrUpdateProof(env, record) {
+  const channel = proofChannelId(env);
+  if (!channel) {
+    record.proof_error = 'No proof channel is configured (DISCORD_PROOF_CHANNEL_ID).';
+    await saveScanRecord(env, record.slug, record);
+    return record;
+  }
+  if (Number(record.proof_attempts || 0) >= 3 && !record.proof_msg_id) return record;
+  const payload = {
+    embeds: [proofEmbed(record)],
+    components: record.page_url ? [{ type: 1, components: [{ type: 2, style: 5, label: 'Open resource ↗', url: record.page_url }] }] : [],
+    allowed_mentions: { parse: [] }
+  };
+  if (record.proof_msg_id) {
+    const patched = await discordCall(env, 'PATCH', `/channels/${channel}/messages/${record.proof_msg_id}`, payload);
+    if (patched.ok) { record.proof_error = undefined; await saveScanRecord(env, record.slug, record); return record; }
+    if (patched.status !== 404) { record.proof_error = 'Could not update the proof message (' + patched.status + ').'; await saveScanRecord(env, record.slug, record); return record; }
+    record.proof_msg_id = '';
+  }
+  record.proof_attempts = Number(record.proof_attempts || 0) + 1;
+  const posted = await discordCall(env, 'POST', `/channels/${channel}/messages`, payload);
+  if (posted.ok && posted.data && posted.data.id) {
+    record.proof_msg_id = posted.data.id;
+    record.proof_error = undefined;
+  } else {
+    record.proof_error = 'Could not post in the proof channel (' + (posted.status || 0) + '). Check the channel ID and the bot permissions.';
+  }
+  await saveScanRecord(env, record.slug, record);
+  return record;
+}
+async function queueVirusTotalScan(env, item, requestedBy = '') {
+  const slug = resourceSlug(item);
+  const url = safeHttpUrl(item.download_url || item.source_url, 800);
+  if (!url) return null;
+  const existing = (await scanRecords(env))[slug];
+  if (existing && ['pending', 'completed', 'unavailable', 'failed'].includes(existing.status)) return existing;
+
+  const record = {
+    slug,
+    item: { title: cleanText(item.title, 120), slug, kind: item.kind, os: item.os, category: item.category, creator: item.creator, by_username: item.by_username, source_url: item.source_url, download_url: item.download_url, details: String(item.details || '').slice(0, 1500), image_url: item.image_url },
+    title: cleanText(item.title, 120),
+    page_url: resourcePageUrl(item),
+    scan_type: 'url',
+    scan_url: url,
+    requested_by: requestedBy ? String(requestedBy).slice(0, 40) : undefined,
+    requested_at: new Date().toISOString(),
+    updated: new Date().toISOString(),
+    status: 'pending'
+  };
+
+  if (!env.VIRUSTOTAL_API_KEY) {
+    record.status = 'unavailable';
+    record.error = 'VirusTotal is not configured on the server.';
+    record.result = 'Scan unavailable: the server has no VirusTotal API key.';
+    await saveScanRecord(env, slug, record);
+    await postOrUpdateProof(env, record);
+    return record;
+  }
 
   try {
-    await mutateDoc(env, VAULT_ITEMS_KEY, { items: {} }, curr => {
-      const items = curr?.items || {};
-      items[slug] = {
-        name: item.title,
-        slug,
-        thread_id: showcaseThreadId,
-        announcement_msg_id: announcementMsgId,
-        downloads_msg_id: downloadsMsgId,
-        version: item.version || '1.0'
-      };
-      return { items };
+    const res = await fetch('https://www.virustotal.com/api/v3/urls', {
+      method: 'POST',
+      headers: { 'x-apikey': env.VIRUSTOTAL_API_KEY, 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'url=' + encodeURIComponent(url)
     });
-  } catch (e) {}
+    if (!res.ok) {
+      record.status = res.status === 429 ? 'unavailable' : 'failed';
+      record.error = res.status === 429 ? 'VirusTotal rate limit reached.' : 'VirusTotal rejected the scan request (' + res.status + ').';
+      record.result = record.status === 'unavailable' ? 'Scan unavailable: rate limit reached.' : 'Scan failed: VirusTotal rejected the request.';
+    } else {
+      const data = await res.json();
+      const analysisId = data && data.data && data.data.id;
+      record.analysis_id = analysisId || undefined;
+      record.report_url = analysisId ? 'https://www.virustotal.com/gui/url/' + analysisId : undefined;
+      record.checked_at = new Date().toISOString();
+    }
+  } catch {
+    record.status = 'failed';
+    record.error = 'Could not reach VirusTotal.';
+    record.result = 'Scan failed: VirusTotal could not be reached.';
+  }
+  await saveScanRecord(env, slug, record);
+  await postOrUpdateProof(env, record);
+  return record;
 }
+
+async function refreshVirusTotalScan(env, record) {
+  let res;
+  try {
+    res = await fetch('https://www.virustotal.com/api/v3/analyses/' + encodeURIComponent(record.analysis_id), {
+      headers: { 'x-apikey': env.VIRUSTOTAL_API_KEY }
+    });
+  } catch {
+    return record;
+  }
+  if (res.status === 429) return record;
+  if (!res.ok) {
+    record.status = 'failed';
+    record.error = 'VirusTotal analysis could not be read (' + res.status + ').';
+    record.result = 'Scan failed: the result could not be read.';
+    await saveScanRecord(env, record.slug, record);
+    await postOrUpdateProof(env, record);
+    return record;
+  }
+  const data = await res.json();
+  const attrs = (data && data.data && data.data.attributes) || {};
+  if (attrs.status !== 'completed') return record;
+  const stats = attrs.stats || {};
+  record.status = 'completed';
+  record.stats = {
+    malicious: Number(stats.malicious || 0),
+    suspicious: Number(stats.suspicious || 0),
+    harmless: Number(stats.harmless || 0),
+    undetected: Number(stats.undetected || 0),
+    timeout: Number(stats.timeout || 0)
+  };
+  record.detections = record.stats.malicious + record.stats.suspicious;
+  record.flagged = record.detections > 0;
+  record.result = vtStatsText(record.stats);
+  record.completed_at = new Date().toISOString();
+  record.updated = record.completed_at;
+  await saveScanRecord(env, record.slug, record);
+  await postOrUpdateProof(env, record);
+  if (record.flagged) {
+    try {
+      await logBotAudit(env, 'VirusTotal Report Needs Review', { id: 'kyro-system', username: 'Kyro system' },
+        `Optional URL scan reported detections for "${record.title}". Resource left in place for a moderator decision.`);
+    } catch {}
+  }
+  return record;
+}
+
+async function processVirusTotalScans(env) {
+  if (!env.VIRUSTOTAL_API_KEY) return;
+  const records = await scanRecords(env);
+  const pending = Object.values(records).filter(record => record.status === 'pending' && record.analysis_id).slice(0, 5);
+  for (const record of pending) await refreshVirusTotalScan(env, record);
+}
+
+async function handleDiscordPublishAdmin(request, url, env, cors) {
+  const session = await requireMember(bearerToken(request, url), env);
+  if (!(isOwnerSession(session, env) || isAdmin(session, env))) {
+    throw fail(403, 'forbidden', 'Only the owner or an admin can manage Discord announcements.');
+  }
+  if (request.method === 'GET') {
+    return json({ publish: await publishRecords(env) }, 200, cors);
+  }
+  if (request.method !== 'POST') return json({ error: 'Use GET or POST.' }, 405, cors);
+  await limitWrites(env, 'discord-publish-admin', session.id, 20);
+  const input = await jsonBody(request);
+  const slug = resourceSlug({ slug: input.slug, id: input.id });
+  const action = String(input.action || 'retry');
+  if (action !== 'retry') throw fail(400, 'bad_action', 'Use action "retry".');
+
+  const records = await publishRecords(env);
+  const snapshot = records[slug] && records[slug].snapshot;
+  let item = null;
+  const pub = (await readDoc(env, VAULT_PUBLIC_ITEMS_KEY, { items: [] })).value || {};
+  item = (Array.isArray(pub.items) ? pub.items : []).find(entry => entry.slug === slug || entry.id === slug) || null;
+  if (!item) {
+    const subs = (await readDoc(env, VAULT_SUBMISSIONS_KEY, { submissions: [] })).value || {};
+    item = (Array.isArray(subs.submissions) ? subs.submissions : []).find(entry => entry.slug === slug || entry.id === slug) || null;
+  }
+  if (!item && snapshot) item = snapshot;
+  if (!item) throw fail(404, 'not_found', 'No resource matches that slug, so there is nothing to announce.');
+
+  const result = await dispatchKyroDiscordPublish(item, env);
+  await logBotAudit(env, 'Discord Announcement Retried', session,
+    `Retried "${item.title}" (status: ${result.status || 'unknown'}).`);
+  return json({ ok: result.status !== 'failed', publish: result }, 200, cors);
+}
+
+async function handleVirusTotalAdmin(request, url, env, cors) {
+  const session = await requireMember(bearerToken(request, url), env);
+  if (!(isOwnerSession(session, env) || isAdmin(session, env))) {
+    throw fail(403, 'forbidden', 'Only the owner or an admin can manage VirusTotal scans.');
+  }
+  if (request.method === 'GET') {
+    return json({ scans: await scanRecords(env), proof_channel_configured: Boolean(proofChannelId(env)) }, 200, cors);
+  }
+  if (request.method !== 'POST') return json({ error: 'Use GET or POST.' }, 405, cors);
+  await limitWrites(env, 'virustotal-admin', session.id, 10);
+  const input = await jsonBody(request);
+  const slug = resourceSlug({ slug: input.slug, id: input.id });
+  const records = await scanRecords(env);
+  const existing = records[slug];
+  if (!existing || !existing.item) throw fail(404, 'not_found', 'No scan record or snapshot exists for that resource.');
+  const action = String(input.action || 'retry');
+  if (action === 'refresh') {
+    if (!existing.analysis_id) throw fail(400, 'no_analysis', 'That scan has no analysis ID to check.');
+    const refreshed = await refreshVirusTotalScan(env, { ...existing });
+    await logBotAudit(env, 'VirusTotal Scan Checked', session, `Checked the optional URL scan for "${existing.title}" (status: ${refreshed.status}).`);
+    return json({ ok: refreshed.status !== 'failed', scan: refreshed }, 200, cors);
+  }
+  if (action !== 'retry') throw fail(400, 'bad_action', 'Use action "retry" or "refresh".');
+  if (existing.status === 'pending') throw fail(409, 'scan_pending', 'That scan is still processing.');
+  const result = await queueVirusTotalScan(env, existing.item, session.id);
+  await logBotAudit(env, 'VirusTotal Scan Retried', session, `Retried the optional URL scan for "${existing.title}".`);
+  return json({ ok: Boolean(result) && result.status !== 'failed', scan: result }, 200, cors);
+}
+
 const VAULT_ITEMS_KEY = 'kyro.vault_items.v1';
 const DASHBOARD_CONFIG_KEY = 'kyro.dashboard_config.v1';
 const DASHBOARD_AUDIT_KEY = 'kyro.dashboard_audit.v1';
@@ -2704,169 +3026,50 @@ const KYRO_ICON = 'https://raw.githubusercontent.com/kyroownr/Kyro-Websitee/main
 
 async function handleVaultPublish(request, url, env, cors) {
   if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
-  const token = bearerToken(request, url);
-  const session = await requireMember(token, env);
-  
-  // Owner only can publish directly from website
-  const isOwner = isOwnerSession(session, env);
-  if (!isOwner) throw fail(403, 'forbidden', 'Only the Kyro Server Owner can publish resources to Discord.');
+  const session = await requireMember(bearerToken(request, url), env);
+  if (!isOwnerSession(session, env)) throw fail(403, 'forbidden', 'Only the Kyro Server Owner can publish resources to Discord.');
 
-  const item = await jsonBody(request);
-  if (!item.name || !item.slug) throw fail(400, 'bad_input', 'Resource name and slug are required.');
+  const input = await jsonBody(request);
+  const rawSlug = String(input.slug || '').trim();
+  if (!rawSlug) throw fail(400, 'bad_input', 'Resource name and slug are required.');
+  const title = cleanText(input.name || input.title, 120);
+  if (!title) throw fail(400, 'bad_input', 'Resource name and slug are required.');
 
-  let rawSlug = item.slug.toLowerCase().trim().replace(/^\/+|\/+$/g, '');
-  if (/^https?:\/\//i.test(rawSlug)) {
-    try {
-      const u = new URL(rawSlug);
-      const parts = u.pathname.split('/').filter(Boolean);
-      rawSlug = parts[parts.length - 1] || u.hash.replace(/^#\/?/, '') || u.hostname.replace(/\./g, '-');
-    } catch {}
-  }
-  const slug = rawSlug.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'resource';
-  const os = (item.os || 'windows').toLowerCase();
-  const pageUrl = (os === 'macos') ? `https://kyro.new.tg/macos#${slug}` : `https://kyro.new.tg/windows#${slug}`;
-
-  // Read existing published items to detect update
-  const vaultDoc = (await readDoc(env, VAULT_ITEMS_KEY, { items: {} })).value;
-  const existing = vaultDoc.items && vaultDoc.items[slug];
-  const isUpdate = Boolean(existing);
-
-  const creator = item.by_username || item.creator || 'Kyro Vault';
-  const size = item.size || 'Vault Build';
-  const category = item.category || 'Adobe After Effects';
-  const osLabel = os === 'both' ? 'Windows & macOS' : os === 'macos' ? 'macOS' : 'Windows';
-  const vaultId = item.id_code || ('#' + Math.floor(100000 + Math.random() * 900000));
-  const tier = item.tier || 'Free';
-
-  const embed = {
-    author: {
-      name: 'Kyro Vault',
-      icon_url: KYRO_ICON
-    },
-    title: (isUpdate ? '🔄 UPDATE: ' : '') + item.name.toUpperCase(),
-    url: pageUrl,
-    description: (item.details || `${item.name} is now available in the Kyro Vault. Free resources and tools for verified editors.`) +
-      `\n\n**Website Link:** ${pageUrl}`,
-    color: 0x1f232b,
-    fields: [
-      {
-        name: 'Information',
-        value: `• **Creator:** \`${creator}\`\n• **ID:** \`${vaultId}\`\n• **Size:** \`${size}\`\n• **Category:** \`${category}\`\n• **Platform:** \`${osLabel}\``,
-        inline: true
-      },
-      {
-        name: 'Membership',
-        value: `• **Tier:** \`${tier}\`\n• **Status:** \`${isUpdate ? 'Updated' : 'Verified'}\``,
-        inline: true
-      }
-    ],
-    footer: {
-      text: 'Kyro™ Website | Resource Monitor',
-      icon_url: KYRO_ICON
-    },
-    timestamp: new Date().toISOString()
+  /* The dashboard route accepts the same fields as an upload, but it never
+     builds its own embed: every announcement comes from one builder so the
+     copy, course handling and mention rules cannot drift apart. */
+  const item = {
+    id: cleanText(input.id, 80) || undefined,
+    title,
+    slug: rawSlug,
+    kind: input.kind === 'course' ? 'course' : input.kind === 'software' ? 'software' : 'tool',
+    os: ['windows', 'macos', 'both'].includes(input.os) ? input.os : 'both',
+    category: cleanText(input.category || 'General', 60),
+    details: cleanText(input.details || input.desc || '', 1500),
+    creator: cleanText(input.creator || input.by_username || '', 60),
+    by_username: cleanText(input.by_username || '', 60),
+    source_url: input.source_url ? safeHttpUrl(input.source_url, 500) : undefined,
+    download_url: input.download_url ? safeHttpUrl(input.download_url, 500) : undefined,
+    image_url: input.image_url ? safeHttpUrl(input.image_url, 500) : undefined,
+    version: cleanText(input.version || '', 40)
   };
 
-  if (item.image_url && /^https?:\/\//.test(item.image_url)) {
-    embed.image = { url: item.image_url };
-  }
-
-  const components = [
-    {
-      type: 1,
-      components: [
-        {
-          type: 2,
-          style: 5,
-          label: 'View Resource ↗',
-          url: pageUrl
-        },
-        {
-          type: 2,
-          style: 5,
-          label: 'Browse Vault ↗',
-          url: 'https://kyro.new.tg'
-        }
-      ]
-    }
-  ];
-
-  const outcomes = { announcements: false, downloads_links: false, showcase: false, isUpdate, pageUrl };
-
-  if (env.DISCORD_BOT_TOKEN) {
-    // 1. Announcements
-    const pingRole = await verifiedRoleId(env);
-    try {
-      await fetch('https://discord.com/api/v10/channels/1539961971422658571/messages', {
-        method: 'POST',
-        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
-        body: JSON.stringify({
-          ...rolePing(pingRole, isUpdate ? '📢 **Vault Update Alert**' : '🚀 **New Vault Resource Released**'),
-          embeds: [embed],
-          components
-        })
-      });
-      outcomes.announcements = true;
-    } catch (e) {
-      console.warn('[publish] Announcements error:', e);
-    }
-
-    // 2. Downloads-links
-    try {
-      await fetch('https://discord.com/api/v10/channels/1539961998601756722/messages', {
-        method: 'POST',
-        headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
-        body: JSON.stringify({ embeds: [embed], components })
-      });
-      outcomes.downloads_links = true;
-    } catch (e) {
-      console.warn('[publish] Downloads-links error:', e);
-    }
-
-    // 3. Showcase forum (tag 1541775995395379310)
-    if (isUpdate && existing?.thread_id) {
-      try {
-        await fetch(`https://discord.com/api/v10/channels/${existing.thread_id}/messages`, {
-          method: 'POST',
-          headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
-          body: JSON.stringify({
-            content: `🔄 **New Update Released** for **${item.name}**!`,
-            embeds: [embed],
-            components
-          })
-        });
-        outcomes.showcase = true;
-      } catch (e) {}
-    }
-
-    if (!outcomes.showcase) {
-      try {
-        const scRes = await fetch('https://discord.com/api/v10/channels/1541775088901292042/threads', {
-          method: 'POST',
-          headers: { authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'content-type': 'application/json' },
-          body: JSON.stringify({
-            name: (isUpdate ? '[UPDATE] ' : '') + item.name,
-            applied_tags: ['1541775995395379310'],
-            message: { embeds: [embed], components }
-          })
-        });
-        if (scRes.ok) {
-          const scData = await scRes.json();
-          await mutateDoc(env, VAULT_ITEMS_KEY, { items: {} }, curr => {
-            const items = curr?.items || {};
-            items[slug] = { name: item.name, slug, thread_id: scData.id, version: item.version || '1.0' };
-            return { items };
-          });
-          outcomes.showcase = true;
-        }
-      } catch (e) {
-        console.warn('[publish] Showcase error:', e);
-      }
-    }
-  }
-
-  await logBotAudit(env, isUpdate ? 'Vault Resource Updated' : 'New Vault Resource Published', session, `Published "${item.name}" -> ${pageUrl}`);
-  return json(outcomes, 200, cors);
+  const record = await dispatchKyroDiscordPublish(item, env);
+  await logBotAudit(
+    env,
+    record.status === 'updated' ? 'Vault Resource Updated' : 'New Vault Resource Published',
+    session,
+    `Published "${item.title}" -> ${resourcePageUrl(item)} (Discord: ${record.status}).`
+  );
+  return json({
+    ok: record.status !== 'failed',
+    status: record.status,
+    pageUrl: resourcePageUrl(item),
+    announcements: Boolean(record.announcement_msg_id),
+    downloads_links: Boolean(record.downloads_msg_id),
+    showcase: Boolean(record.thread_id),
+    error: record.error || null
+  }, record.status === 'failed' ? 502 : 200, cors);
 }
 
 // Channels

@@ -34,7 +34,7 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="all" />
   <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
 
-  <link rel="stylesheet" href="/css/styles.css?v=3.4" />
+  <link rel="stylesheet" href="/css/styles.css?v=3.7" />
 </head>
 <body data-page="category" data-category="macos">
 
@@ -585,6 +585,18 @@
               <div>
                 <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Description / Effects / Notes</label>
                 <textarea id="vUpDetails" rows="3" placeholder="Describe the resource features, installation, or what effects are included..." style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;resize:vertical;"></textarea>
+              <!-- Course-only fields: source attribution, permission, takedown path -->
+              <div class="course-only-fields" id="vUpCourseFields" hidden style="display:grid;gap:10px;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;background:rgba(255,255,255,0.02);">
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Original source URL *</label>
+                  <input type="url" id="vUpSourceUrl" placeholder="https://... — the creator's official course page" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                  <div style="font-size:0.72rem;color:var(--dim);margin-top:4px;">If the course cannot be redistributed, submit only this link — do not upload a copy without permission.</div>
+                </div>
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:0.8rem;color:#e2e8f0;">
+                  <input type="checkbox" id="vUpRights" style="margin-top:3px;width:15px;height:15px;">
+                  <span>I have the right to share this course, or this listing only links to the creator’s original page.</span>
+                </label>
+              </div>
               </div>
 
               <!-- Ready to Release (Community Approval) vs Normal Upload & Countdown -->
@@ -614,6 +626,16 @@
                 </div>
               </div>
 
+              <!-- Optional, opt-in VirusTotal check. Nothing leaves the server unless this is ticked. -->
+              <div style="border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;background:rgba(255,255,255,0.02);display:grid;gap:8px;">
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:0.82rem;color:#e2e8f0;">
+                  <input type="checkbox" id="vUpScan" style="margin-top:3px;width:15px;height:15px;">
+                  <span><strong>Request a VirusTotal scan (optional)</strong><br><span style="font-size:0.74rem;color:var(--dim);">Off by default. You can publish without it.</span></span>
+                </label>
+                <div id="vUpScanNote" hidden style="font-size:0.74rem;line-height:1.5;color:var(--dim);border-top:1px solid rgba(255,255,255,0.07);padding-top:8px;">
+                  If ticked, the resource’s <strong>URL</strong> is sent to VirusTotal and may be shared with security partners or researchers under <a href="https://www.virustotal.com/gui/terms" target="_blank" rel="noopener noreferrer">VirusTotal’s terms</a> and <a href="https://www.virustotal.com/gui/privacy-policy" target="_blank" rel="noopener noreferrer">privacy policy</a>. Kyro does not upload the file itself. A scan is a point-in-time check, not a guarantee that a resource is safe, and “no detections reported” does not mean “verified”.
+                </div>
+              </div>
               <button type="submit" class="btn btn-primary" id="vUpSubmitBtn" style="align-self:flex-start;">Submit Upload to Vault</button>
             </form>
           </div>
@@ -708,9 +730,9 @@
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <!-- Modular scripts: data → preview engine → app wiring -->
-  <script defer src="/js/data.js?v=2.7"></script>
+  <script defer src="/js/data.js?v=2.10"></script>
   <script defer src="/js/preview.js?v=2.3"></script>
-  <script defer src="/js/app.js?v=2.7"></script>
+  <script defer src="/js/app.js?v=2.10"></script>
   <script defer src="/js/applications.js?v=2.3"></script>
 </body>
 </html>

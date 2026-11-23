@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; media-src 'self' https:; connect-src 'self' https://kyro-auth.kyro-ownr.workers.dev https://discord.com; base-uri 'self'; form-action 'self'; object-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; media-src 'self' https:; connect-src 'self' https://kyro-auth.kyro-ownr.workers.dev https://discord.com; base-uri 'self'; form-action 'self'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; manifest-src 'self'">
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Kyro — Free Tools &amp; Resources for Editors</title>
@@ -37,7 +37,7 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="all" />
   <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
 
-  <link rel="stylesheet" href="/css/styles.css?v=7ccfd85e" />
+  <link rel="stylesheet" href="/css/styles.css?v=7e00cf38" />
 </head>
 <body>
 
@@ -74,9 +74,9 @@
   <main class="shell">
     <!-- ============ Centered editorial hero ============ -->
     <section class="hero">
-      <p class="hero-eyebrow mono">Kyro · editor community</p>
+      <p class="hero-eyebrow mono">Free resources for editors, shared by the community.</p>
       <h1 class="hero-title">Good tools shouldn’t be out of reach.</h1>
-      <p class="hero-sub">Kyro is a small editor community sharing useful After Effects resources for people who can’t afford expensive tools. Browse the vault, see what each resource does, and join the community to download.</p>
+      <p class="hero-sub">Kyro is a small editor community sharing useful After Effects resources for people who can’t afford expensive tools. Browse the vault, previews and install guides without an account — Discord sign-in is only needed when a download is gated.</p>
 
       <div class="hero-search-wrap">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
@@ -101,8 +101,8 @@
     <p class="notice" id="notice">
       <span class="notice-dot" aria-hidden="true"></span>
       <span class="notice-body">
-        <span class="notice-text">Everything here is free. Every build is checked before it ships, but scan before you install — false positives are normal with unsigned AE extensions.</span>
-        <span class="notice-sub">Downloads verified in the <a class="notice-link" href="#discordCard">Kyro Discord</a>.</span>
+        <span class="notice-text">Everything here is free. Browsing needs no account; gated downloads unlock with a Kyro Discord membership. Scan before you install — unsigned AE extensions often trigger false positives.</span>
+        <span class="notice-sub">Sources and review details are shown on each listing. Found a problem? Report it in the <a class="notice-link" href="#discordCard">Kyro Discord</a>.</span>
       </span>
     </p>
 
@@ -157,7 +157,8 @@
         <p>Everything on Kyro is free to browse. When you press download, the site asks you to sign in with Discord and checks that you are a member of the Kyro server. That check happens at download time only — you never need an account to read a listing, view previews or open an install guide.</p>
         <p>Some listings point to the creator’s own host instead of a file stored by Kyro. Archive passwords, when a listing has one, are shown next to the download after your membership is confirmed.</p>
         <p>Scan anything you download before opening it. Unsigned After Effects extensions (<code>.zxp</code>, <code>.jsxbin</code>) commonly trigger antivirus warnings; a warning is not proof that a file is unsafe, and a clean result is not proof that it is safe. We only show review or scan details that a listing actually provides.</p>
-        <p>Found something broken or out of date? Ask in the <a class="prose-link" href="#discordCard">Kyro Discord</a>, or send a request so it can be fixed or replaced.</p>
+        <p>Listings show where the resource came from and who submitted or reviewed it where that information was recorded. If review or scan details are missing, they are marked “Not provided” rather than assumed.</p>
+        <p>Found something broken, out of date, or shared without permission? Report it in the <a class="prose-link" href="#discordCard">Kyro Discord</a> and it will be reviewed and removed if needed. Course listings should point to the creator’s original page when the course cannot be redistributed; contributors confirm they have the right to share or link what they submit.</p>
       </div>
     </details>
 
@@ -644,6 +645,18 @@
               <div>
                 <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Description / Effects / Notes</label>
                 <textarea id="vUpDetails" rows="3" placeholder="Describe the resource features, installation, or what effects are included..." style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;resize:vertical;"></textarea>
+              <!-- Course-only fields: source attribution, permission, takedown path -->
+              <div class="course-only-fields" id="vUpCourseFields" hidden style="display:grid;gap:10px;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;background:rgba(255,255,255,0.02);">
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Original source URL *</label>
+                  <input type="url" id="vUpSourceUrl" placeholder="https://... — the creator's official course page" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                  <div style="font-size:0.72rem;color:var(--dim);margin-top:4px;">If the course cannot be redistributed, submit only this link — do not upload a copy without permission.</div>
+                </div>
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:0.8rem;color:#e2e8f0;">
+                  <input type="checkbox" id="vUpRights" style="margin-top:3px;width:15px;height:15px;">
+                  <span>I have the right to share this course, or this listing only links to the creator’s original page.</span>
+                </label>
+              </div>
               </div>
 
               <!-- Release mode: publish now, or hold it behind the community vote gate -->
@@ -675,6 +688,16 @@
                 </div>
               </div>
 
+              <!-- Optional, opt-in VirusTotal check. Nothing leaves the server unless this is ticked. -->
+              <div style="border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;background:rgba(255,255,255,0.02);display:grid;gap:8px;">
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:0.82rem;color:#e2e8f0;">
+                  <input type="checkbox" id="vUpScan" style="margin-top:3px;width:15px;height:15px;">
+                  <span><strong>Request a VirusTotal scan (optional)</strong><br><span style="font-size:0.74rem;color:var(--dim);">Off by default. You can publish without it.</span></span>
+                </label>
+                <div id="vUpScanNote" hidden style="font-size:0.74rem;line-height:1.5;color:var(--dim);border-top:1px solid rgba(255,255,255,0.07);padding-top:8px;">
+                  If ticked, the resource’s <strong>URL</strong> is sent to VirusTotal and may be shared with security partners or researchers under <a href="https://www.virustotal.com/gui/terms" target="_blank" rel="noopener noreferrer">VirusTotal’s terms</a> and <a href="https://www.virustotal.com/gui/privacy-policy" target="_blank" rel="noopener noreferrer">privacy policy</a>. Kyro does not upload the file itself. A scan is a point-in-time check, not a guarantee that a resource is safe, and “no detections reported” does not mean “verified”.
+                </div>
+              </div>
               <button type="submit" class="btn btn-primary" id="vUpSubmitBtn" style="align-self:flex-start;">Submit Upload to Vault</button>
             </form>
           </div>
@@ -771,7 +794,7 @@
   <!-- Modular scripts: data → preview engine → app wiring -->
   <script defer src="/js/data.js?v=7101c45f"></script>
   <script defer src="/js/preview.js?v=53c30c30"></script>
-  <script defer src="/js/app.js?v=99917b1e"></script>
+  <script defer src="/js/app.js?v=1da9950f"></script>
   <script defer src="/js/applications.js?v=195770b9"></script>
 </body>
 </html>

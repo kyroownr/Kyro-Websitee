@@ -118,6 +118,10 @@
           version: item.version || '1.0',
           creator: item.creator || item.by_username || 'Contributor',
           releaseAt: item.releaseAt || item.release_at || undefined,
+          source_url: item.source_url || '',
+          level: item.level || item.skill_level || '',
+          duration: item.duration || '',
+          language: item.language || '',
           downloads: 0,
           added: item.created ? item.created.slice(0, 10) : '2026-11-14',
           tags: [item.category || 'plugin', ...(osList)],
@@ -744,19 +748,26 @@
     return (f && f.size) || r.size || '';
   }
 
+  function hostLabel(url) {
+    try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
+  }
+
   function cardHTML(r, i) {
     const isSaved = saved.has(r.id);
     const locked = isLocked(r);
     const isOwner = userIsOwner();
     const course = kindOf(r) === 'course';
     const exts = (r.files || [{ ext: r.format }]).map(f => String(f.ext || '').toUpperCase().replace('.', '')).filter(Boolean).join(' · ');
-    const version = r.version ? '<span class="version-chip mono">' + esc(r.version) + '</span>' : '';
-    const ae = r.aeMin ? '<span class="chip">AE ' + esc(r.aeMin) + '+</span>' : '';
-    const platform = platformLabel(r) ? '<span class="chip">' + esc(platformLabel(r)) + '</span>' : '';
-    const size = fileSize(r) ? '<span class="chip">' + esc(fileSize(r)) + '</span>' : '';
-    const source = (r.creator || r.credits) ? '<span class="chip">' + esc(r.creator || r.credits) + '</span>' : '';
+    const version = !course && r.version ? '<span class="version-chip mono">' + esc(r.version) + '</span>' : '';
+    const ae = !course && r.aeMin ? '<span class="chip">AE ' + esc(r.aeMin) + '+</span>' : '';
+    const platform = !course && platformLabel(r) ? '<span class="chip">' + esc(platformLabel(r)) + '</span>' : '';
+    const size = !course && fileSize(r) ? '<span class="chip">' + esc(fileSize(r)) + '</span>' : '';
+    const sourceName = r.creator || r.credits || (r.source_url ? hostLabel(r.source_url) : '');
+    const source = sourceName
+      ? '<span class="chip">' + (course ? 'By ' : '') + esc(sourceName) + '</span>'
+      : '';
     const courseFacts = course
-      ? [r.level || r.skill_level, r.duration, r.language].filter(Boolean)
+      ? [r.level || r.skill_level, r.duration, r.language, r.category].filter(Boolean)
           .map(v => '<span class="chip">' + esc(v) + '</span>').join('')
       : '';
     const shot = (r.gallery || []).filter(Boolean)[0];
@@ -776,7 +787,7 @@
           ownerTools +
           '<span class="arrow" aria-hidden="true">→</span>' +
         '</div>' +
-        '<p class="card-desc">' + esc(r.desc) + '</p>' +
+        '<p class="card-desc" title="' + esc(r.desc) + '">' + esc(r.desc) + '</p>' +
         '<div class="card-meta">' +
           (course ? '' : '<span class="chip"><b>' + full(downloadCount(r)) + '</b> ' + (downloadCount(r) === 1 ? 'download' : 'downloads') + '</span>') +
           ae +
@@ -784,7 +795,7 @@
           size +
           source +
           courseFacts +
-          (exts ? '<span class="chip">' + esc(exts) + '</span>' : '') +
+          (!course && exts ? '<span class="chip">' + esc(exts) + '</span>' : '') +
           (locked ? '<span class="chip chip-soon mono">' + ICON.clock + 'COMING SOON</span>' : '') +
           priceBadge(r) +
         '</div>' +
@@ -3184,6 +3195,29 @@
     modeRadios.forEach(radio => radio.addEventListener('change', paintMode));
     paintMode();
 
+    /* Course submissions must name their original source and confirm the
+       contributor may share or link it; both are re-checked by the worker. */
+    const kindSelect = $('#vUpKind');
+    const courseFields = $('#vUpCourseFields');
+    const paintCourseFields = () => {
+      const isCourse = Boolean(kindSelect && kindSelect.value === 'course');
+      if (courseFields) courseFields.hidden = !isCourse;
+      const rights = $('#vUpRights');
+      if (rights) rights.required = isCourse;
+    };
+    if (kindSelect) kindSelect.addEventListener('change', paintCourseFields);
+    paintCourseFields();
+
+    /* Optional VirusTotal scan: consent text stays hidden until the uploader
+       ticks the box, and the box starts unchecked on every page load. */
+    const scanCheck = $('#vUpScan');
+    const scanNote = $('#vUpScanNote');
+    if (scanCheck && scanNote) {
+      const paintScan = () => { scanNote.hidden = !scanCheck.checked; };
+      scanCheck.addEventListener('change', paintScan);
+      paintScan();
+    }
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       if (!auth.token) {
@@ -3221,6 +3255,20 @@
       }
 
       const uploadKind = $('#vUpKind')?.value || 'tool';
+      const sourceUrl = uploadKind === 'course' ? ($('#vUpSourceUrl')?.value.trim() || '') : '';
+      const rightsConfirmed = uploadKind === 'course' && Boolean($('#vUpRights')?.checked);
+      if (uploadKind === 'course' && !sourceUrl) {
+        toast({ title: 'Source link needed', sub: 'Courses need a link to the creator’s original page, even when you are also sharing a copy.', icon: ICON.x });
+        btn.disabled = false;
+        btn.textContent = isIncoming ? 'Send to Incoming' : 'Release directly to the Vault';
+        return;
+      }
+      if (uploadKind === 'course' && !rightsConfirmed) {
+        toast({ title: 'Permission not confirmed', sub: 'Tick the box confirming you can share or link this course.', icon: ICON.x });
+        btn.disabled = false;
+        btn.textContent = isIncoming ? 'Send to Incoming' : 'Release directly to the Vault';
+        return;
+      }
       const payload = {
         title: $('#vUpTitle')?.value.trim(),
         slug: cleanSlug,
@@ -3232,6 +3280,9 @@
         password: $('#vUpPassword')?.value.trim() || '',
         image_url: $('#vUpImageUrl')?.value.trim(),
         details: $('#vUpDetails')?.value.trim(),
+        source_url: sourceUrl || undefined,
+        rights_confirmed: rightsConfirmed || undefined,
+        scan_requested: Boolean($('#vUpScan')?.checked) || undefined,
         release_at: releaseAtVal,
         vote_limit: voteLimit
       };
@@ -3357,6 +3408,12 @@
       fact('Estimated duration', r.duration);
       fact('Language', r.language);
       fact('Licence / source', r.license || r.source_type);
+      const sourceHref = safeHref(r.source_url);
+      if (sourceHref) {
+        facts.push('<div class="safety-row"><dt>Original source</dt><dd><a class="prose-link" href="' +
+          esc(sourceHref) + '" target="_blank" rel="noopener noreferrer">' +
+          esc(hostLabel(sourceHref) || sourceHref) + '</a></dd></div>');
+      }
     }
 
     /* Never invent a review, a reviewer or a scan. Only real fields render;
@@ -3380,7 +3437,9 @@
       '<section class="safety-block" aria-label="Resource details and safety">' +
         '<p class="section-label section-label--tight">Details &amp; safety</p>' +
         '<dl class="safety-list">' + facts.join('') + safetyRows + '</dl>' +
-        '<p class="safety-note">We list a review only when the vault actually has one. Scan every download before opening it — unsigned After Effects extensions and scripts often trigger antivirus warnings, and no file here is guaranteed clean.</p>' +
+        '<p class="safety-note">We list a review only when the vault actually has one. Scan every download before opening it — unsigned After Effects extensions and scripts often trigger antivirus warnings, and no file here is guaranteed clean.' +
+        (course ? ' Courses credit the creator and link their original page where one was supplied. If a listing should not be here, report it in the Kyro Discord and it will be reviewed.' : '') +
+        '</p>' +
       '</section>';
   }
 
