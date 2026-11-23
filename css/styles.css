@@ -234,14 +234,17 @@ code, .mono { font-family: var(--mono); }
   letter-spacing: -0.01em;
 }
 
+/* The search and the two platform buttons are the page's first decision, so
+   they carry the strongest weight; everything below them gets quieter. */
 .hero-search-wrap {
-  display: flex; align-items: center; gap: 11px;
-  width: 100%; margin-top: 32px; padding: 13px 16px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(14px);
-  color: var(--dim);
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; margin-top: 34px; padding: 17px 20px;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(18px);
+  color: var(--silver);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.28);
   transition: all 0.2s var(--ease);
 }
 .hero-search-wrap:hover, .hero-search-wrap:focus-within {
@@ -249,7 +252,7 @@ code, .mono { font-family: var(--mono); }
   background: rgba(255, 255, 255, 0.06);
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.24);
 }
-.hero-search { flex: 1; text-align: left; font-size: 0.88rem; color: var(--muted); }
+.hero-search { flex: 1; text-align: left; font-size: 0.98rem; color: var(--silver); }
 .hero-search-wrap:hover .hero-search { color: var(--white); }
 .hero-search-kbd { display: flex; gap: 4px; flex-shrink: 0; }
 .hero-search-kbd span {
@@ -258,13 +261,13 @@ code, .mono { font-family: var(--mono); }
   border: 1px solid var(--line); color: var(--dim); background: rgba(255, 255, 255, 0.04);
 }
 
-.os-toggle { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 22px; }
+.os-toggle { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 18px; }
 .os-toggle-btn {
   position: relative; overflow: hidden;
   display: inline-flex; align-items: center; justify-content: center; gap: 9px;
-  padding: 13px 26px;
-  min-width: 148px;
-  font-size: 0.94rem; font-weight: 600; letter-spacing: -0.01em;
+  padding: 15px 34px;
+  min-width: 168px;
+  font-size: 1rem; font-weight: 600; letter-spacing: -0.01em;
   color: var(--silver);
   border-radius: 980px;
   border: 1px solid var(--line);
@@ -279,14 +282,14 @@ code, .mono { font-family: var(--mono); }
 .os-toggle-btn svg { flex-shrink: 0; width: 14px; height: 14px; }
 
 /* ------------------------------- notice -------------------------------- */
+/* Fine print, not a banner: it sits under the membership step. */
 .notice {
   display: flex; align-items: flex-start; gap: 12px;
-  margin: 30px 0 0; padding: 14px 18px;
+  margin: 18px 0 0; padding: 12px 16px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(12px);
-  color: var(--muted); font-size: 0.82rem; line-height: 1.7;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  color: var(--dim); font-size: 0.77rem; line-height: 1.65;
 }
 .notice-dot {
   width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; margin-top: 8px;
@@ -299,18 +302,7 @@ code, .mono { font-family: var(--mono); }
 .notice-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 /* ---------------------------- access strip ------------------------------ */
-.access-strip { margin-top: 14px; }
-
-/* The free/build note and the membership state sit side by side instead of
-   stacking two full-width banners in the middle of the page. */
-.info-row {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 10px; margin-top: 26px; align-items: stretch;
-}
-.info-row .notice { margin: 0; height: 100%; }
-.info-row .access-strip { margin-top: 0; height: 100%; }
-.info-row .access-row { margin-top: 0; height: 100%; }
-@media (max-width: 720px) { .info-row { grid-template-columns: minmax(0, 1fr); } }
+.access-strip { margin-top: 30px; }
 .access-row {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   margin-top: 10px; padding: 14px 18px;
@@ -1270,6 +1262,9 @@ textarea.field-input { min-height: 72px; resize: vertical; line-height: 1.6; }
 .prose-title { margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: -0.015em; color: var(--white); }
 .prose-body { margin: 10px 0 0; max-width: 68ch; color: var(--muted); font-size: 0.92rem; line-height: 1.75; }
 .prose-body code { font-size: 0.82em; padding: 2px 7px; border-radius: 6px; color: var(--white); background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); }
+.prose-list { margin: 10px 0 0; padding-left: 20px; max-width: 68ch; color: var(--muted); font-size: 0.9rem; line-height: 1.75; }
+.prose-list li + li { margin-top: 4px; }
+.prose-list code { font-size: 0.82em; padding: 2px 7px; border-radius: 6px; color: var(--white); background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); }
 .prose-link { color: var(--accent); border-bottom: 1px solid transparent; transition: border-color 0.16s; }
 .prose-link:hover { border-bottom-color: var(--accent); }
 .page-foot { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin: 30px 0 0; }

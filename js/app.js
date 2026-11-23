@@ -89,6 +89,11 @@
           os: osList,
           version: item.version || '1.0',
           creator: item.creator || item.by_username || 'Contributor',
+          submitted_by: item.by_username || '',
+          reviewed_by: item.reviewed_by || '',
+          reviewed_at: item.reviewed_at || '',
+          checks: Array.isArray(item.checks) ? item.checks : [],
+          license: item.license || item.licence || '',
           releaseAt: item.releaseAt || item.release_at || undefined,
           source_url: item.source_url || '',
           level: item.level || item.skill_level || '',
@@ -374,17 +379,17 @@
   const ACCESS = {
     out: {
       cls: 'is-out', icon: ICON.lock,
-      text: '<b>Browsing is open to everyone.</b> Downloads unlock with a free Kyro Discord membership — sign in when you are ready to download.',
-      prompt: 'Sign in with Discord to unlock downloads. Browsing and previews stay open.'
+      text: '<b>Everything is free to browse.</b> Listings, previews and install guides need no account. A Kyro Discord membership unlocks the download links, the archive passwords and the #help channel.',
+      prompt: 'Sign in with Discord to unlock the file links and archive passwords. Browsing stays open.'
     },
     logged: {
       cls: 'is-partial', icon: ICON.shield,
-      text: '<b>One step left.</b> Join the Kyro Discord, then refresh verification to unlock downloads. Browsing stays open either way.',
+      text: '<b>One step left.</b> Join the Kyro Discord, then refresh verification. That unlocks the download links, the archive passwords and the #help channel — browsing stays open either way.',
       prompt: 'Join the Kyro Discord, then refresh verification. Browsing stays open.'
     },
           verified: {
       cls: 'is-ok', icon: ICON.unlock,
-      text: '<b>Membership verified.</b> Download buttons are unlocked for your account.',
+      text: '<b>Membership verified.</b> File links and archive passwords are unlocked for your account.',
       prompt: ''
     }
   };
@@ -3508,32 +3513,47 @@
     fact('Platform', platformLabel(r));
     fact('Version', r.version);
     fact('File size', fileSize(r));
-    fact('Contributor / source', r.creator || r.credits);
+    fact('Publisher', r.creator || r.credits);
+    fact('Submitted by', r.submitted_by || r.by_username);
     fact('Category', r.category && r.category !== 'software' ? r.category.charAt(0).toUpperCase() + r.category.slice(1) : '');
     fact('Added', r.added);
     if (course) {
       fact('Skill level', r.level || r.skill_level);
       fact('Estimated duration', r.duration);
       fact('Language', r.language);
-      fact('Licence / source', r.license || r.source_type);
-      const sourceHref = safeHref(r.source_url);
-      if (sourceHref) {
-        facts.push('<div class="safety-row"><dt>Original source</dt><dd><a class="prose-link" href="' +
-          esc(sourceHref) + '" target="_blank" rel="noopener noreferrer">' +
-          esc(hostLabel(sourceHref) || sourceHref) + '</a></dd></div>');
-      }
+    }
+    fact('Licence / sharing', r.license || r.licence || r.source_type || r.usage);
+    /* An original source is linked whenever one was supplied; otherwise the
+       publisher is named and the missing link is said plainly. */
+    const sourceHref = safeHref(r.source_url);
+    if (sourceHref) {
+      facts.push('<div class="safety-row"><dt>Original source</dt><dd><a class="prose-link" href="' +
+        esc(sourceHref) + '" target="_blank" rel="noopener noreferrer">' +
+        esc(hostLabel(sourceHref) || sourceHref) + '</a></dd></div>');
+    } else if (r.creator) {
+      facts.push('<div class="safety-row"><dt>Original source</dt><dd>' + esc(r.creator) + ' — no link recorded</dd></div>');
     }
 
     /* Never invent a review, a reviewer or a scan. Only real fields render;
        everything else is honestly labelled as not provided. */
     const reviewedBy = r.reviewed_by || r.reviewer || '';
     const reviewedAt = r.reviewed_at || r.reviewedAt || '';
+    const reviewedWhen = reviewedAt
+      ? new Date(reviewedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+      : '';
     const checks = Array.isArray(r.checks) ? r.checks.filter(Boolean) : (r.checks ? [r.checks] : []);
+    /* A scan is named only when the vault holds the checksum it refers to. */
+    const sha = String(r.sha256 || (r.files || []).map(f => f && f.sha256).find(Boolean) || '').trim().toLowerCase();
+    const hasHash = /^[0-9a-f]{64}$/.test(sha);
+    const scanRow = '<div class="safety-row"><dt>Scan status</dt><dd>' + (hasHash
+      ? 'No Kyro scan saved for this file — <a class="prose-link" href="https://www.virustotal.com/gui/file/' + sha + '" target="_blank" rel="noopener noreferrer">check the recorded checksum on VirusTotal</a>'
+      : 'Not scanned by Kyro — no checksum was recorded for this file') + '</dd></div>';
     const safetyRows =
-      '<div class="safety-row"><dt>Reviewed by</dt><dd>' + esc(reviewedBy || 'Not provided') + '</dd></div>' +
-      '<div class="safety-row"><dt>Review date</dt><dd>' + esc(reviewedAt || 'Not provided') + '</dd></div>' +
-      '<div class="safety-row"><dt>Checks performed</dt><dd>' + esc(checks.length ? checks.join(', ') : 'Not provided') + '</dd></div>' +
-      '<div class="safety-row"><dt>Download access</dt><dd>Kyro Discord membership required</dd></div>';
+      '<div class="safety-row"><dt>Reviewed by</dt><dd>' + esc(reviewedBy || 'Not recorded') + '</dd></div>' +
+      '<div class="safety-row"><dt>Review date</dt><dd>' + esc(reviewedWhen || 'Not recorded') + '</dd></div>' +
+      '<div class="safety-row"><dt>Checks performed</dt><dd>' + esc(checks.length ? checks.join(', ') : 'Not recorded — this listing carries no reviewer log') + '</dd></div>' +
+      scanRow +
+      '<div class="safety-row"><dt>Membership unlocks</dt><dd>Browsing is free. The download link, archive password and #help need a Kyro Discord membership.</dd></div>';
 
     return '<div class="spec-row">' +
       group('AE Compatibility', r.aeMin
@@ -3545,7 +3565,7 @@
       '<section class="safety-block" aria-label="Resource details and safety">' +
         '<p class="section-label section-label--tight">Details &amp; safety</p>' +
         '<dl class="safety-list">' + facts.join('') + safetyRows + '</dl>' +
-        '<p class="safety-note">We list a review only when the vault actually has one. Scan every download before opening it — unsigned After Effects extensions and scripts often trigger antivirus warnings, and no file here is guaranteed clean.' +
+        '<p class="safety-note">Rows above are filled only when the vault logged the detail; “Not recorded” means the listing was published without it. Scan every download before opening it — unsigned After Effects extensions and scripts often trigger antivirus warnings, and no file here is guaranteed clean.' +
         (course ? ' Courses credit the creator and link their original page where one was supplied. If a listing should not be here, report it in the Kyro Discord and it will be reviewed.' : '') +
         '</p>' +
       '</section>';
@@ -3758,7 +3778,7 @@
     const a = access();
     if (auth.state === OUT) {
       return '<div class="gate-banner gate-out"><span class="g-icon">' + ICON.lock + '</span>' +
-        '<span class="g-text"><b>Downloads need a Kyro Discord membership.</b><br/>Browsing and previews stay open — sign in whenever you want to download.</span>' +
+        '<span class="g-text"><b>A Kyro Discord membership unlocks the file links.</b><br/>Everything on this page is readable without an account — signing in only opens the download links, archive passwords and #help.</span>' +
         '<button type="button" class="btn btn-discord btn-sm" id="gateLogin">' + ICON.discord + 'Sign in with Discord</button></div>';
     }
     if (auth.state === LOGGED) {
@@ -3818,7 +3838,7 @@
           '<p class="section-label section-label--tight">Downloads</p>' +
           '<p class="dl-note">' + (auth.state === VERIFIED
             ? 'Downloads are unlocked for your verified account.'
-            : 'Browsing is open to everyone. Sign in with Discord and join the Kyro server to unlock the download buttons.') + '</p>' +
+            : 'Browsing is free. A Kyro Discord membership unlocks this file’s download link, its archive password and #help — nothing else on the listing is hidden.') + '</p>' +
           '<div class="dl-zone"></div>' +
         '</section>' +
         specHTML(r) +

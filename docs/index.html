@@ -37,7 +37,7 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="all" />
   <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
 
-  <link rel="stylesheet" href="/css/styles.css?v=3ac7402c" />
+  <link rel="stylesheet" href="/css/styles.css?v=cf69d46d" />
 </head>
 <body>
 
@@ -74,9 +74,9 @@
   <main class="shell">
     <!-- ============ Centered editorial hero ============ -->
     <section class="hero">
-      <p class="hero-eyebrow mono">Free resources for editors, shared by the community.</p>
+      <p class="hero-eyebrow mono">Created by editors, for editors — shared by the community.</p>
       <h1 class="hero-title">Good tools shouldn’t be out of reach.</h1>
-      <p class="hero-sub">Kyro is a small editor community sharing useful After Effects resources for people who can’t afford expensive tools. Browse the vault, previews and install guides without an account — Discord sign-in is only needed when a download is gated.</p>
+      <p class="hero-sub">Kyro is a small editor community sharing After Effects resources for people who can’t afford expensive tools. Every listing, preview and install guide is free to read with no account. A Kyro Discord membership unlocks the files themselves — the download links, the archive passwords and the #help channel.</p>
 
       <div class="hero-search-wrap">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
@@ -96,24 +96,22 @@
       </div>
     </section>
 
-    <!-- ============ Notice + access status, side by side ============ -->
-    <div class="info-row">
-    <p class="notice" id="notice">
-      <span class="notice-dot" aria-hidden="true"></span>
-      <span class="notice-body">
-        <span class="notice-text">Everything here is free. Browsing needs no account; gated downloads unlock with a Kyro Discord membership. Scan before you install — unsigned AE extensions often trigger false positives.</span>
-        <span class="notice-sub">Sources and review details are shown on each listing. Found a problem? Report it in the <a class="notice-link" href="#discordCard">Kyro Discord</a>.</span>
-      </span>
-    </p>
-
-    <!-- ============ Access status strip (rendered by app.js) ============ -->
-    <section class="access-strip" id="accessStrip" aria-live="polite"></section>
-    </div>
-
     <!-- ============ Flush browse grid — the lists themselves live on the
      /windows and /macos pages, exactly like keyfla.me ==================== -->
     <p class="section-label">Browse</p>
     <div class="browse" id="browseGrid"></div>
+
+    <!-- ============ Next step: the membership, below the two platform paths
+     so it reads as the next step rather than a competing call to action. ==== -->
+    <section class="access-strip" id="accessStrip" aria-live="polite"></section>
+
+    <p class="notice" id="notice">
+      <span class="notice-dot" aria-hidden="true"></span>
+      <span class="notice-body">
+        <span class="notice-text">Everything here is free. Browsing, previews and install guides need no account; a Kyro Discord membership unlocks the download links, the archive passwords and the #help channel. Scan before you install — unsigned AE extensions often trigger false positives.</span>
+        <span class="notice-sub">Publisher, file type, licence and any review record are shown on every listing. Found a problem? Report it in the <a class="notice-link" href="#discordCard">Kyro Discord</a>.</span>
+      </span>
+    </p>
 
     <!-- ============ Recently added (real listings + previews) ============ -->
     <section class="recent-section" aria-labelledby="recentTitle">
@@ -186,6 +184,7 @@
         </div>
         <div class="footer-links">
           <a href="/about">About</a>
+          <a href="/policy">Policy</a>
           <a href="#discordCard">Kyro Discord</a>
           <a href="https://discord.gg/N3KJBSWrkR" target="_blank" rel="noopener noreferrer" id="footerInvite">Invite ↗</a>
         </div>
@@ -470,7 +469,7 @@
           <div class="acc-settings-group">
             <div class="acc-group-title">
               <span>Cookie Preferences</span>
-              <a href="#" id="accCookiePolicyLink">View Policy</a>
+              <a href="/policy" id="accCookiePolicyLink">View Policy</a>
             </div>
             <p class="acc-group-desc">We use cookies to provide essential functionality, enhance your experience, and understand how you use our platform. You can customize your preferences below and change them at any time.</p>
             
@@ -682,7 +681,7 @@
                 </label>
                 <label style="display:flex;align-items:flex-start;gap:9px;cursor:pointer;font-size:0.82rem;color:#e2e8f0;background:rgba(56,189,248,0.07);border:1px solid rgba(56,189,248,0.25);border-radius:8px;padding:8px 10px;">
                   <input type="radio" name="vUpMode" id="vUpModeIncoming" value="incoming" style="margin-top:2px;cursor:pointer;width:15px;height:15px;">
-                  <span><strong style="color:#38bdf8;">Send to Incoming</strong><br><span style="color:var(--dim);font-size:0.75rem;">Posts to #incomming and stays gated until the community vote goal is reached. You can still release it early from its card.</span></span>
+                  <span><strong style="color:#38bdf8;">Send to Incoming</strong><br><span style="color:var(--dim);font-size:0.75rem;">Posts to #incoming and stays gated until the community vote goal is reached. You can still release it early from its card.</span></span>
                 </label>
                 <div id="vUpIncomingOptions" style="display:none;grid-template-columns:1fr 1fr;gap:10px;">
                   <div>
@@ -803,7 +802,7 @@
   <!-- Modular scripts: data → preview engine → app wiring -->
   <script defer src="/js/data.js?v=f2d69c44"></script>
   <script defer src="/js/preview.js?v=53c30c30"></script>
-  <script defer src="/js/app.js?v=e6e1bf19"></script>
+  <script defer src="/js/app.js?v=e41fa714"></script>
   <script defer src="/js/applications.js?v=195770b9"></script>
 </body>
 </html>

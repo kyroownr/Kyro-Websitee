@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Policy — Kyro</title>
+  <meta name="description" content="What Kyro stores, what the account panel's cookie switches do, and what a Kyro Discord membership unlocks." />
+  <meta name="theme-color" content="#08090d" />
+  <link rel="canonical" href="https://kyro.new.tg/policy" />
+  <link rel="icon" type="image/png" href="/assets/kyro-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://kyro-auth.kyro-ownr.workers.dev" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
+  <link rel="stylesheet" href="/css/styles.css?v=3.7" />
+</head>
+<body>
+
+  <header class="site-nav">
+    <div class="nav-inner">
+      <a class="nav-logo" href="/" aria-label="Kyro — home">
+        <img class="nav-logo-mark" src="/assets/kyro-icon.png" alt="" width="26" height="26" />
+        <span class="nav-logo-text">Kyro</span>
+      </a>
+
+      <nav class="nav-right" aria-label="Site">
+        <a class="nav-link" href="/">Search</a>
+        <a class="nav-link" href="/incoming">Incoming</a>
+        <a class="nav-link" href="/courses">Courses</a>
+        <a class="nav-link" href="/guide">Guide</a>
+        <a class="nav-link" href="/easykyro">EasyKyro</a>
+        <a class="nav-link" href="/about">About</a>
+        <a class="nav-link is-current" href="/policy" aria-current="page">Policy</a>
+        <a class="nav-link" href="/#discordCard">Community</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <header class="page-head">
+      <p class="section-label">Policy</p>
+      <h1 class="page-title">Policy &amp; data</h1>
+      <p class="page-lede">This page covers the three things people ask about: what Kyro stores in your browser, what the account panel’s cookie switches actually change, and what a Kyro Discord membership unlocks.</p>
+    </header>
+
+    <div class="prose">
+      <section class="prose-section" id="cookies">
+        <h2 class="prose-title">Cookies and local storage</h2>
+        <p class="prose-body">Kyro sets no advertising, analytics or third-party tracking cookies, and loads no analytics script. The site keeps a few values in your browser’s local storage so it works:</p>
+        <ul class="prose-list">
+          <li><code>kyro.saved.v3</code> — the listings you bookmarked.</li>
+          <li><code>kyro.auth.v1</code> — your Discord display name, avatar and the session token from signing in. Cleared when you sign out or reset the preferences below.</li>
+          <li><code>kyro.os.v1</code> — whether you picked Windows or macOS.</li>
+          <li><code>kyro.oauth.state.v1</code> — a short-lived value that proves a sign-in redirect came from this browser. Removed as soon as it is used.</li>
+        </ul>
+        <p class="prose-body">The Cookie Preferences panel in your account lists the categories Kyro recognises. Essential storage is always on because the site cannot sign you in without it. The Functional and Analytics switches are present for completeness: no optional category is in use today, so turning them off changes nothing on the site. “Reset All Preferences” clears the saved values above and the toggles return to their default state.</p>
+      </section>
+
+      <section class="prose-section" id="discord">
+        <h2 class="prose-title">What signing in with Discord shares</h2>
+        <p class="prose-body">Signing in asks Discord for two scopes: <code>identify</code> and <code>guilds</code>. That returns your Discord user id, display name and avatar, plus the list of servers you are in — Kyro reads that list only to check whether the Kyro server is in it. Kyro does not read your messages, your email, your friends or any other server’s content.</p>
+        <p class="prose-body">The worker keeps a record of your Discord user id where it has to: to confirm membership, to count one download per member instead of one per click, and to attach a request, feedback post or staff application to the account that submitted it. Nothing about your browsing is logged or shared.</p>
+      </section>
+
+      <section class="prose-section" id="downloads">
+        <h2 class="prose-title">What membership unlocks</h2>
+        <p class="prose-body">Every listing — description, preview images, file list, version, publisher and install guide — is readable with no account. Joining the Kyro Discord and verifying unlocks exactly three things: the download link for a gated file, the archive password when the publisher supplied one, and the <code>#help</code> channel for install support. A listing whose file is hosted by the original creator links out instead of serving a file from Kyro.</p>
+        <p class="prose-body">A download link is not a safety guarantee. Kyro publishes a scan status or review record only when one was actually recorded for that listing; where a panel says “Not recorded”, none was. Scan anything you download, and read <a class="prose-link" href="/about#copyright-policy">Kyro’s DMCA &amp; copyright policy</a> for how takedowns are handled.</p>
+      </section>
+
+      <section class="prose-section" id="contact">
+        <h2 class="prose-title">Questions or removal requests</h2>
+        <p class="prose-body">Open a ticket in the <a class="prose-link" href="https://discord.gg/N3KJBSWrkR" target="_blank" rel="noopener noreferrer">Kyro Discord</a>. Rights holders asking for a link to be removed should say so in a copyright-removal ticket and include the details listed on the <a class="prose-link" href="/about#copyright-policy">DMCA page</a>.</p>
+      </section>
+    </div>
+
+    <p class="page-foot">
+      <a class="btn btn-primary" href="/">Back to the Vault</a>
+      <a class="banner-link" href="https://discord.gg/N3KJBSWrkR" target="_blank" rel="noopener noreferrer">Join the Kyro Discord ↗</a>
+    </p>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell">
+      <div class="footer-main">
+        <div class="footer-left">
+          <span class="brand-word mono">KYRO <span class="brand-heart" aria-hidden="true">&lt;3</span></span>
+        </div>
+        <div class="footer-links">
+          <a href="/">Vault</a>
+          <a href="/about">About</a>
+          <a href="/policy">Policy</a>
+          <a href="https://discord.gg/N3KJBSWrkR" target="_blank" rel="noopener noreferrer">Invite ↗</a>
+        </div>
+      </div>
+      <div class="footer-meta mono">
+        <p>© 2026, Est. Nov 2026 · Kyro</p>
+        <p>kyro.new.tg</p>
+      </div>
+    </div>
+  </footer>
+
+  <script defer src="/js/nav-auth.js?v=1"></script>
+  <script defer src="/js/stamp.js"></script>
+</body>
+</html>
