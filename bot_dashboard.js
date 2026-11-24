@@ -189,12 +189,17 @@ function discordFetch(endpoint, options = {}) {
       if (gap > 0) await sleep(gap);
       lastRequest = Date.now();
       let res;
+      /* Discord rejects a bodyless request that claims to carry JSON (50109,
+         "The request body contains invalid JSON") — which is exactly what a
+         ban removal is: DELETE with only an audit-log header. Declare the
+         content type only when there is actually a body to send. */
+      const hasBody = options.body !== undefined && options.body !== null && options.body !== '';
       try {
         res = await fetch(`https://discord.com/api/v10${endpoint}`, {
           ...options,
           headers: {
             Authorization: `Bot ${BOT_TOKEN}`,
-            'Content-Type': 'application/json',
+            ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
             ...(options.headers || {})
           }
         });
@@ -1495,11 +1500,19 @@ async function moderate(guildId, body) {
     return finish(`Temp-banned <@${userId}> for ${Math.round(seconds / 60)} minutes.`);
   }
   if (action === 'unban') {
-    await discordFetch(`/guilds/${guildId}/bans/${userId}`, { method: 'DELETE', headers: reasonHeader });
+    /* "Unknown Ban" (10026) just means someone already lifted it — report that
+       instead of failing the action, and skip a second unban DM. */
+    let alreadyLifted = false;
+    try {
+      await discordFetch(`/guilds/${guildId}/bans/${userId}`, { method: 'DELETE', headers: reasonHeader });
+    } catch (e) {
+      if (e && (e.code === 10026 || e.status === 404)) alreadyLifted = true;
+      else throw e;
+    }
     g.tempbans = g.tempbans.filter((t) => t.userId !== userId);
     saveDB(db);
-    await dmPunished(guildId, userId, 'unban', reason, body.serverName);
-    return finish(`Unbanned <@${userId}>.`);
+    if (!alreadyLifted) await dmPunished(guildId, userId, 'unban', reason, body.serverName);
+    return finish(alreadyLifted ? `<@${userId}> was not banned — nothing to lift.` : `Unbanned <@${userId}>.`);
   }
   if (action === 'softban') {
     // Ban + immediate unban: removes a member and their recent messages without the full ban.
