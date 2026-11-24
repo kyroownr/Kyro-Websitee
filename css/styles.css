@@ -442,10 +442,12 @@ code, .mono { font-family: var(--mono); }
 .software-chevron, .tools-chevron { flex-shrink: 0; color: var(--silver); transition: transform 0.2s var(--ease); }
 .software-section[open] .software-chevron, .tools-section[open] .tools-chevron { transform: rotate(180deg); }
 .software-section[open] .software-toggle, .tools-section[open] .tools-toggle { border-bottom: 1px solid var(--line); }
-.software-section .grid, .tools-section .grid { margin-top: 0; border: 0; }
+.software-section .grid, .tools-section .grid { margin-top: 0; border: 0; padding: 12px; }
 
+/* A shelf of compact product cards: as many columns as the width allows,
+   never a single 700px-wide row. */
 .grid {
-  display: grid; grid-template-columns: 1fr; gap: 10px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(144px, 1fr)); gap: 12px;
   margin-top: 14px;
   border: 0; background: transparent;
   align-items: start;
@@ -454,9 +456,9 @@ code, .mono { font-family: var(--mono); }
 .software-card {
   position: relative; overflow: hidden; height: auto; align-self: start;
   display: flex; flex-direction: column; width: 100%; text-align: left; padding: 0;
-  border-radius: var(--radius-md);
+  border-radius: 10px;
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.025);
+  background: rgba(255, 255, 255, 0.035);
   backdrop-filter: blur(10px);
   transition: all 0.22s var(--ease);
   animation: rise 0.4s var(--ease) both;
@@ -469,30 +471,41 @@ code, .mono { font-family: var(--mono); }
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
 }
 
-/* A tall preview stage over a content block, the way the vault lists read
-   best: one product per row, artwork first, then the facts and the action. */
+/* Artwork on top, then a compact block: category, title, date and version.
+   The thumbnail is a soft letterbox so tall and wide artwork both look placed. */
 .card-thumb {
-  display: grid;
-  aspect-ratio: 16 / 8.6;
+  aspect-ratio: 16 / 10;
   overflow: hidden;
   border-bottom: 1px solid var(--line);
-  background: #0b0d11;
+  background: linear-gradient(135deg, #1a1e27, #0f1218);
 }
-.card-thumb img { display: block; width: 100%; height: 100%; min-height: 0; object-fit: cover; }
-.card-thumb--2 { grid-template-columns: 1fr 1fr; gap: 2px; }
-.card-thumb--3 { grid-template-columns: 1.55fr 1fr; grid-template-rows: 1fr 1fr; gap: 2px; }
-.card-thumb--3 img:first-child { grid-row: span 2; }
-.card-thumb--4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 2px; }
-.card-body { display: flex; flex-direction: column; flex: 1; padding: 18px 22px 20px; }
-@media (max-width: 600px) {
-  .card-thumb { aspect-ratio: 16 / 10.5; }
-  .card-body { padding: 16px 16px 16px; }
+.card-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.card-body { display: flex; flex-direction: column; flex: 1; gap: 4px; padding: 10px 12px 12px; }
+
+.card-cat {
+  display: flex; align-items: center; gap: 6px; margin: 0;
+  font-size: 0.66rem; font-weight: 500; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.card-dot { flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+
+.save-btn.card-save {
+  position: absolute; top: 8px; right: 8px; z-index: 2;
+  width: 28px; height: 28px;
+  background: rgba(9, 10, 13, 0.62);
+  border-color: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(6px);
+}
+.card-save svg { width: 13px; height: 13px; }
+
+.card-owner-tools { display: flex; gap: 4px; margin-top: 8px; }
+.card-owner-tools .btn-sm { padding: 2px 8px; font-size: 0.68rem; }
 
 .card-top { display: flex; align-items: baseline; gap: 10px; }
 .card-title {
-  margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: -0.02em;
-  color: var(--white); line-height: 1.35; overflow-wrap: anywhere;
+  margin: 0; font-size: 0.88rem; font-weight: 600; letter-spacing: -0.01em;
+  color: var(--white); line-height: 1.35;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .card-title--row { flex: 1; }
 .version-chip {
@@ -510,9 +523,18 @@ code, .mono { font-family: var(--mono); }
 }
 
 .card-meta {
-  display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap;
-  margin-top: 14px; font-family: var(--sans); font-size: 0.72rem; color: var(--dim);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: auto; padding-top: 8px;
+  font-family: var(--sans); font-size: 0.66rem; color: var(--dim);
 }
+.card-date { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.card-date svg { width: 11px; height: 11px; opacity: 0.8; }
+.card-badge {
+  flex-shrink: 0; padding: 2px 7px; border-radius: 4px;
+  font-size: 0.62rem; font-weight: 600; letter-spacing: 0.01em;
+  color: var(--silver); background: rgba(255, 255, 255, 0.09);
+}
+.card-badge--ver { color: #f5b942; background: rgba(245, 185, 66, 0.14); }
 .card-meta .chip {
   color: var(--muted); white-space: nowrap; max-width: 100%;
   overflow: hidden; text-overflow: ellipsis;

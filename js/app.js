@@ -757,60 +757,37 @@
     const locked = isLocked(r);
     const isOwner = userIsOwner();
     const course = kindOf(r) === 'course';
-    const exts = (r.files || [{ ext: r.format }]).map(f => String(f.ext || '').toUpperCase().replace('.', '')).filter(Boolean).join(' · ');
-    const version = !course && r.version ? '<span class="version-chip mono">' + esc(r.version) + '</span>' : '';
-    const ae = !course && r.aeMin ? '<span class="chip">AE ' + esc(r.aeMin) + '+</span>' : '';
-    const platform = !course && platformLabel(r) ? '<span class="chip">' + esc(platformLabel(r)) + '</span>' : '';
-    const size = !course && fileSize(r) ? '<span class="chip">' + esc(fileSize(r)) + '</span>' : '';
-    const sourceName = r.creator || r.credits || (r.source_url ? hostLabel(r.source_url) : '');
-    const source = sourceName
-      ? '<span class="chip">' + (course ? 'By ' : '') + esc(sourceName) + '</span>'
-      : '';
-    const courseFacts = course
-      ? [r.level || r.skill_level, r.duration, r.language, r.category].filter(Boolean)
-          .map(v => '<span class="chip">' + esc(v) + '</span>').join('')
-      : '';
-    /* The stage shows the listing's own screenshots: one fills it, several tile
-       into a small mosaic beside each other so the card reads like a product
-       page instead of a thumbnail row. */
-    const shots = (r.gallery || []).filter(Boolean).slice(0, 4);
-    const thumb = shots.length
-      ? '<div class="card-thumb card-thumb--' + shots.length + '">' +
-          shots.map(src => '<img src="' + esc(src) + '" alt="" loading="lazy" decoding="async" />').join('') +
-        '</div>'
-      : '';
+    /* A compact shelf card: artwork, the category it belongs to, the title, then
+       when it landed and its version. The whole card opens the listing, so the
+       grid can hold many products without a paragraph or a button per card. */
+    const shot = (r.gallery || []).filter(Boolean)[0];
+    const thumb = '<div class="card-thumb' + (shot ? '' : ' card-thumb--empty') + '">' +
+      (shot ? '<img src="' + esc(shot) + '" alt="" loading="lazy" decoding="async" />' : '') +
+      '</div>';
+    const CATEGORY_LABEL = { extension: 'Extension', script: 'Script', preset: 'Presets', project: 'Project file', soundfx: 'Sound FX', software: 'Software', course: 'Course' };
+    const categoryRaw = String(r.category || (course ? 'Course' : 'Tool')).replace(/[-_]+/g, ' ');
+    const category = CATEGORY_LABEL[categoryRaw.toLowerCase()] || categoryRaw;
+    const versionBadge = !course && r.version
+      ? '<span class="card-badge card-badge--ver mono">v' + esc(r.version) + '</span>'
+      : priceBadge(r);
     const ownerTools = isOwner ? `
-      <div class="card-owner-tools" style="display:inline-flex;gap:4px;margin-left:auto;">
-        <button type="button" class="btn btn-ghost btn-sm" data-card-edit="${esc(r.id)}" title="Edit Resource" style="padding:2px 8px;font-size:0.75rem;height:24px;">Edit</button>
-        <button type="button" class="btn btn-danger btn-sm" data-card-delete="${esc(r.id)}" title="Delete Resource" style="padding:2px 8px;font-size:0.75rem;height:24px;">Delete</button>
+      <div class="card-owner-tools">
+        <button type="button" class="btn btn-ghost btn-sm" data-card-edit="${esc(r.id)}" title="Edit Resource">Edit</button>
+        <button type="button" class="btn btn-danger btn-sm" data-card-delete="${esc(r.id)}" title="Delete Resource">Delete</button>
       </div>
     ` : '';
     return (
       '<article class="software-card" data-id="' + esc(r.id) + '" tabindex="0" role="button" aria-label="Inspect ' + esc(r.title) + '" style="animation-delay:' + (i * 50) + 'ms">' +
         thumb +
+        '<button type="button" class="save-btn card-save' + (isSaved ? ' is-saved' : '') + '" data-save="' + esc(r.id) + '" aria-pressed="' + isSaved + '" aria-label="Save ' + esc(r.title) + '">' + ICON.bookmark + '</button>' +
         '<div class="card-body">' +
-        '<div class="card-top">' +
-          '<h3 class="card-title card-title--row">' + esc(r.title) + '</h3>' +
-          version +
+          '<p class="card-cat"><span class="card-dot" aria-hidden="true"></span>' + esc(category) + '</p>' +
+          '<h3 class="card-title" title="' + esc(r.title) + '">' + esc(r.title) + '</h3>' +
+          '<div class="card-meta">' +
+            '<span class="card-date">' + ICON.clock + (r.added ? esc(String(r.added).slice(0, 10)) : '') + '</span>' +
+            versionBadge +
+          '</div>' +
           ownerTools +
-          '<span class="arrow" aria-hidden="true">→</span>' +
-        '</div>' +
-        '<p class="card-desc" title="' + esc(r.desc) + '">' + esc(r.desc) + '</p>' +
-        '<div class="card-meta">' +
-          (course ? '' : '<span class="chip"><b>' + full(downloadCount(r)) + '</b> ' + (downloadCount(r) === 1 ? 'download' : 'downloads') + '</span>') +
-          ae +
-          platform +
-          size +
-          source +
-          courseFacts +
-          (!course && exts ? '<span class="chip">' + esc(exts) + '</span>' : '') +
-          (locked ? '<span class="chip chip-soon mono">' + ICON.clock + 'COMING SOON</span>' : '') +
-          priceBadge(r) +
-        '</div>' +
-        '<div class="card-foot">' +
-          '<button class="save-btn' + (isSaved ? ' is-saved' : '') + '" data-save="' + esc(r.id) + '" aria-pressed="' + isSaved + '" aria-label="Save ' + esc(r.title) + '">' + ICON.bookmark + '</button>' +
-          '<button class="btn btn-primary" data-inspect>' + (locked ? ICON.clock + 'Coming Soon' : course ? ICON.course + 'Open course' : ICON.download + 'Inspect &amp; Download') + '</button>' +
-        '</div>' +
         '</div>' +
       '</article>'
     );
