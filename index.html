@@ -618,6 +618,30 @@
           <div class="acc-settings-group" style="margin-top:14px;">
             <div class="acc-group-title"><span>Submit New Resource</span></div>
             <form id="vaultUploadForm" style="display:flex;flex-direction:column;gap:12px;margin-top:10px;">
+              <!-- Publish mode: a brand-new listing, or a new version of one that
+                   already exists. Update mode edits the live listing in place so
+                   an update never creates a duplicate product. -->
+              <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px;">
+                <div>
+                  <strong style="color:#38bdf8;font-size:0.88rem;">Publish mode</strong>
+                  <div style="font-size:0.75rem;color:var(--dim);">New upload, or a new version of a listing that is already live?</div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                  <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:0.82rem;color:#e2e8f0;border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:8px 12px;">
+                    <input type="radio" name="vUpTarget" id="vUpTargetNew" value="new" checked>
+                    New listing
+                  </label>
+                  <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:0.82rem;color:#e2e8f0;border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:8px 12px;">
+                    <input type="radio" name="vUpTarget" id="vUpTargetUpdate" value="update">
+                    Update an existing listing
+                  </label>
+                </div>
+                <div id="vUpExistingWrap" hidden>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Which listing does this update?</label>
+                  <select id="vUpExisting" class="acc-select" style="width:100%;"></select>
+                  <div style="font-size:0.72rem;color:var(--dim);margin-top:4px;">It edits that product in place — title, version, file link, password, banner and notes. No second product is created.</div>
+                </div>
+              </div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
                 <div>
                   <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Resource Title *</label>
@@ -629,7 +653,7 @@
                 </div>
               </div>
 
-              <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;">
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
                 <div>
                   <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Resource Type</label>
                   <select id="vUpKind" class="acc-select" style="width:100%;">
@@ -649,6 +673,13 @@
                 <div>
                   <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Category</label>
                   <input type="text" id="vUpCategory" placeholder="e.g. Adobe After Effects" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
+                </div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div>
+                  <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Version</label>
+                  <input type="text" id="vUpVersion" placeholder="e.g. 1.1" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
                 </div>
                 <div>
                   <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Approx Size</label>
@@ -781,6 +812,10 @@
       </div>
       <form id="ownerEditModalForm" style="display:flex;flex-direction:column;gap:12px;">
         <input type="hidden" id="oemId">
+        <div>
+          <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Version</label>
+          <input type="text" class="input" id="oemVersion" placeholder="e.g. 4.0.2" style="width:100%;box-sizing:border-box;">
+        </div>
         <div>
           <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Resource Title</label>
           <input type="text" class="input" id="oemTitle" required style="width:100%;box-sizing:border-box;">

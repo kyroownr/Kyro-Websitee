@@ -103,7 +103,7 @@ const head = (p) => `<!DOCTYPE html>
     <section class="access-strip" id="accessStrip" aria-live="polite"></section>
 
     <!-- ============ Two shelves: the editor, then what runs inside it ==== -->
-    <details class="section software-section" id="softwareSection">
+    <details class="section software-section" id="softwareSection" open>
       <summary class="software-toggle" aria-controls="softwareContent">
         <span class="section-label">Software</span>
         <span class="section-note mono" id="softwareNote"></span>
@@ -118,7 +118,7 @@ const head = (p) => `<!DOCTYPE html>
       </div>
     </details>
 
-    <details class="section tools-section" id="toolsSection">
+    <details class="section tools-section" id="toolsSection" open>
       <summary class="tools-toggle" aria-controls="toolsContent">
         <span class="section-label">Tools</span>
         <span class="section-note mono" id="toolsNote"></span>

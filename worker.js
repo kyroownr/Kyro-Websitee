@@ -2451,6 +2451,7 @@ async function handleVaultSubmissionManage(request, url, env, cors) {
         if (input.password !== undefined) found.pass = cleanText(input.password, 100);
         if (input.size) found.size = cleanText(input.size, 30);
         if (input.category) found.category = cleanText(input.category, 60);
+        if (input.version !== undefined) found.version = cleanText(input.version, 40);
         if (input.image_url !== undefined) found.image_url = safeHttpUrl(input.image_url, 500);
         if (input.release_at !== undefined || input.releaseAt !== undefined) {
           found.releaseAt = input.release_at || input.releaseAt || undefined;
@@ -2473,6 +2474,7 @@ async function handleVaultSubmissionManage(request, url, env, cors) {
         if (input.password !== undefined) found.pass = cleanText(input.password, 100);
         if (input.size) found.size = cleanText(input.size, 30);
         if (input.category) found.category = cleanText(input.category, 60);
+        if (input.version !== undefined) found.version = cleanText(input.version, 40);
         if (input.image_url !== undefined) found.image_url = safeHttpUrl(input.image_url, 500);
         if (input.release_at !== undefined || input.releaseAt !== undefined) {
           found.releaseAt = input.release_at || input.releaseAt || undefined;

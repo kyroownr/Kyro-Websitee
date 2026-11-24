@@ -453,7 +453,7 @@ code, .mono { font-family: var(--mono); }
 
 .software-card {
   position: relative; overflow: hidden; height: auto; align-self: start;
-  display: block; width: 100%; text-align: left; padding: 20px 22px 18px;
+  display: flex; flex-direction: column; width: 100%; text-align: left; padding: 0;
   border-radius: var(--radius-md);
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.025);
@@ -469,18 +469,29 @@ code, .mono { font-family: var(--mono); }
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
 }
 
+/* A tall preview stage over a content block, the way the vault lists read
+   best: one product per row, artwork first, then the facts and the action. */
 .card-thumb {
-  margin: -20px -22px 16px;
-  aspect-ratio: 16 / 7;
+  display: grid;
+  aspect-ratio: 16 / 8.6;
   overflow: hidden;
   border-bottom: 1px solid var(--line);
-  background: var(--card-subtle);
+  background: #0b0d11;
 }
-.card-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.card-thumb img { display: block; width: 100%; height: 100%; min-height: 0; object-fit: cover; }
+.card-thumb--2 { grid-template-columns: 1fr 1fr; gap: 2px; }
+.card-thumb--3 { grid-template-columns: 1.55fr 1fr; grid-template-rows: 1fr 1fr; gap: 2px; }
+.card-thumb--3 img:first-child { grid-row: span 2; }
+.card-thumb--4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 2px; }
+.card-body { display: flex; flex-direction: column; flex: 1; padding: 18px 22px 20px; }
+@media (max-width: 600px) {
+  .card-thumb { aspect-ratio: 16 / 10.5; }
+  .card-body { padding: 16px 16px 16px; }
+}
 
 .card-top { display: flex; align-items: baseline; gap: 10px; }
 .card-title {
-  margin: 0; font-size: 1.08rem; font-weight: 700; letter-spacing: -0.02em;
+  margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: -0.02em;
   color: var(--white); line-height: 1.35; overflow-wrap: anywhere;
 }
 .card-title--row { flex: 1; }
@@ -517,8 +528,9 @@ code, .mono { font-family: var(--mono); }
 .badge-format { color: var(--silver); }
 .badge-locked { color: var(--dim); }
 
-.card-foot { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
-.card-foot .btn { flex: 1; }
+.card-foot { display: flex; align-items: center; gap: 10px; margin-top: 18px; }
+.card-foot .btn { flex: 1; min-height: 42px; font-size: 0.85rem; }
+.card-foot .save-btn { width: 42px; height: 42px; }
 
 /* ------------------------------- buttons -------------------------------- */
 .btn {

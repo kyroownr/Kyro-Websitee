@@ -770,8 +770,15 @@
       ? [r.level || r.skill_level, r.duration, r.language, r.category].filter(Boolean)
           .map(v => '<span class="chip">' + esc(v) + '</span>').join('')
       : '';
-    const shot = (r.gallery || []).filter(Boolean)[0];
-    const thumb = shot ? '<div class="card-thumb"><img src="' + esc(shot) + '" alt="" loading="lazy" decoding="async" /></div>' : '';
+    /* The stage shows the listing's own screenshots: one fills it, several tile
+       into a small mosaic beside each other so the card reads like a product
+       page instead of a thumbnail row. */
+    const shots = (r.gallery || []).filter(Boolean).slice(0, 4);
+    const thumb = shots.length
+      ? '<div class="card-thumb card-thumb--' + shots.length + '">' +
+          shots.map(src => '<img src="' + esc(src) + '" alt="" loading="lazy" decoding="async" />').join('') +
+        '</div>'
+      : '';
     const ownerTools = isOwner ? `
       <div class="card-owner-tools" style="display:inline-flex;gap:4px;margin-left:auto;">
         <button type="button" class="btn btn-ghost btn-sm" data-card-edit="${esc(r.id)}" title="Edit Resource" style="padding:2px 8px;font-size:0.75rem;height:24px;">Edit</button>
@@ -781,6 +788,7 @@
     return (
       '<article class="software-card" data-id="' + esc(r.id) + '" tabindex="0" role="button" aria-label="Inspect ' + esc(r.title) + '" style="animation-delay:' + (i * 50) + 'ms">' +
         thumb +
+        '<div class="card-body">' +
         '<div class="card-top">' +
           '<h3 class="card-title card-title--row">' + esc(r.title) + '</h3>' +
           version +
@@ -803,6 +811,7 @@
           '<button class="save-btn' + (isSaved ? ' is-saved' : '') + '" data-save="' + esc(r.id) + '" aria-pressed="' + isSaved + '" aria-label="Save ' + esc(r.title) + '">' + ICON.bookmark + '</button>' +
           '<button class="btn btn-primary" data-inspect>' + (locked ? ICON.clock + 'Coming Soon' : course ? ICON.course + 'Open course' : ICON.download + 'Inspect &amp; Download') + '</button>' +
         '</div>' +
+        '</div>' +
       '</article>'
     );
   }
@@ -813,7 +822,12 @@
      leaving a broken-image icon on the card — no invented artwork. */
   function wireCardThumbs(grid) {
     grid.querySelectorAll('.card-thumb img').forEach(img => {
-      const drop = () => { const box = img.closest('.card-thumb'); if (box) box.remove(); };
+      const drop = () => {
+        const box = img.closest('.card-thumb');
+        img.remove();
+        /* One broken tile should shrink the mosaic, not blank the whole stage. */
+        if (box && !box.querySelector('img')) box.remove();
+      };
       img.addEventListener('error', drop);
       if (img.complete && img.naturalWidth === 0) drop();
     });
@@ -3224,6 +3238,57 @@
     const dropzoneText = $('#vUpDropzoneText');
     if (!form || !btn) return;
 
+    /* Update-in-place: choosing a listing that is already live turns the form
+       into an edit of that product. Nothing new is created, so a new Botanica
+       build bumps the existing listing instead of adding a second card. */
+    const targetUpdate = $('#vUpTargetUpdate');
+    const targetNew = $('#vUpTargetNew');
+    const existingWrap = $('#vUpExistingWrap');
+    const existingSelect = $('#vUpExisting');
+    const isUpdateMode = () => Boolean(targetUpdate && targetUpdate.checked);
+    const publishedListings = () => (resources || [])
+      .filter(r => r.cloud_id && !isHiddenResource(r.id, r.cloud_id))
+      .sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
+
+    function fillExistingListings() {
+      if (!existingSelect) return;
+      const items = publishedListings();
+      existingSelect.innerHTML = items.length
+        ? items.map(r => '<option value="' + esc(r.cloud_id) + '">' + esc(r.title) +
+            (r.version ? ' · v' + esc(r.version) : '') + '</option>').join('')
+        : '<option value="">No published listings to update yet</option>';
+    }
+
+    function prefillFromListing(id) {
+      const r = (resources || []).find(x => x.cloud_id === id);
+      if (!r) return;
+      const set = (sel, value) => { const el = $(sel); if (el) el.value = value || ''; };
+      set('#vUpTitle', r.title);
+      set('#vUpVersion', r.version && r.version !== '1.0' ? r.version : '');
+      set('#vUpCategory', r.category);
+      set('#vUpDetails', r.desc);
+      set('#vUpImageUrl', (r.gallery && r.gallery[0]) || '');
+      /* The vault never ships a download URL to the browser, so its field stays
+         empty and the owner pastes the new build's link. */
+      set('#vUpDownloadUrl', '');
+      set('#vUpPassword', '');
+    }
+
+    function paintPublishTarget() {
+      const update = isUpdateMode();
+      if (existingWrap) existingWrap.hidden = !update;
+      if (update) {
+        fillExistingListings();
+        if (existingSelect && existingSelect.value) prefillFromListing(existingSelect.value);
+        btn.textContent = 'Update listing';
+      } else {
+        btn.textContent = isIncomingChosen ? (isIncomingChosen() ? 'Send to Incoming' : 'Release directly to the Vault') : 'Submit Upload to Vault';
+      }
+    }
+
+    [targetNew, targetUpdate].forEach(radio => radio && radio.addEventListener('change', paintPublishTarget));
+    existingSelect && existingSelect.addEventListener('change', () => prefillFromListing(existingSelect.value));
+
     let stagedImageBase64 = null;
 
     async function uploadImageFile(file) {
@@ -3404,6 +3469,59 @@
       btn.disabled = true;
       btn.textContent = 'Submitting…';
 
+      if (isUpdateMode()) {
+        const targetId = existingSelect?.value || '';
+        const target = (resources || []).find(r => r.cloud_id === targetId);
+        if (!targetId || !target) {
+          toast({ title: 'Pick a listing', sub: 'Choose which live product this update belongs to.', icon: ICON.x });
+          btn.disabled = false;
+          btn.textContent = 'Update listing';
+          return;
+        }
+        const titleVal = $('#vUpTitle')?.value.trim() || target.title;
+        const versionVal = $('#vUpVersion')?.value.trim() || '';
+        const body = { id: targetId, title: titleVal };
+        if (versionVal) body.version = versionVal;
+        const sizeVal = $('#vUpSize')?.value.trim();
+        if (sizeVal) body.size = sizeVal;
+        const categoryVal = $('#vUpCategory')?.value.trim();
+        if (categoryVal) body.category = categoryVal;
+        const linkVal = $('#vUpDownloadUrl')?.value.trim();
+        if (linkVal) body.download_url = linkVal;
+        const passVal = $('#vUpPassword')?.value.trim();
+        if (passVal) body.password = passVal;
+        const imageVal = $('#vUpImageUrl')?.value.trim();
+        if (imageVal) body.image_url = imageVal;
+        const detailsVal = $('#vUpDetails')?.value.trim();
+        if (detailsVal) body.details = detailsVal;
+        try {
+          const res = await fetch(AUTH_WORKER_URL + '/vault/submissions/manage', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+            body: JSON.stringify(body),
+            credentials: 'omit'
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || 'The listing could not be updated.');
+          toast({
+            title: 'Listing updated',
+            sub: '"' + titleVal + '"' + (versionVal ? ' is now v' + versionVal : '') + ' — same product, no duplicate.',
+            icon: ICON.check
+          });
+          form.reset();
+          if (removeImgBtn) removeImgBtn.click();
+          paintPublishTarget();
+          await loadPublicVaultItems();
+          renderAccountUploads();
+        } catch (err) {
+          toast({ title: 'Update failed', sub: err.message, icon: ICON.x });
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Update listing';
+        }
+        return;
+      }
+
       let rawSlug = $('#vUpSlug')?.value.trim() || '';
       let cleanSlug = rawSlug;
       if (/^https?:\/\//i.test(cleanSlug)) {
@@ -3453,6 +3571,7 @@
         os: $('#vUpOs')?.value || 'windows',
         category: $('#vUpCategory')?.value.trim() || (uploadKind === 'course' ? 'Course' : 'Adobe After Effects'),
         size: $('#vUpSize')?.value.trim() || 'Vault Build',
+        version: $('#vUpVersion')?.value.trim() || undefined,
         download_url: $('#vUpDownloadUrl')?.value.trim(),
         password: $('#vUpPassword')?.value.trim() || '',
         image_url: $('#vUpImageUrl')?.value.trim(),
@@ -4388,11 +4507,13 @@
     const oemDownloadUrl = $('#oemDownloadUrl');
     const oemPassword = $('#oemPassword');
     const oemImageUrl = $('#oemImageUrl');
+    const oemVersion = $('#oemVersion');
     const oemDetails = $('#oemDetails');
     const oemReleaseAt = $('#oemReleaseAt');
 
     if (oemId) oemId.value = r.cloud_id || r.id;
     if (oemTitle) oemTitle.value = r.title || '';
+    if (oemVersion) oemVersion.value = r.version || '';
     if (oemSize) oemSize.value = (r.files && r.files[0] && r.files[0].size) || r.size || '';
     if (oemCategory) oemCategory.value = r.category || '';
     if (oemDownloadUrl) oemDownloadUrl.value = (r.files && r.files[0] && r.files[0].url) || '';
@@ -4568,6 +4689,7 @@
     const size = $('#oemSize')?.value.trim();
     const category = $('#oemCategory')?.value.trim();
     const download_url = $('#oemDownloadUrl')?.value.trim();
+    const version = $('#oemVersion')?.value.trim();
     const password = $('#oemPassword')?.value.trim();
     const image_url = $('#oemImageUrl')?.value.trim();
     const details = $('#oemDetails')?.value.trim();
@@ -4590,6 +4712,7 @@
         body: JSON.stringify({
           id,
           title,
+          version,
           size,
           category,
           download_url,
