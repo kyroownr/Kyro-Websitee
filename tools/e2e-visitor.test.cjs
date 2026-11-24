@@ -124,11 +124,44 @@ async function main() {
     expect(signals.data.totals.broken === 1 && signals.data.reports[0].note === 'test report', 'the broken-link report was stored');
     expect((await api('/vault/signals', { token })).status === 403, 'a normal member cannot read the owner signals');
 
+    /* 9. Approval stores exactly what the owner ticked and nothing more. */
+    await kv.put('kyro.vault_submissions.v1', JSON.stringify({ submissions: [{
+      id: 'sub-1', slug: 'review-demo', title: 'Review Demo', kind: 'tool', os: 'windows',
+      download_url: 'https://example.com/review.zip', pass: 'review-pass',
+      by: USERS['visitor-token'].id, by_username: 'visitor-editor',
+      created: new Date().toISOString(), status: 'pending'
+    }] }));
+    const sha = 'b'.repeat(64);
+    const approve = await api('/vault/submissions/review', {
+      method: 'POST', token: ownerToken,
+      body: { id: 'sub-1', decision: 'approve', checks: ['Download link opened'], sha256: sha }
+    });
+    expect(approve.status === 200, 'the owner approves a pending submission');
+    expect(approve.data.submission.reviewed_by === 'kyro-owner', 'the approval stores the reviewer name');
+    expect(Boolean(approve.data.submission.reviewed_at), 'the approval stores the review date');
+    expect(JSON.stringify(approve.data.submission.checks) === JSON.stringify(['Download link opened']),
+      'only the ticked check is recorded');
+    expect(approve.data.submission.sha256 === sha, 'the recorded checksum is stored');
+
+    const afterApproval = await api('/vault/public');
+    const reviewed = (afterApproval.data.items || []).find(i => i.slug === 'review-demo');
+    expect(reviewed && reviewed.reviewed_by === 'kyro-owner', 'the public listing names its reviewer');
+    expect(reviewed && Array.isArray(reviewed.checks) && reviewed.checks.length === 1 && reviewed.checks[0] === 'Download link opened',
+      'the public listing shows only the performed check');
+    expect(reviewed && reviewed.sha256 === sha, 'the public listing carries the recorded checksum');
+    expect(reviewed && !('download_url' in reviewed) && !('pass' in reviewed),
+      'the approved listing still hides its URL and password');
+
+    const approvedLink = await api('/vault/link', { method: 'POST', token, body: { id: 'review-demo' } });
+    expect(approvedLink.status === 200 && approvedLink.data.pass === 'review-pass',
+      'a member can still retrieve the approved link and password');
+
     console.log(JSON.stringify({
       checks,
       flow: 'browse anonymous -> 401 gate -> /callback sign-in -> /verify member -> link + password',
       outsider: 'signed in, not a member -> 403',
       signals: 'views, sign-ins, downloads, broken-link reports counted; owner-only',
+      approval: 'reviewer, date, ticked checks and checksum recorded; listing shows exactly those',
       discord: 'mocked only; #help channel access needs a real Discord account',
       result: 'passed'
     }));
