@@ -55,6 +55,7 @@ const PUBLIC_DIRS = [
   'guide',
   'incoming',
   'policy',
+  'product',
   'courses',
   'macos',
   'windows',

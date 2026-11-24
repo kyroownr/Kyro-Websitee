@@ -53,6 +53,11 @@
   const saved = new Set(read(K_SAVED, []));
 
   let hiddenResources = new Set();
+
+  /* /product/?id=… is a real page: it renders one listing with the same body
+     the popup shows, so every product can be linked, shared and reloaded. */
+  const PRODUCT_PAGE = Boolean(document.body && document.body.dataset.page === 'product');
+  let productPageItem = null;
   const isHiddenResource = (...values) => values.some(value => value && hiddenResources.has(String(value).toLowerCase()));
 
   // Merge approved contributor/owner items from cloud. Rebuild the whole list
@@ -133,6 +138,7 @@
       renderCategoryHead();
       renderBrowse();
       checkUrlDeepLink();
+      renderProductPage();
     } catch (e) {
       // Offline fallback
     }
@@ -656,6 +662,8 @@
       const open = resources.find(x => x.id === modalId);
       if (open) wireDownloads(open);
     }
+    /* A product page is live without the popup, so it repaints itself. */
+    if (PRODUCT_PAGE && productPageItem) renderProductPage();
     /* On the incoming page, signing in or out changes the waitlist gate and the
        owner's early-access controls, so both repaint with the new session. */
     if ($('#earlyAccessSection')) { loadEarlyAccess(); loadIncomingReleases(); }
@@ -752,6 +760,11 @@
     try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
   }
 
+  /* Every listing has one address. Cards, the search palette and the saved
+     vault point at it instead of opening the popup. */
+  function productHref(id) { return '/product/?id=' + encodeURIComponent(String(id)); }
+  function goToProduct(id) { if (id) location.href = productHref(id); }
+
   function cardHTML(r, i) {
     const isSaved = saved.has(r.id);
     const locked = isLocked(r);
@@ -766,7 +779,8 @@
       '</div>';
     const CATEGORY_LABEL = { extension: 'Extension', script: 'Script', preset: 'Presets', project: 'Project file', soundfx: 'Sound FX', software: 'Software', course: 'Course' };
     const categoryRaw = String(r.category || (course ? 'Course' : 'Tool')).replace(/[-_]+/g, ' ');
-    const category = CATEGORY_LABEL[categoryRaw.toLowerCase()] || categoryRaw;
+    const category = CATEGORY_LABEL[categoryRaw.toLowerCase()] ||
+      (categoryRaw ? categoryRaw.charAt(0).toUpperCase() + categoryRaw.slice(1) : '');
     const versionBadge = !course && r.version
       ? '<span class="card-badge card-badge--ver mono">v' + esc(r.version) + '</span>'
       : priceBadge(r);
@@ -2837,7 +2851,7 @@
 
     list.querySelectorAll('[data-acc-vault-id]').forEach(el => el.addEventListener('click', () => {
       closeAccountModal();
-      openModal(el.dataset.accVaultId);
+      goToProduct(el.dataset.accVaultId);
     }));
   }
 
@@ -2863,7 +2877,7 @@
 
     list.querySelectorAll('[data-acc-dl-id]').forEach(el => el.addEventListener('click', () => {
       closeAccountModal();
-      openModal(el.dataset.accDlId);
+      goToProduct(el.dataset.accDlId);
     }));
   }
 
@@ -3941,8 +3955,8 @@
   /* The gate, the rows and the password are one surface: rebuilt together
      whenever auth state changes, so a modal opened logged-out never keeps
      showing locked rows after the visitor verifies without closing it. */
-  function wireDownloads(r) {
-    const zone = modalBox.querySelector('.dl-zone');
+  function wireDownloads(r, root) {
+    const zone = (root || modalBox).querySelector('.dl-zone');
     if (!zone) return;
     if (isLocked(r)) { zone.innerHTML = countdownHTML(r); startCountdownTick(); return; }
     stopCountdownTick();
@@ -4016,12 +4030,8 @@
       '</div>';
   }
 
-  function openModal(id) {
-    const r = resources.find(x => x.id === id);
-    if (!r) return;
-    trackView(r);
-    modalId = id;
-    const isSaved = saved.has(id);
+  function detailMarkup(r) {
+    const isSaved = saved.has(r.id);
     const isOwner = userIsOwner();
     const version = r.version ? '<span class="m-version mono">' + esc(r.version) + '</span>' : '';
     const by = r.creator ? '<span>by ' + esc(r.creator) + '</span>' : '';
@@ -4029,8 +4039,7 @@
       <button type="button" class="btn btn-ghost btn-sm" id="modalOwnerEditBtn" style="color:#38bdf8;border-color:rgba(56,189,248,0.3);">⚙️ Edit Post</button>
       <button type="button" class="btn btn-danger btn-sm" id="modalOwnerDeleteBtn">🗑️ Delete Post</button>
     ` : '';
-    modalBox.innerHTML =
-      '<button class="close-x modal-close" aria-label="Close"></button>' +
+    return '<button class="close-x modal-close" aria-label="Close"></button>' +
       stageHTML(r) +
       '<div class="m-body">' +
         '<div class="m-title-row"><h2 class="m-title">' + esc(r.title) + '</h2>' + version + '</div>' +
@@ -4067,41 +4076,53 @@
           ownerModalActions +
         '</div>' +
       '</div>';
+  }
 
-    // tabs
-    modalBox.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => {
+  /* Wires a rendered listing, whether it is inside the popup or on its own page. */
+  function wireDetail(root, r, opts) {
+    opts = opts || {};
+    const isOwner = userIsOwner();
+    root.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => {
       modalTab = tab.dataset.tab;
-      syncTabs();
+      syncTabs(root);
     }));
-    modalBox.querySelector('.modal-close').addEventListener('click', closeModal);
-    modalBox.querySelector('.save-btn').addEventListener('click', (e) => toggleSave(r.id, e.currentTarget));
+    const closeBtn = root.querySelector('.modal-close');
+    if (opts.close && closeBtn) closeBtn.addEventListener('click', closeModal);
+    else if (closeBtn) closeBtn.remove();
+    root.querySelector('.save-btn')?.addEventListener('click', (e) => toggleSave(r.id, e.currentTarget));
 
     if (isOwner) {
-      modalBox.querySelector('#modalOwnerEditBtn')?.addEventListener('click', () => {
-        closeModal();
+      root.querySelector('#modalOwnerEditBtn')?.addEventListener('click', () => {
+        if (opts.close) closeModal();
         openOwnerEditModal(r.id);
       });
-      modalBox.querySelector('#modalOwnerDeleteBtn')?.addEventListener('click', () => {
-        handleOwnerCardDelete(r.id);
-      });
+      root.querySelector('#modalOwnerDeleteBtn')?.addEventListener('click', () => handleOwnerCardDelete(r.id));
     }
 
-    wireDownloads(r);
-    const checksumCopy = modalBox.querySelector('[data-checksum-copy]');
+    wireDownloads(r, root);
+    const checksumCopy = root.querySelector('[data-checksum-copy]');
     if (checksumCopy) checksumCopy.addEventListener('click', () => copyText(checksumCopy, checksumCopy.dataset.checksumCopy, 'Checksum copied', 'Compare it with your local SHA-256 result.'));
 
-    modalBox.querySelectorAll('[data-shot]').forEach(btn => btn.addEventListener('click', () => {
-      const shot = $('#modalShot');
+    root.querySelectorAll('[data-shot]').forEach(btn => btn.addEventListener('click', () => {
+      const shot = root.querySelector('#modalShot');
       if (!shot) return;
       shot.src = btn.dataset.shot;
-      modalBox.querySelectorAll('[data-shot]').forEach(t => {
+      root.querySelectorAll('[data-shot]').forEach(t => {
         const on = t === btn;
         t.classList.toggle('is-active', on);
         t.setAttribute('aria-pressed', String(on));
       });
     }));
+    syncTabs(root);
+  }
 
-    syncTabs();
+  function openModal(id) {
+    const r = resources.find(x => x.id === id);
+    if (!r) return;
+    trackView(r);
+    modalId = id;
+    modalBox.innerHTML = detailMarkup(r);
+    wireDetail(modalBox, r, { close: true });
     showOverlay(modalOverlay);
     if (!r.gallery || !r.gallery.length) Preview.pin($('#modalCanvas'), r.preview || 'grid', r.seed || 7);
     modalBox.focus({ preventScroll: true });
@@ -4112,9 +4133,85 @@
     } catch {}
   }
 
-  function syncTabs() {
-    modalBox.querySelectorAll('.tab').forEach(t => t.classList.toggle('is-active', t.dataset.tab === modalTab));
-    modalBox.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('is-active', p.dataset.panel === modalTab));
+  /* --------------------------- product pages ---------------------------- */
+  function productIdFromUrl() {
+    try {
+      const q = new URLSearchParams(location.search).get('id');
+      if (q) return decodeURIComponent(q).trim();
+      return decodeURIComponent(location.hash.replace(/^#/, '')).trim();
+    } catch { return ''; }
+  }
+
+  /* Same category first, then the same kind, then anything else, so a page
+     always has a full shelf underneath it. */
+  function relatedCardsHTML(r) {
+    const others = resources.filter(x => x.id !== r.id);
+    const picked = others.filter(x => x.category && x.category === r.category).slice(0, 8);
+    const add = (candidates) => candidates.forEach(x => {
+      if (picked.length < 8 && picked.indexOf(x) === -1) picked.push(x);
+    });
+    add(others.filter(x => x.kind === r.kind));
+    add(others);
+    return picked.map(cardHTML).join('');
+  }
+
+  function renderProductPage() {
+    if (!PRODUCT_PAGE) return;
+    const host = $('#productView');
+    if (!host) return;
+    const raw = productIdFromUrl().toLowerCase();
+    const match = resources.find(x => String(x.id).toLowerCase() === raw || String(x.cloud_id || '').toLowerCase() === raw) ||
+      resources.find(x => String(x.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-') === raw);
+    const titleEl = $('#ppTitle');
+    const metaEl = $('#ppMeta');
+    const crumbEl = $('#ppCrumb');
+    if (!match) {
+      document.title = 'Listing not found — Kyro';
+      if (titleEl) titleEl.textContent = 'Listing not found';
+      if (metaEl) metaEl.textContent = '';
+      if (crumbEl) crumbEl.textContent = 'Not found';
+      host.innerHTML = '<div class="empty"><p>That listing is not in the vault any more.</p><a class="btn btn-ghost" href="/">Browse the vault</a></div>';
+      const missingRelated = $('#ppRelatedSection');
+      if (missingRelated) missingRelated.hidden = true;
+      return;
+    }
+    productPageItem = match;
+    document.title = match.title + ' — Kyro';
+    if (titleEl) titleEl.textContent = match.title;
+    if (crumbEl) crumbEl.textContent = match.title;
+    if (metaEl) {
+      const catText = String(match.category || '');
+      const bits = [
+        match.added ? 'Added ' + String(match.added).slice(0, 10) : '',
+        catText ? catText.charAt(0).toUpperCase() + catText.slice(1) : '',
+        platformLabel(match),
+        match.version ? 'v' + match.version : ''
+      ].filter(Boolean);
+      metaEl.innerHTML = bits.map(b => '<span>' + esc(b) + '</span>').join('');
+    }
+    host.innerHTML = detailMarkup(match);
+    wireDetail(host, match, { close: false });
+    if (!match.gallery || !match.gallery.length) Preview.pin($('#modalCanvas'), match.preview || 'grid', match.seed || 7);
+    const rel = $('#ppRelated');
+    if (rel) rel.innerHTML = relatedCardsHTML(match);
+    const relSection = $('#ppRelatedSection');
+    if (relSection) relSection.hidden = !rel || !rel.innerHTML;
+  }
+
+  const ppRelatedGrid = $('#ppRelated');
+  if (ppRelatedGrid) {
+    ppRelatedGrid.addEventListener('click', (e) => {
+      const save = e.target.closest('[data-save]');
+      if (save) { toggleSave(save.dataset.save, save); return; }
+      const card = e.target.closest('.software-card');
+      if (card) goToProduct(card.dataset.id);
+    });
+  }
+
+  function syncTabs(root) {
+    const box = root || modalBox;
+    box.querySelectorAll('.tab').forEach(t => t.classList.toggle('is-active', t.dataset.tab === modalTab));
+    box.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('is-active', p.dataset.panel === modalTab));
   }
 
   function closeModal() {
@@ -4443,7 +4540,7 @@
     if (!hit) return;
     closePalette();
     if (hit.kind === 'cmd') hit.r.run();
-    else openModal(hit.r.id);
+    else goToProduct(hit.r.id);
   }
 
   /* --------------------------- overlay plumbing ------------------------- */
@@ -4782,13 +4879,13 @@
       const save = e.target.closest('[data-save]');
       if (save) { toggleSave(save.dataset.save, save); return; }
       const card = e.target.closest('.software-card');
-      if (card) openModal(card.dataset.id);
+      if (card) goToProduct(card.dataset.id);
     });
     grid.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
       if (e.target.closest('button')) return;
       const card = e.target.closest('.software-card');
-      if (card) { e.preventDefault(); openModal(card.dataset.id); }
+      if (card) { e.preventDefault(); goToProduct(card.dataset.id); }
     });
   });
 
@@ -4797,7 +4894,7 @@
   if (applefxRow) {
     applefxRow.addEventListener('click', () => {
       const id = applefxRow.dataset.resource;
-      if (id) openModal(id);
+      if (id) goToProduct(id);
     });
   }
 
@@ -4864,12 +4961,12 @@
       return;
     }
     const item = e.target.closest('.vault-item');
-    if (item) { closeDrawer(); openModal(item.dataset.id); }
+    if (item) { closeDrawer(); goToProduct(item.dataset.id); }
   });
   vaultList.addEventListener('keydown', (e) => {
     if (e.target.closest('button')) return;
     const item = e.target.closest('.vault-item');
-    if (item && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); closeDrawer(); openModal(item.dataset.id); }
+    if (item && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); closeDrawer(); goToProduct(item.dataset.id); }
   });
 
   const heroSearch = $('#heroSearch');
@@ -5005,7 +5102,7 @@
       let rawId = decodeURIComponent(hash.replace(/^#(r-)?/, '')).trim().toLowerCase();
       if (rawId) {
         const match = resources.find(r => r.id.toLowerCase() === rawId || r.title.toLowerCase().replace(/[^a-z0-9]+/g, '-') === rawId);
-        if (match) openModal(match.id);
+        if (match) goToProduct(match.id);
       }
     }
   }
