@@ -93,6 +93,7 @@
           reviewed_by: item.reviewed_by || '',
           reviewed_at: item.reviewed_at || '',
           checks: Array.isArray(item.checks) ? item.checks : [],
+          sha256: item.sha256 || '',
           license: item.license || item.licence || '',
           releaseAt: item.releaseAt || item.release_at || undefined,
           source_url: item.source_url || '',
@@ -104,13 +105,14 @@
           addedTs: item.created ? Date.parse(item.created) || 0 : 0,
           tags: [item.category || 'plugin', ...(osList)],
           gallery: item.image_url ? [item.image_url] : [],
-          files: item.download_url ? [{
+          /* The catalogue only marks a file as gated; the URL and password are
+             fetched from the worker with the member token on click. */
+          files: (item.gated || item.download_url) ? [{
             ext: 'link',
             name: item.title,
             size: item.size || 'Vault Build',
             label: item.title,
-            url: item.download_url,
-            pass: item.pass || item.password || undefined
+            gated: true
           }] : []
         };
       }).filter(item => !isHiddenResource(item.id, item.cloud_id));
@@ -2915,6 +2917,41 @@
     }
   }
 
+  /* Aggregate signals for the owner: five numbers, no personal data. A failed
+     read hides the card rather than showing invented figures. */
+  async function renderSignals(isOwner) {
+    const group = $('#accSignalsGroup');
+    const body = $('#accSignalsBody');
+    if (!group || !body) return;
+    if (!isOwner || auth.state !== VERIFIED || !auth.token) { group.style.display = 'none'; return; }
+    group.style.display = 'block';
+    body.innerHTML = '<div class="acc-row-sub">Loading signals…</div>';
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/vault/signals', {
+        headers: { authorization: 'Bearer ' + auth.token },
+        credentials: 'omit'
+      });
+      if (!res.ok) { group.style.display = 'none'; return; }
+      const d = await res.json();
+      const t = d.totals || {};
+      const top = (rows, label) => (rows && rows.length)
+        ? '<div style="font-size:0.78rem;color:var(--dim);line-height:1.8;">' + esc(label) + ': ' +
+          rows.map(x => '<code>' + esc(x.id) + '</code> ' + esc(String(x.count))).join(' · ') + '</div>'
+        : '';
+      body.innerHTML =
+        '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:0.82rem;color:#e2e8f0;">' +
+          '<span>Views <strong>' + esc(String(t.views || 0)) + '</strong></span>' +
+          '<span>Sign-ins <strong>' + esc(String(t.signins || 0)) + '</strong></span>' +
+          '<span>Downloads <strong>' + esc(String(t.downloads || 0)) + '</strong></span>' +
+          '<span>Broken-link reports <strong>' + esc(String(t.broken || 0)) + '</strong></span>' +
+          '<span>Submissions <strong>' + esc(String(t.submissions || 0)) + '</strong></span>' +
+        '</div>' +
+        top(d.views, 'Most viewed') +
+        top(d.downloads, 'Most downloaded') +
+        top(d.broken, 'Reported links');
+    } catch { group.style.display = 'none'; }
+  }
+
   async function renderAccountUploads() {
     renderPublishingStatus();
     const list = $('#vUpListContent');
@@ -2936,6 +2973,7 @@
       const isOwner = Boolean(data.is_owner);
 
       if (title) title.textContent = isOwner ? 'All Submissions (Owner Review Queue)' : 'Your Vault Contributions';
+      renderSignals(isOwner);
 
       if (!subs.length) {
         list.innerHTML = '<div class="acc-row-sub">No submissions found. Submit your first resource above!</div>';
@@ -2967,6 +3005,15 @@
               </div>
             </div>
             ${s.details ? `<div style="font-size:0.82rem;color:#cbd5e1;background:rgba(0,0,0,0.25);padding:8px 10px;border-radius:6px;">${esc(s.details)}</div>` : ''}
+            ${isOwner && isPending ? `
+              <div style="background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px;display:grid;gap:6px;">
+                <div style="font-size:0.75rem;color:var(--dim);">Review record — saved with the listing and shown to visitors. Tick only what you actually did.</div>
+                <label style="display:flex;align-items:center;gap:7px;font-size:0.8rem;color:#e2e8f0;cursor:pointer;"><input type="checkbox" data-review-check value="Download link opened" style="width:14px;height:14px;"> Download link opened</label>
+                <label style="display:flex;align-items:center;gap:7px;font-size:0.8rem;color:#e2e8f0;cursor:pointer;"><input type="checkbox" data-review-check value="File type and size match the listing" style="width:14px;height:14px;"> File type and size match the listing</label>
+                <label style="display:flex;align-items:center;gap:7px;font-size:0.8rem;color:#e2e8f0;cursor:pointer;"><input type="checkbox" data-review-check value="Archive password tested" style="width:14px;height:14px;"> Archive password tested</label>
+                <input type="text" id="vSubSha-${esc(s.id)}" placeholder="SHA-256 checksum (optional, 64 hex characters)" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:6px 10px;color:#fff;font-size:0.82rem;font-family:var(--mono);">
+              </div>
+            ` : ''}
             <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
               <span style="font-size:0.8rem;color:var(--dim);">Download: ${safeHref(s.download_url) ? `<a href="${esc(safeHref(s.download_url))}" target="_blank" rel="noopener noreferrer" style="color:#60a5fa;">${esc(s.download_url)}</a>` : esc(s.download_url || '—')}</span>
               ${isOwner && isPending ? `
@@ -3016,13 +3063,21 @@
       if (isOwner) {
         list.querySelectorAll('[data-sub-approve]').forEach(btn => {
           btn.addEventListener('click', async () => {
+            const subId = btn.dataset.subApprove;
+            const row = btn.closest('.acc-row-item');
+            const checks = row ? Array.from(row.querySelectorAll('[data-review-check]:checked')).map(c => c.value) : [];
+            const sha = (document.getElementById(`vSubSha-${subId}`)?.value || '').trim().toLowerCase();
+            if (sha && !/^[0-9a-f]{64}$/.test(sha)) {
+              toast({ title: 'Checksum not valid', sub: 'A SHA-256 is 64 hex characters. Leave it empty if you do not have one.', icon: ICON.x });
+              return;
+            }
             btn.disabled = true;
             btn.textContent = 'Publishing…';
             try {
               const appRes = await fetch(AUTH_WORKER_URL + '/vault/submissions/review', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
-                body: JSON.stringify({ id: btn.dataset.subApprove, decision: 'approve' }),
+                body: JSON.stringify({ id: subId, decision: 'approve', checks, sha256: sha || undefined }),
                 credentials: 'omit'
               });
               if (appRes.ok) {
@@ -3739,6 +3794,45 @@
   function startCountdownTick() { if (cdTimer) return; tickCountdown(); cdTimer = setInterval(tickCountdown, 1000); }
   function stopCountdownTick() { if (cdTimer) { clearInterval(cdTimer); cdTimer = null; } }
 
+  /* Counts a resource view once per page load. The worker keeps the aggregate
+     only — nothing identifying the visitor is sent or stored. */
+  const viewedResources = new Set();
+  function trackView(r) {
+    const id = String((r && (r.cloud_id || r.id)) || '');
+    if (!id || viewedResources.has(id)) return;
+    viewedResources.add(id);
+    try {
+      fetch(AUTH_WORKER_URL + '/vault/view', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'omit',
+        body: JSON.stringify({ id })
+      }).catch(() => {});
+    } catch {}
+  }
+
+  /* A visitor can say a link is broken without signing in; the owner reads the
+     reports in the uploads tab. The note is optional because one click is often
+     all somebody will give. */
+  async function reportLink(r, btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/vault/link-report', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'omit',
+        body: JSON.stringify({ id: String(r.cloud_id || r.id || '') })
+      });
+      if (res.ok) toast({ title: 'Report sent', sub: 'Thanks — the owner will check this download link.', icon: ICON.check });
+      else toast({ title: 'Could not send', sub: 'Try again in a moment, or say so in #help.', icon: ICON.x });
+    } catch {
+      toast({ title: 'Could not send', sub: 'Check your connection and try again.', icon: ICON.x });
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   /* The gate, the rows and the password are one surface: rebuilt together
      whenever auth state changes, so a modal opened logged-out never keeps
      showing locked rows after the visitor verifies without closing it. */
@@ -3749,7 +3843,8 @@
     stopCountdownTick();
     zone.innerHTML = gateBannerHTML(r) +
       '<div class="file-list">' + fileRowsHTML(r) + '</div>' +
-      passwordHTML(r);
+      passwordHTML(r) +
+      '<p class="link-report-row"><button type="button" class="banner-link" data-report-link="' + esc(r.cloud_id || r.id) + '">Download not working? Report this link</button></p>';
 
     const gl = zone.querySelector('#gateLogin');
     if (gl) gl.addEventListener('click', startLogin);
@@ -3759,6 +3854,8 @@
       btn.addEventListener('click', () => requestFile(r, btn.dataset.file, btn)));
     zone.querySelectorAll('[data-gated]').forEach(btn =>
       btn.addEventListener('click', () => requestLink(r, btn.dataset.gated, btn)));
+    const report = zone.querySelector('[data-report-link]');
+    if (report) report.addEventListener('click', () => reportLink(r, report));
   }
 
   function copyText(btn, text, title = 'Password copied', sub = 'Paste it when the archive asks.') {
@@ -3817,6 +3914,7 @@
   function openModal(id) {
     const r = resources.find(x => x.id === id);
     if (!r) return;
+    trackView(r);
     modalId = id;
     const isSaved = saved.has(id);
     const isOwner = userIsOwner();

@@ -1278,6 +1278,9 @@ textarea.field-input { min-height: 72px; resize: vertical; line-height: 1.6; }
 .g-list b { color: var(--white); font-weight: 600; }
 .g-table-wrap { overflow-x: auto; border-radius: var(--radius-md); border: 1px solid var(--line); margin-top: 16px; }
 .g-list code { overflow-wrap: anywhere; font-family: var(--mono); font-size: 0.82em; color: var(--accent); }
+.link-report-row { margin: 12px 0 0; font-size: 0.78rem; }
+.link-report-row .banner-link { background: none; border: 0; padding: 0; font: inherit; color: var(--dim); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.link-report-row .banner-link:hover { color: var(--white); }
 .checksum-box {
   margin-top: 20px; padding: 18px 20px;
   border-radius: var(--radius-md);

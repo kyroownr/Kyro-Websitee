@@ -97,6 +97,9 @@ export default {
       if (url.pathname === '/vault/notifications') return await handleVaultNotifications(request, url, env, cors);
       if (url.pathname === '/vault/public') return await handleVaultPublic(request, url, env, cors);
       if (url.pathname === '/vault/link') return await handleVaultLink(request, url, env, cors);
+      if (url.pathname === '/vault/view') return await handleVaultView(request, url, env, cors);
+      if (url.pathname === '/vault/link-report') return await handleVaultLinkReport(request, url, env, cors);
+      if (url.pathname === '/vault/signals') return await handleVaultSignals(request, url, env, cors);
       if (url.pathname === '/vault/incoming') return await handleIncomingReleases(request, url, env, cors);
       if (url.pathname === '/vault/incoming/vote') return await handleIncomingVote(request, url, env, cors);
       if (url.pathname === '/early-access') return await handleEarlyAccess(request, url, env, cors);
@@ -160,6 +163,10 @@ async function handleCallback(request, url, env) {
 
   const accessToken = await exchangeCode(code, request, env);
   const session = await readSession(accessToken, env);
+
+  // One aggregate counter per successful sign-in. No id, name or token is kept
+  // with it, and a failed sign-in never reaches this line.
+  try { await recordSignal(env, 'signin'); } catch {}
 
   // The token rides in the query because the spec asks for it; the site strips
   // it with history.replaceState() on first paint.
@@ -1071,6 +1078,107 @@ async function handleDownloads(request, url, env, cors) {
   return json({ id, downloads: Number(written.counts[id]) || 0, counts: written.counts }, 200, cors);
 }
 
+/* ------------------------------ site signals ------------------------------
+   Five numbers the owner needs to decide what Kyro does next: resource views,
+   Discord sign-ins, downloads handed out, broken-link reports and community
+   submissions. They are aggregate counters only — no cookie, no session id, no
+   user id and no address is stored beside a count. Reports carry the resource
+   id and the note the visitor typed, nothing else. */
+const SIGNALS_KEY = 'kyro.signals.v1';
+
+function signalsDoc(value) {
+  const v = value && typeof value === 'object' ? value : {};
+  const map = (input) => (input && typeof input === 'object' ? input : {});
+  return {
+    views: map(v.views),
+    downloads: map(v.downloads),
+    broken: map(v.broken),
+    reports: Array.isArray(v.reports) ? v.reports : [],
+    signins: Number(v.signins) || 0,
+    submissions: Number(v.submissions) || 0
+  };
+}
+
+async function recordSignal(env, kind, id) {
+  const key = cleanText(id, 60).toLowerCase();
+  await mutateDoc(env, SIGNALS_KEY, {}, (curr) => {
+    const d = signalsDoc(curr);
+    if (kind === 'signin') d.signins += 1;
+    else if (kind === 'submission') d.submissions += 1;
+    else if (kind === 'view' && key) d.views[key] = (Number(d.views[key]) || 0) + 1;
+    else if (kind === 'download' && key) d.downloads[key] = (Number(d.downloads[key]) || 0) + 1;
+    return d;
+  });
+}
+
+/* Anonymous event pings are accepted without a session, so they are limited by
+   a hash of the connecting address rather than by a member id. */
+async function limitAnonymous(env, bucket, request, max, windowSec = 600) {
+  const ip = String(request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || '').split(',')[0].trim();
+  if (!ip) return;
+  const hash = (await sha256(ip)).slice(0, 24);
+  await limitWrites(env, bucket, hash, max, windowSec);
+}
+
+async function handleVaultView(request, url, env, cors) {
+  if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
+  const input = await jsonBody(request);
+  const id = cleanText(input.id, 60);
+  if (!id) throw fail(400, 'bad_id', 'Resource ID is required.');
+  await limitAnonymous(env, 'views', request, 300);
+  try { await recordSignal(env, 'view', id); } catch { /* a lost view must never break the page */ }
+  return json({ ok: true }, 200, cors);
+}
+
+async function handleVaultLinkReport(request, url, env, cors) {
+  if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
+  const input = await jsonBody(request);
+  const id = cleanText(input.id, 60);
+  if (!id) throw fail(400, 'bad_id', 'Resource ID is required.');
+  const note = cleanText(input.note, 300);
+  await limitAnonymous(env, 'linkreports', request, 10);
+  await mutateDoc(env, SIGNALS_KEY, {}, (curr) => {
+    const d = signalsDoc(curr);
+    const slug = id.toLowerCase();
+    d.broken[slug] = (Number(d.broken[slug]) || 0) + 1;
+    d.reports = [{ id: slug, note, at: new Date().toISOString() }, ...d.reports].slice(0, 200);
+    return d;
+  });
+  return json({ ok: true }, 200, cors);
+}
+
+function topSignals(map, limit = 8) {
+  return Object.entries(map || {})
+    .map(([id, count]) => ({ id, count: Number(count) || 0 }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
+}
+
+async function handleVaultSignals(request, url, env, cors) {
+  if (request.method !== 'GET') return json({ error: 'Use GET.' }, 405, cors);
+  const session = await requireMember(bearerToken(request, url), env);
+  if (!isOwnerSession(session, env) && !isAdmin(session, env)) {
+    throw fail(403, 'forbidden', 'Only Kyro staff can read the site signals.');
+  }
+  const d = signalsDoc((await readDoc(env, SIGNALS_KEY, {})).value);
+  const views = topSignals(d.views, 12);
+  const downloads = topSignals(d.downloads, 12);
+  const broken = topSignals(d.broken, 12);
+  return json({
+    views,
+    downloads,
+    broken,
+    reports: d.reports.slice(0, 50),
+    totals: {
+      views: Object.values(d.views).reduce((n, v) => n + (Number(v) || 0), 0),
+      downloads: Object.values(d.downloads).reduce((n, v) => n + (Number(v) || 0), 0),
+      broken: Object.values(d.broken).reduce((n, v) => n + (Number(v) || 0), 0),
+      signins: d.signins,
+      submissions: d.submissions
+    }
+  }, 200, { ...cors, 'cache-control': 'no-store' });
+}
+
 /* ------------------------------ discord calls ---------------------------- */
 
 /* Discord answers a bad exchange with 400 + { error, error_description }.
@@ -1229,6 +1337,23 @@ const VAULT_PUBLIC_ITEMS_KEY = 'kyro.vault_approved_items.v1';
    seed file put the card straight back. */
 const HIDDEN_RESOURCES_KEY = 'kyro.hidden_resources.v1';
 const INCOMING_PREVIEW_URL = 'https://kyro.new.tg/assets/incoming-preview.png';
+
+/* The review record is what the listing's "Details & safety" panel shows. It is
+   written only from what the reviewer actually submits at approval time — a
+   ticked check, a real SHA-256, the reviewer's Discord name and the timestamp.
+   Nothing here is inferred or filled in afterwards. */
+const REVIEW_CHECK_LIMIT = 6;
+function reviewChecks(input) {
+  const raw = Array.isArray(input) ? input : (input == null ? [] : [input]);
+  return raw
+    .map(value => cleanText(value, 120))
+    .filter(Boolean)
+    .slice(0, REVIEW_CHECK_LIMIT);
+}
+function reviewSha(value) {
+  const sha = String(value == null ? '' : value).trim().toLowerCase();
+  return /^[0-9a-f]{64}$/.test(sha) ? sha : '';
+}
 
 /* Item images. The staff media channel is where a picture should go, but the
    bot is not guaranteed access to it (a category or channel overwrite can deny
@@ -1398,8 +1523,14 @@ async function handleVaultPublic(request, url, env, cors) {
   const items = (Array.isArray(doc?.value?.items) ? doc.value.items : [])
     .filter(item => !hiddenSet.has(String(item.id || '').toLowerCase()) && !hiddenSet.has(String(item.slug || '').toLowerCase()))
     // The public vault is anonymous: who voted, who uploaded and the internal
-    // Discord message id are none of a visitor's business.
-    .map(({ voters, by, discord_msg_id, vote_offset, updated_at, ...item }) => item);
+    // Discord message id are none of a visitor's business. The download URL and
+    // archive password never leave the worker here either — the catalogue only
+    // says a file is gated, and /vault/link hands the real values to a verified
+    // member. Without this, "members only" would be a client-side promise.
+    .map(({ voters, by, discord_msg_id, vote_offset, updated_at, download_url, pass, password, ...item }) => ({
+      ...item,
+      gated: Boolean(download_url || pass || password)
+    }));
   return json({ items, hidden }, 200, cors);
 }
 
@@ -1439,6 +1570,7 @@ async function handleVaultLink(request, url, env, cors) {
     const outUrl = safeOutputUrl(file.url);
     if (outUrl) {
       await limitWrites(env, 'links', session.id, 80);
+      try { await recordSignal(env, 'download', id); } catch {}
       return json({ ok: true, url: outUrl, pass: file.pass || '' }, 200, cors);
     }
   }
@@ -1463,6 +1595,7 @@ async function handleVaultLink(request, url, env, cors) {
   if (!outUrl) throw fail(404, 'no_file', 'No downloadable file is stored for that resource.');
 
   await limitWrites(env, 'links', session.id, 80);
+  try { await recordSignal(env, 'download', id); } catch {}
   return json({ ok: true, url: outUrl, pass: linkPass }, 200, cors);
 }
 
@@ -1569,6 +1702,13 @@ async function handleVaultSubmissions(request, url, env, cors) {
       by: session.id,
       by_username: session.username,
       created: new Date().toISOString(),
+      /* An owner upload publishes without a review queue, so the uploader is
+         the reviewer of record. A contributor upload records nothing until the
+         owner approves it. */
+      reviewed_by: isOwner ? session.username : undefined,
+      reviewed_at: isOwner ? new Date().toISOString() : undefined,
+      checks: reviewChecks(input.checks),
+      sha256: reviewSha(input.sha256) || undefined,
       status: isOwner ? 'approved' : 'pending' // Owner submissions auto-approve; Contributor requires owner review
     };
 
@@ -1595,6 +1735,8 @@ async function handleVaultSubmissions(request, url, env, cors) {
     } else {
       // User notification: Upload submitted waiting for confirmation
       await createNotification(env, session.id, 'Upload Submitted', `Your resource "${submission.title}" has been submitted and is waiting for owner approval.`, 'pending');
+
+      try { await recordSignal(env, 'submission'); } catch {}
 
       // Owner notification: New request accept or deny
       const ownerUserId = ownerId(env);
@@ -1658,6 +1800,8 @@ async function handleVaultSubmissionReview(request, url, env, cors) {
   if (!subId || !['approve', 'reject'].includes(decision)) throw fail(400, 'bad_input', 'Provide submission ID and decision.');
 
   let reviewedSub = null;
+  const checks = reviewChecks(input.checks);
+  const sha = reviewSha(input.sha256 || input.checksum);
   await mutateDoc(env, VAULT_SUBMISSIONS_KEY, { submissions: [] }, curr => {
     const list = Array.isArray(curr?.submissions) ? curr.submissions : [];
     const found = list.find(s => s.id === subId);
@@ -1665,6 +1809,10 @@ async function handleVaultSubmissionReview(request, url, env, cors) {
       found.status = decision === 'approve' ? 'approved' : 'rejected';
       found.reviewed_by = session.username;
       found.reviewed_at = new Date().toISOString();
+      if (decision === 'approve') {
+        found.checks = checks;
+        if (sha) found.sha256 = sha;
+      }
       reviewedSub = found;
     }
     return { submissions: list };

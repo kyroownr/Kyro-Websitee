@@ -21,7 +21,8 @@
     "test:upload": "node tools/upload.test.cjs",
     "test:links": "node tools/links.test.cjs",
     "test:publish": "node tools/publish.test.cjs",
-    "test:ui": "node tools/ui.test.cjs"
+    "test:ui": "node tools/ui.test.cjs",
+    "test:e2e": "node tools/e2e-visitor.test.cjs"
   },
   "devDependencies": {
     "esbuild": "0.28.2",

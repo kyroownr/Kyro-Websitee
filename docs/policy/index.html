@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://kyro-auth.kyro-ownr.workers.dev" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
-  <link rel="stylesheet" href="/css/styles.css?v=cf69d46d" />
+  <link rel="stylesheet" href="/css/styles.css?v=0ea0d99e" />
 </head>
 <body>
 
@@ -56,6 +56,7 @@
           <li><code>kyro.oauth.state.v1</code> — a short-lived value that proves a sign-in redirect came from this browser. Removed as soon as it is used.</li>
         </ul>
         <p class="prose-body">The Cookie Preferences panel in your account lists the categories Kyro recognises. Essential storage is always on because the site cannot sign you in without it. The Functional and Analytics switches are present for completeness: no optional category is in use today, so turning them off changes nothing on the site. “Reset All Preferences” clears the saved values above and the toggles return to their default state.</p>
+        <p class="prose-body">Kyro does keep five aggregate counters so the owner can see what needs attention: how many times a listing was opened, how many Discord sign-ins succeeded, how many download links were handed out, how many broken-link reports arrived, and how many community submissions were made. A count is never stored with a name, user id, session token or address, no cookie is set for it, and only the owner sees the totals. A broken-link report stores the listing id and the note you type, nothing else. Where these totals appear, they are anonymous.</p>
       </section>
 
       <section class="prose-section" id="discord">
@@ -68,6 +69,7 @@
         <h2 class="prose-title">What membership unlocks</h2>
         <p class="prose-body">Every listing — description, preview images, file list, version, publisher and install guide — is readable with no account. Joining the Kyro Discord and verifying unlocks exactly three things: the download link for a gated file, the archive password when the publisher supplied one, and the <code>#help</code> channel for install support. A listing whose file is hosted by the original creator links out instead of serving a file from Kyro.</p>
         <p class="prose-body">A download link is not a safety guarantee. Kyro publishes a scan status or review record only when one was actually recorded for that listing; where a panel says “Not recorded”, none was. Scan anything you download, and read <a class="prose-link" href="/about#copyright-policy">Kyro’s DMCA &amp; copyright policy</a> for how takedowns are handled.</p>
+        <p class="prose-body">If a download link does not work, use <em>Download not working? Report this link</em> on the listing — no account needed. The report reaches the owner, and contributors can see the same rules they are held to on the <a class="prose-link" href="/contribute">contributor rules page</a>.</p>
       </section>
 
       <section class="prose-section" id="contact">
@@ -91,6 +93,7 @@
         <div class="footer-links">
           <a href="/">Vault</a>
           <a href="/about">About</a>
+          <a href="/contribute">Contribute</a>
           <a href="/policy">Policy</a>
           <a href="https://discord.gg/N3KJBSWrkR" target="_blank" rel="noopener noreferrer">Invite ↗</a>
         </div>

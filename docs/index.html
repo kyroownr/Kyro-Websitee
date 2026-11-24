@@ -37,7 +37,7 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="all" />
   <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
 
-  <link rel="stylesheet" href="/css/styles.css?v=cf69d46d" />
+  <link rel="stylesheet" href="/css/styles.css?v=0ea0d99e" />
 </head>
 <body>
 
@@ -184,6 +184,7 @@
         </div>
         <div class="footer-links">
           <a href="/about">About</a>
+          <a href="/contribute">Contribute</a>
           <a href="/policy">Policy</a>
           <a href="#discordCard">Kyro Discord</a>
           <a href="https://discord.gg/N3KJBSWrkR" target="_blank" rel="noopener noreferrer" id="footerInvite">Invite ↗</a>
@@ -573,7 +574,14 @@
             <div id="accPublishingStatus" style="display:flex;flex-direction:column;gap:8px;margin-top:10px;"></div>
           </div>
 
-          <p class="acc-subheading">Contributors and Server Owners can submit new tools, plugins, presets, and packs. Contributor uploads are reviewed and approved by the Owner before publishing to Discord and the Vault.</p>
+          <p class="acc-subheading">Contributors and Server Owners can submit new tools, plugins, presets, and packs. Contributor uploads are reviewed and approved by the Owner before publishing to Discord and the Vault. Read the <a class="prose-link" href="/contribute">contributor rules</a> before you submit — they cover who can upload, the extra permission a course needs, and how removals work.</p>
+
+          <!-- Owner-only: aggregate site signals (views, sign-ins, downloads, broken links, submissions). -->
+          <div class="acc-settings-group" id="accSignalsGroup" style="display:none;margin-top:14px;">
+            <div class="acc-group-title"><span>Site signals</span></div>
+            <p class="acc-group-desc">Counts only — no cookie, session id, user id or address is stored with them. Refreshes when you open this tab.</p>
+            <div id="accSignalsBody" style="display:flex;flex-direction:column;gap:8px;margin-top:10px;"></div>
+          </div>
 
           <!-- Upload Form -->
           <div class="acc-settings-group" style="margin-top:14px;">
@@ -802,7 +810,7 @@
   <!-- Modular scripts: data → preview engine → app wiring -->
   <script defer src="/js/data.js?v=f2d69c44"></script>
   <script defer src="/js/preview.js?v=53c30c30"></script>
-  <script defer src="/js/app.js?v=e41fa714"></script>
+  <script defer src="/js/app.js?v=b1406eb3"></script>
   <script defer src="/js/applications.js?v=195770b9"></script>
 </body>
 </html>

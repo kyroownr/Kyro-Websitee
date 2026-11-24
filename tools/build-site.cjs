@@ -50,6 +50,7 @@ const PUBLIC_FILES = [
 const PUBLIC_DIRS = [
   'about',
   'apply',
+  'contribute',
   'easykyro',
   'guide',
   'incoming',

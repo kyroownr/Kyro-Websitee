@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contributor rules — Kyro</title>
+  <meta name="description" content="Who can submit a resource to Kyro, what permission a course needs, what the owner checks before publishing, and how removals and copyright complaints are handled." />
+  <meta name="theme-color" content="#08090d" />
+  <link rel="canonical" href="https://kyro.new.tg/contribute" />
+  <link rel="icon" type="image/png" href="/assets/kyro-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://kyro-auth.kyro-ownr.workers.dev" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
+  <link rel="stylesheet" href="/css/styles.css?v=3.7" />
+</head>
+<body>
+
+  <header class="site-nav">
+    <div class="nav-inner">
+      <a class="nav-logo" href="/" aria-label="Kyro — home">
+        <img class="nav-logo-mark" src="/assets/kyro-icon.png" alt="" width="26" height="26" />
+        <span class="nav-logo-text">Kyro</span>
+      </a>
+
+      <nav class="nav-right" aria-label="Site">
+        <a class="nav-link" href="/">Search</a>
+        <a class="nav-link" href="/incoming">Incoming</a>
+        <a class="nav-link" href="/courses">Courses</a>
+        <a class="nav-link" href="/guide">Guide</a>
+        <a class="nav-link" href="/easykyro">EasyKyro</a>
+        <a class="nav-link" href="/about">About</a>
+        <a class="nav-link" href="/policy">Policy</a>
+        <a class="nav-link is-current" href="/contribute" aria-current="page">Contribute</a>
+        <a class="nav-link" href="/#discordCard">Community</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <header class="page-head">
+      <p class="section-label">Contributors</p>
+      <h1 class="page-title">Contributor rules</h1>
+      <p class="page-lede">Kyro is a directory, not a file dump. These are the rules every submission is held to: who may upload, what permission a course needs, what the owner checks before a listing goes live, and how a listing is removed.</p>
+    </header>
+
+    <div class="prose">
+      <section class="prose-section" id="who">
+        <h2 class="prose-title">Who can submit</h2>
+        <p class="prose-body">Uploads are open to members with the <strong>Contributor</strong> role, the <strong>Mod+</strong> role and the Server Owner. Everyone else can ask for a resource in the <code>#requests</code> board in the Kyro Discord — the request is visible to the whole community and does not need an upload.</p>
+        <p class="prose-body">Contributor uploads go into a review queue and are not public until the owner approves them. Owner uploads publish immediately. Either way the listing names the contributor who submitted it.</p>
+      </section>
+
+      <section class="prose-section" id="what">
+        <h2 class="prose-title">What can be listed</h2>
+        <ul class="prose-list">
+          <li>After Effects extensions, scripts, presets, project files and sound packs.</li>
+          <li>Editors and software builds the community actually uses.</li>
+          <li>Courses and tutorials, under the stricter rules below.</li>
+        </ul>
+        <p class="prose-body">A listing must describe the real thing: the title, publisher, platform, version and file type should match what the download actually contains. Do not upload malware, licence keys you do not own, or anything you have no right to share. If a link is broken, a visitor can report it from the listing, and the owner will see the report.</p>
+      </section>
+
+      <section class="prose-section" id="courses">
+        <h2 class="prose-title">Courses: permission is required</h2>
+        <p class="prose-body">A course listing needs two things that other listings do not:</p>
+        <ol class="prose-list">
+          <li><strong>A link to the creator’s original page.</strong> The upload form will not submit without one, and the worker rejects the submission without it.</li>
+          <li><strong>Permission to share.</strong> You must either own the course, hold a licence that allows redistribution, or have the creator’s explicit permission. The upload form asks you to confirm this, and the confirmation is required.</li>
+        </ol>
+        <p class="prose-body">If you are not sure you may redistribute a course, <strong>submit only the original link</strong> — linking to a creator’s own page never needs redistribution permission. Do not upload a paid course, a ripped course, or a copy whose licence forbids sharing. The owner will reject it, and repeated submissions of the same unlicensed course can end contributor access.</p>
+      </section>
+
+      <section class="prose-section" id="review">
+        <h2 class="prose-title">What happens after you submit</h2>
+        <ol class="prose-list">
+          <li>Your upload waits in the owner’s review queue. You get a notification when it is submitted and another when it is approved or rejected.</li>
+          <li>The owner opens the download link and checks the file type, size and any archive password. They tick only the checks they actually performed.</li>
+          <li>Approval publishes the listing to the site and posts it to Discord. If you asked for an optional VirusTotal scan, the URL is queued then — never before, and never without your consent.</li>
+          <li>The listing’s “Details &amp; safety” panel shows the reviewer, the review date, the checks performed and the checksum <em>only when those were recorded</em>. Where it says “Not recorded”, nothing was logged. Kyro never calls a file safe.</li>
+        </ol>
+      </section>
+
+      <section class="prose-section" id="removal">
+        <h2 class="prose-title">Removals and copyright complaints</h2>
+        <p class="prose-body">Anyone can ask for a listing to be removed. Contributors can ask for their own upload to be taken down at any time; rights holders can file a copyright complaint. Open a ticket in the <a class="prose-link" href="https://discord.gg/N3KJBSWrkR" target="_blank" rel="noopener noreferrer">Kyro Discord</a> and say it is a removal request.</p>
+        <p class="prose-body">A copyright complaint should include: the copyrighted work, the exact Kyro listing and download link, your contact details, confirmation that you are the rights holder or their authorised representative, and a statement that the notice is accurate and made in good faith. These are the same requirements listed in the <a class="prose-link" href="/about#copyright-policy">DMCA &amp; copyright policy</a>.</p>
+        <p class="prose-body">Kyro removes the link and hides the listing after review. Removal is not a negotiation: an unlicensed course copy comes down when the creator asks, and a contributor who keeps re-uploading it loses upload access.</p>
+      </section>
+
+      <section class="prose-section" id="staff">
+        <h2 class="prose-title">Applying for Contributor</h2>
+        <p class="prose-body">Contributor access is granted by the owner to people who share real, working resources with the community. Say hello in the Discord and show what you have — there is no form to fill in and no fee.</p>
+      </section>
+    </div>
+
+    <p class="page-foot">
+      <a class="btn btn-primary" href="https://discord.gg/N3KJBSWrkR" target="_blank" rel="noopener noreferrer">Join the Kyro Discord</a>
+      <a class="banner-link" href="/about">About Kyro</a>
+    </p>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell">
+      <div class="footer-main">
+        <div class="footer-left">
+          <span class="brand-word mono">KYRO <span class="brand-heart" aria-hidden="true">&lt;3</span></span>
+        </div>
+        <div class="footer-links">
+          <a href="/">Vault</a>
+          <a href="/about">About</a>
+          <a href="/contribute">Contribute</a>
+          <a href="/policy">Policy</a>
+          <a href="https://discord.gg/N3KJBSWrkR" target="_blank" rel="noopener noreferrer">Invite ↗</a>
+        </div>
+      </div>
+      <div class="footer-meta mono">
+        <p>© 2026, Est. Nov 2026 · Kyro</p>
+        <p>kyro.new.tg</p>
+      </div>
+    </div>
+  </footer>
+
+  <script defer src="/js/nav-auth.js?v=1"></script>
+  <script defer src="/js/stamp.js"></script>
+</body>
+</html>
