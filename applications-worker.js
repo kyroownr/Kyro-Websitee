@@ -31,6 +31,19 @@ const error = (status, code, message) => Object.assign(new Error(message), { sta
 const response = (value, status = 200, headers = {}) => Response.json(value, { status, headers: { ...headers, 'cache-control': 'no-store' } });
 const snowflake = value => /^\d{17,20}$/.test(String(value || '')) && BigInt(value) < 2n ** 64n;
 const safeText = value => value.replace(/[\\`*_{}\[\]()<>|~]/g, '\\$&');
+/* Product posts carry an owner-only "Mark as updated" button. Staff who can
+   manage the server may use it too, so an admin can announce a hotfix. */
+const RESOURCE_OWNER_ID = '1052909930073567232';
+function canMarkResourceUpdated(env, member) {
+  const id = member?.user?.id || '';
+  if (!snowflake(id)) return false;
+  if (id === RESOURCE_OWNER_ID) return true;
+  let perms = 0n;
+  try { perms = BigInt(member?.permissions || '0'); } catch {}
+  if ((perms & 0x8n) === 0x8n) return true;
+  const roles = member?.roles || [];
+  return roles.includes('1539968441094512710') || roles.includes(String(env.DISCORD_MOD_ROLE_ID || ''));
+}
 const applicationKey = id => 'application:' + id;
 
 export function applicationConfiguration(env) {
@@ -1169,6 +1182,41 @@ export async function handleApplicationInteractions(request, env, ctx) {
   // Modal submissions (Interaction Type 5)
   if (interaction.type === 5) {
     const modalCustomId = interaction.data?.custom_id || '';
+    const resourceUpdateModal = /^kyro-upd-modal:([a-z0-9-]{1,85})$/.exec(modalCustomId);
+    if (resourceUpdateModal) {
+      if (!canMarkResourceUpdated(env, interaction.member)) {
+        return response({ type: 4, data: { content: '❌ Only the Server Owner or an administrator can mark a resource updated.', flags: 64 } });
+      }
+      const rows = interaction.data?.components || [];
+      const version = String(rows[0]?.components?.[0]?.value || '').trim();
+      const note = String(rows[1]?.components?.[0]?.value || '').trim();
+      ctx.waitUntil((async () => {
+        let content;
+        try {
+          const secret = String(env.BOT_PUBLISH_SECRET || '');
+          if (!secret) throw new Error('BOT_PUBLISH_SECRET is not set on the worker.');
+          const res = await fetch(new URL('/vault/discord/update', request.url), {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-kyro-bot': secret },
+            body: JSON.stringify({ slug: resourceUpdateModal[1], version, note, by: interaction.member?.user?.id || '' }),
+            signal: AbortSignal.timeout(15000)
+          });
+          const data = await res.json().catch(() => ({}));
+          content = res.ok
+            ? `🔄 ${data.title ? '**' + data.title + '** ' : 'Resource '}marked as updated${data.version ? ' to `' + data.version + '`' : ''} — the post was edited and #announcements now says it just got updated.`
+            : '❌ ' + (data.error || 'Discord did not accept the update.');
+        } catch (err) {
+          content = '❌ Could not update that post: ' + (err.message || 'try again later.');
+        }
+        try {
+          await fetch(DISCORD_API + '/webhooks/' + interaction.application_id + '/' + interaction.token + '/messages/@original', {
+            method: 'PATCH', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ content, allowed_mentions: { parse: [] } }), redirect: 'manual', signal: AbortSignal.timeout(8000)
+          });
+        } catch {}
+      })());
+      return response({ type: 5, data: { flags: 64 } });
+    }
     const declineModalMatch = /^kyro-app:decline_modal:(\d{17,20}):([a-f\d-]{36})$/.exec(modalCustomId);
     if (declineModalMatch) {
       const applicantId = declineModalMatch[1];
@@ -1440,6 +1488,47 @@ export async function handleApplicationInteractions(request, env, ctx) {
       } catch {}
     })());
     return response({ type: 5, data: { flags: 64 } });
+  }
+
+  // "Mark as updated" on a product post: ask for the new version in a modal.
+  const resourceUpdateMatch = /^kyro-upd:([a-z0-9-]{1,85})$/.exec(interaction.data?.custom_id || '');
+  if (interaction.type === 3 && resourceUpdateMatch) {
+    if (!canMarkResourceUpdated(env, interaction.member)) {
+      return response({ type: 4, data: { content: '❌ Only the Server Owner or an administrator can mark a resource updated.', flags: 64 } });
+    }
+    return response({
+      type: 9,
+      data: {
+        title: 'Mark post as updated',
+        custom_id: 'kyro-upd-modal:' + resourceUpdateMatch[1],
+        components: [
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'version',
+              label: 'New version (leave blank to keep)',
+              style: 1,
+              required: false,
+              max_length: 40,
+              placeholder: 'e.g. v1.2'
+            }]
+          },
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'update_note',
+              label: 'What changed? (optional)',
+              style: 2,
+              required: false,
+              max_length: 300,
+              placeholder: 'Shown in the update announcement'
+            }]
+          }
+        ]
+      }
+    });
   }
 
   const actionMatch = /^kyro-app:(approved|declined|claim|close):(\d{17,20}):([a-f\d-]{36})$/.exec(interaction.data?.custom_id || '');

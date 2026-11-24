@@ -4037,6 +4037,7 @@
     const by = r.creator ? '<span>by ' + esc(r.creator) + '</span>' : '';
     const ownerModalActions = isOwner ? `
       <button type="button" class="btn btn-ghost btn-sm" id="modalOwnerEditBtn" style="color:#38bdf8;border-color:rgba(56,189,248,0.3);">⚙️ Edit Post</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="modalOwnerUpdateBtn" style="color:#30d158;border-color:rgba(48,209,88,0.3);">🚀 Post Update</button>
       <button type="button" class="btn btn-danger btn-sm" id="modalOwnerDeleteBtn">🗑️ Delete Post</button>
     ` : '';
     return '<button class="close-x modal-close" aria-label="Close"></button>' +
@@ -4095,6 +4096,10 @@
       root.querySelector('#modalOwnerEditBtn')?.addEventListener('click', () => {
         if (opts.close) closeModal();
         openOwnerEditModal(r.id);
+      });
+      root.querySelector('#modalOwnerUpdateBtn')?.addEventListener('click', () => {
+        if (opts.close) closeModal();
+        openPostUpdateModal(r);
       });
       root.querySelector('#modalOwnerDeleteBtn')?.addEventListener('click', () => handleOwnerCardDelete(r.id));
     }
@@ -4812,6 +4817,117 @@
       if (oemSaveBtn) {
         oemSaveBtn.disabled = false;
         oemSaveBtn.textContent = 'Save & Update Live Post';
+      }
+    }
+  });
+
+  /* ------------------------- Post Update modal ------------------------- */
+  const postUpdateModalOverlay = $('#postUpdateModalOverlay');
+  const postUpdateForm = $('#postUpdateForm');
+  const pumVersionToggle = $('#pumVersionToggle');
+  const pumVersionRow = $('#pumVersionRow');
+  const pumVersion = $('#pumVersion');
+  const pumNote = $('#pumNote');
+  const pumSubmit = $('#pumSubmit');
+  const pumError = $('#pumError');
+  let pumResourceId = null;
+
+  function setPumError(message) {
+    if (!pumError) return;
+    pumError.textContent = message || '';
+    pumError.style.display = message ? 'block' : 'none';
+  }
+
+  function syncPumVersionRow() {
+    const on = Boolean(pumVersionToggle?.checked);
+    if (pumVersionRow) pumVersionRow.hidden = !on;
+    if (!on && pumVersion) pumVersion.value = '';
+  }
+
+  function openPostUpdateModal(r) {
+    if (!r || !userIsOwner()) return;
+    pumResourceId = r.id;
+    const summary = $('#pumSummary');
+    if (summary) {
+      summary.textContent = `Announce that "${r.title || r.id}" just got updated. The Discord post is refreshed and #announcements gets one short update notice.`;
+    }
+    const idInput = $('#pumId');
+    if (idInput) idInput.value = r.cloud_id || r.id;
+    if (pumVersionToggle) pumVersionToggle.checked = false;
+    if (pumVersion) pumVersion.value = '';
+    if (pumNote) pumNote.value = '';
+    if (pumSubmit) {
+      pumSubmit.disabled = false;
+      pumSubmit.textContent = 'Post Update';
+    }
+    setPumError('');
+    syncPumVersionRow();
+    if (postUpdateModalOverlay) showOverlay(postUpdateModalOverlay);
+  }
+
+  function closePostUpdateModal() {
+    if (postUpdateModalOverlay) hideOverlay(postUpdateModalOverlay);
+    pumResourceId = null;
+  }
+
+  pumVersionToggle?.addEventListener('change', syncPumVersionRow);
+  $('#postUpdateModalClose')?.addEventListener('click', closePostUpdateModal);
+  $('#pumCancel')?.addEventListener('click', closePostUpdateModal);
+  postUpdateModalOverlay?.addEventListener('click', (e) => {
+    if (e.target === postUpdateModalOverlay) closePostUpdateModal();
+  });
+
+  postUpdateForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!userIsOwner()) return;
+    const r = resources.find(x => x.id === pumResourceId);
+    if (!r) {
+      setPumError('That resource is no longer on the page. Close this and reopen it.');
+      return;
+    }
+    const includeVersion = Boolean(pumVersionToggle?.checked);
+    const version = includeVersion ? (pumVersion?.value.trim() || '') : '';
+    if (includeVersion && !version) {
+      setPumError('Enter the new version, or untick "Announce a new version".');
+      pumVersion?.focus();
+      return;
+    }
+
+    if (pumSubmit) {
+      pumSubmit.disabled = true;
+      pumSubmit.textContent = 'Posting…';
+    }
+    setPumError('');
+    try {
+      const res = await fetch(AUTH_WORKER_URL + '/vault/discord/update', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+        body: JSON.stringify({
+          slug: r.id,
+          id: r.cloud_id || r.id,
+          version,
+          note: pumNote?.value.trim() || ''
+        }),
+        credentials: 'omit'
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Discord did not accept the update.');
+      closePostUpdateModal();
+      toast({
+        title: 'Update posted',
+        sub: version
+          ? `"${r.title}" was refreshed to ${version} and announced in Discord.`
+          : `"${r.title}" was refreshed and announced in Discord.`,
+        icon: ICON.check
+      });
+      await loadPublicVaultItems();
+      if (modalId) openModal(modalId);
+    } catch (err) {
+      setPumError(err.message || 'Could not post the update.');
+    } finally {
+      if (pumSubmit) {
+        pumSubmit.disabled = false;
+        pumSubmit.textContent = 'Post Update';
       }
     }
   });

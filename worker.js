@@ -105,6 +105,7 @@ export default {
       if (url.pathname === '/early-access') return await handleEarlyAccess(request, url, env, cors);
       if (url.pathname === '/api/vault/publish') return await handleVaultPublish(request, url, env, cors);
       if (url.pathname === '/vault/discord/publish') return await handleDiscordPublishAdmin(request, url, env, cors);
+      if (url.pathname === '/vault/discord/update') return await handleDiscordResourceUpdate(request, url, env, cors);
       if (url.pathname === '/vault/virustotal') return await handleVirusTotalAdmin(request, url, env, cors);
       if (url.pathname === '/dashboard/settings') return await handleDashboardSettings(request, url, env, cors);
       if (url.pathname === '/dashboard/publishing') return await handleDashboardPublishing(request, url, env, cors);
@@ -2539,7 +2540,7 @@ function embedText(value, max = 300) {
   return cleanText(value, max).replace(/@/g, '@\u200b').replace(/`/g, '\u02cb');
 }
 function embedHash(item) {
-  const raw = [item.title, item.details, item.category, item.creator, item.by_username, item.source_url, item.kind, item.os, item.download_url].join('|');
+  const raw = [item.title, item.details, item.category, item.creator, item.by_username, item.source_url, item.kind, item.os, item.download_url, item.version].join('|');
   let hash = 2166136261;
   for (let i = 0; i < raw.length; i++) { hash ^= raw.charCodeAt(i); hash = Math.imul(hash, 16777619); }
   return (hash >>> 0).toString(36);
@@ -2564,6 +2565,8 @@ function resourceEmbed(item, options = {}) {
   fields.push({ name: 'Category', value: '`' + (embedText(item.category || 'General', 60) || 'General') + '`', inline: true });
   fields.push({ name: course ? 'Instructor / source' : 'Shared by', value: '`' + (sourceLabel || 'Kyro community') + '`', inline: true });
   fields.push({ name: 'Membership tier', value: '`Free`', inline: true });
+  const versionLabel = embedText(item.version || '', 40);
+  if (versionLabel) fields.push({ name: updated ? 'New version' : 'Version', value: '`' + versionLabel + '`', inline: true });
   fields.push({ name: 'Status', value: '`' + (removed ? 'Removed' : flagged ? 'Flagged for review' : updated ? 'Updated' : 'Live') + '`', inline: true });
 
   const description = removed
@@ -2583,13 +2586,21 @@ function resourceEmbed(item, options = {}) {
     ...(item.image_url && /^https:\/\//i.test(item.image_url) ? { image: { url: item.image_url } } : {})
   };
 }
+/* Every product post carries an owner-only button. Pressing it opens a modal
+   for the new version, then the bot edits the post and says in #announcements
+   that this resource just got updated. The slug rides in the custom_id, so the
+   button keeps working on posts made long before this feature existed. */
+function resourceUpdateCustomId(item) {
+  return 'kyro-upd:' + resourceSlug(item).slice(0, 85);
+}
 function resourceComponents(item) {
   const course = resourceKind(item) === 'course';
   return [{
     type: 1,
     components: [
       { type: 2, style: 5, label: course ? 'Open course ↗' : 'View resource ↗', url: resourcePageUrl(item) },
-      { type: 2, style: 5, label: 'Browse Kyro ↗', url: 'https://kyro.new.tg' }
+      { type: 2, style: 5, label: 'Browse Kyro ↗', url: 'https://kyro.new.tg' },
+      { type: 2, style: 3, label: '🔄 Mark as updated', custom_id: resourceUpdateCustomId(item) }
     ]
   }];
 }
@@ -3036,19 +3047,35 @@ async function processVirusTotalScans(env) {
 }
 
 async function handleDiscordPublishAdmin(request, url, env, cors) {
-  const session = await requireMember(bearerToken(request, url), env);
-  if (!(isOwnerSession(session, env) || isAdmin(session, env))) {
-    throw fail(403, 'forbidden', 'Only the owner or an admin can manage Discord announcements.');
+  /* Two callers: the owner dashboard (member session) and the bot secret, which
+     is used for one-off maintenance such as adding the update button to posts
+     that were published before the button existed. */
+  const botSecret = String(env.BOT_PUBLISH_SECRET || '');
+  const isBot = Boolean(botSecret) && String(request.headers.get('x-kyro-bot') || '') === botSecret;
+  let session = null;
+  if (!isBot) {
+    session = await requireMember(bearerToken(request, url), env);
+    if (!(isOwnerSession(session, env) || isAdmin(session, env))) {
+      throw fail(403, 'forbidden', 'Only the owner or an admin can manage Discord announcements.');
+    }
   }
+  const actor = session || { id: 'kyro-bot', username: 'Kyro bot' };
   if (request.method === 'GET') {
+    if (isBot) throw fail(403, 'forbidden', 'Bot access is for POST only.');
     return json({ publish: await publishRecords(env) }, 200, cors);
   }
   if (request.method !== 'POST') return json({ error: 'Use GET or POST.' }, 405, cors);
-  await limitWrites(env, 'discord-publish-admin', session.id, 20);
+  await limitWrites(env, 'discord-publish-admin', actor.id, 20);
   const input = await jsonBody(request);
   const slug = resourceSlug({ slug: input.slug, id: input.id });
   const action = String(input.action || 'retry');
-  if (action !== 'retry') throw fail(400, 'bad_action', 'Use action "retry".');
+  if (action === 'backfill') {
+    const out = await backfillResourceUpdateButtons(env);
+    await logBotAudit(env, 'Discord Update Button Added', actor,
+      `Update button added to ${out.patched} of ${out.posts} existing post${out.posts === 1 ? '' : 's'}.`);
+    return json({ ok: out.failed === 0, backfill: out }, 200, cors);
+  }
+  if (action !== 'retry') throw fail(400, 'bad_action', 'Use action "retry" or "backfill".');
 
   const records = await publishRecords(env);
   const snapshot = records[slug] && records[slug].snapshot;
@@ -3063,9 +3090,258 @@ async function handleDiscordPublishAdmin(request, url, env, cors) {
   if (!item) throw fail(404, 'not_found', 'No resource matches that slug, so there is nothing to announce.');
 
   const result = await dispatchKyroDiscordPublish(item, env);
-  await logBotAudit(env, 'Discord Announcement Retried', session,
+  await logBotAudit(env, 'Discord Announcement Retried', actor,
     `Retried "${item.title}" (status: ${result.status || 'unknown'}).`);
   return json({ ok: result.status !== 'failed', publish: result }, 200, cors);
+}
+
+/* Adds the update button to posts published before it existed. Only components
+   are patched, so the embed text, images and links stay exactly as they are.
+
+   Posts made by the older announcement flow have no publish record at all, so
+   the channels themselves are walked too: any bot message carrying a Kyro
+   product embed and relying on the old "Browse Vault" buttons gets the new
+   button, and its snapshot is recorded so pressing it can find the resource. */
+async function backfillResourceUpdateButtons(env) {
+  if (!env.DISCORD_BOT_TOKEN) return { posts: 0, patched: 0, failed: 0, skipped: 0, records: 0, scanned: 0 };
+  const records = await publishRecords(env);
+  let posts = 0, patched = 0, failed = 0, skipped = 0;
+  for (const [slug, record] of Object.entries(records)) {
+    const snapshot = { ...(record.snapshot || {}), slug };
+    if (!snapshot.title) { skipped++; continue; }
+    const components = resourceComponents(snapshot);
+    const targets = [
+      record.announcement_msg_id ? [PUBLISH_CHANNELS.announcements, record.announcement_msg_id] : null,
+      record.downloads_msg_id ? [PUBLISH_CHANNELS.downloads, record.downloads_msg_id] : null,
+      record.thread_id ? [record.thread_id, record.thread_id] : null
+    ].filter(Boolean);
+    posts += targets.length;
+    for (const [channel, messageId] of targets) {
+      const result = await discordCall(env, 'PATCH', `/channels/${channel}/messages/${messageId}`, { components });
+      if (result.ok) patched++;
+      else if (result.status !== 404) failed++;
+    }
+  }
+
+  let scanned = 0;
+  for (const channel of [PUBLISH_CHANNELS.announcements, PUBLISH_CHANNELS.downloads]) {
+    let before = '';
+    for (let page = 0; page < 3; page++) {
+      const listed = await discordCall(env, 'GET', `/channels/${channel}/messages?limit=100${before ? '&before=' + before : ''}`, null);
+      if (!listed.ok || !Array.isArray(listed.data) || !listed.data.length) break;
+      before = listed.data[listed.data.length - 1].id;
+      for (const message of listed.data) {
+        scanned++;
+        const buttons = (message.components || []).flatMap(row => row.components || []);
+        if (buttons.some(button => String(button.custom_id || '').startsWith('kyro-upd:'))) continue;
+        const embed = (message.embeds || [])[0];
+        if (!embed) continue;
+        const author = String((embed.author && embed.author.name) || '');
+        const footerText = String((embed.footer && embed.footer.text) || '');
+        if (!/kyro (vault|courses)/i.test(author) && !/kyro\.new\.tg/i.test(footerText)) continue;
+        let slug = '';
+        try { const pageUrl = new URL(embed.url || ''); slug = pageUrl.hash ? pageUrl.hash.slice(1) : ''; } catch {}
+        if (!slug) slug = embed.title ? resourceSlug({ title: embed.title }) : '';
+        slug = resourceSlug({ slug });
+        if (!slug) continue;
+
+        const rows = (message.components || []).map(row => ({ type: 1, components: (row.components || []).slice() }));
+        if (!rows.length) rows.push({ type: 1, components: [] });
+        const target = rows.find(row => row.components.length < 5);
+        if (!target) continue;
+        target.components.push({ type: 2, style: 3, label: '🔄 Mark as updated', custom_id: ('kyro-upd:' + slug).slice(0, 100) });
+        const patchedMessage = await discordCall(env, 'PATCH', `/channels/${channel}/messages/${message.id}`, { components: rows });
+        if (patchedMessage.ok) patched++;
+        else if (patchedMessage.status !== 404) failed++;
+        posts++;
+
+        // Adopt the post so the button can resolve the resource later.
+        const field = name => String(((embed.fields || []).find(entry => entry.name === name) || {}).value || '').replace(/`/g, '').trim();
+        const existing = records[slug] ? { ...records[slug] } : {};
+        const platform = field('Platform');
+        const record = {
+          ...existing,
+          slug,
+          status: existing.status || 'posted',
+          announcement_msg_id: existing.announcement_msg_id || (channel === PUBLISH_CHANNELS.announcements ? message.id : ''),
+          downloads_msg_id: existing.downloads_msg_id || (channel === PUBLISH_CHANNELS.downloads ? message.id : ''),
+          snapshot: existing.snapshot || {
+            id: slug,
+            slug,
+            title: String(embed.title || '').replace(/^UPDATED:\s*/i, '').trim(),
+            kind: /kyro courses/i.test(author) ? 'course' : 'software',
+            os: /macos/i.test(platform) ? 'macos' : /windows/i.test(platform) ? 'windows' : 'both',
+            category: field('Category') || 'General',
+            details: String(embed.description || '').split('\n\nType, source and safety notes:')[0].slice(0, 1500),
+            source_url: embed.url || undefined
+          }
+        };
+        if (!records[slug] || !existing.announcement_msg_id && channel === PUBLISH_CHANNELS.announcements) {
+          await savePublishRecord(env, slug, record);
+          records[slug] = record;
+        }
+      }
+    }
+  }
+
+  return { posts, patched, failed, skipped, records: Object.keys(records).length, scanned };
+}
+
+/* The owner picks "Mark as updated" on a product post, optionally types the new
+   version, and this edits that post in place and posts one short notice that
+   the resource just got updated. */
+async function announceResourceUpdate(env, slug, options = {}) {
+  if (!env.DISCORD_BOT_TOKEN) throw fail(503, 'discord_unconfigured', 'The Discord bot token is not configured.');
+  const wantedId = String(options.id || '').trim();
+  const records = await publishRecords(env);
+  let recordSlug = slug;
+  let previous = records[slug] ? { ...records[slug] } : null;
+  /* The website knows both the readable slug and the KV id. Older records may
+     be keyed by either, so accept the id as a fallback before giving up. */
+  if (!previous && wantedId) {
+    for (const [key, value] of Object.entries(records)) {
+      const snapshot = value && value.snapshot;
+      const candidateId = String((snapshot && snapshot.id) || (value && value.resource_id) || '');
+      if (candidateId === wantedId) {
+        recordSlug = key;
+        previous = { ...value };
+        break;
+      }
+    }
+  }
+  previous = previous || {};
+  if (!previous.announcement_msg_id && !previous.downloads_msg_id) {
+    const meta = await legacyPublishMeta(env, slug);
+    if (meta) {
+      previous.announcement_msg_id = meta.announcement_msg_id || '';
+      previous.downloads_msg_id = meta.downloads_msg_id || '';
+      previous.thread_id = meta.thread_id || '';
+    }
+  }
+  if (!previous.announcement_msg_id && !previous.downloads_msg_id) {
+    throw fail(404, 'not_published', 'That resource has no Discord post yet, so there is nothing to update.');
+  }
+
+  const version = cleanText(options.version || '', 40);
+  const matches = (entry) => resourceSlug(entry) === slug ||
+    Boolean(wantedId) && String(entry.id || '') === wantedId;
+  let item = null;
+  let source = 'snapshot';
+  const pub = (await readDoc(env, VAULT_PUBLIC_ITEMS_KEY, { items: [] })).value || {};
+  item = (Array.isArray(pub.items) ? pub.items : []).find(matches) || null;
+  if (item) source = 'vault';
+  if (!item) {
+    const subs = (await readDoc(env, VAULT_SUBMISSIONS_KEY, { submissions: [] })).value || {};
+    item = (Array.isArray(subs.submissions) ? subs.submissions : []).find(matches) || null;
+    if (item) source = 'submission';
+  }
+  if (!item) {
+    const legacy = await legacyPublishMeta(env, slug);
+    if (legacy && legacy.title) item = { ...legacy };
+  }
+  if (!item && previous.snapshot) item = { ...previous.snapshot };
+  if (!item) throw fail(404, 'not_found', 'No resource matches that post any more.');
+
+  const updatedItem = version ? { ...item, version } : { ...item };
+  const embed = resourceEmbed(updatedItem, { updated: true });
+  const components = resourceComponents(updatedItem);
+  const targets = [
+    previous.announcement_msg_id ? [PUBLISH_CHANNELS.announcements, previous.announcement_msg_id] : null,
+    previous.downloads_msg_id ? [PUBLISH_CHANNELS.downloads, previous.downloads_msg_id] : null
+  ].filter(Boolean);
+
+  let failure = null;
+  for (const [channel, messageId] of targets) {
+    const result = await discordCall(env, 'PATCH', `/channels/${channel}/messages/${messageId}`, {
+      embeds: [embed], components, allowed_mentions: { parse: [] }
+    });
+    if (!result.ok && result.status !== 404 && !failure) failure = result;
+  }
+
+  const title = embedText(updatedItem.title || 'A Kyro resource', 100);
+  const note = cleanText(options.note || '', 300);
+  const notice = {
+    content: `🔄 **${title}** just got updated${version ? ` to \`${embedText(version, 40)}\`` : ''}` +
+      (note ? `\n> ${embedText(note, 280)}` : '') + `\n${resourcePageUrl(updatedItem)}`,
+    allowed_mentions: { parse: [] }
+  };
+  const announcement = await discordCall(env, 'POST', `/channels/${PUBLISH_CHANNELS.announcements}/messages`, notice);
+  if (!announcement.ok && !failure) failure = announcement;
+  if (previous.thread_id) await discordCall(env, 'POST', `/channels/${previous.thread_id}/messages`, notice);
+  if (failure) throw fail(502, 'discord_failed', failure.error || 'Discord did not accept the update.');
+
+  if (version) {
+    const stamp = new Date().toISOString();
+    if (source === 'vault') {
+      await mutateDoc(env, VAULT_PUBLIC_ITEMS_KEY, { items: [] }, curr => {
+        const list = Array.isArray(curr?.items) ? curr.items : [];
+        return { items: list.map(entry => matches(entry) ? { ...entry, version, updated_at: stamp } : entry) };
+      });
+    } else if (source === 'submission') {
+      await mutateDoc(env, VAULT_SUBMISSIONS_KEY, { submissions: [] }, curr => {
+        const list = Array.isArray(curr?.submissions) ? curr.submissions : [];
+        return { submissions: list.map(entry => matches(entry) ? { ...entry, version, updated_at: stamp } : entry) };
+      });
+    }
+  }
+
+  const record = {
+    ...previous,
+    slug: recordSlug,
+    status: 'updated',
+    content_hash: embedHash(updatedItem),
+    updated: new Date().toISOString(),
+    snapshot: { ...(previous.snapshot || {}), version: version || (previous.snapshot && previous.snapshot.version) },
+    last_update: {
+      version: version || null,
+      note: note || null,
+      by: cleanText(options.by || '', 80) || null,
+      at: new Date().toISOString()
+    }
+  };
+  await savePublishRecord(env, recordSlug, record);
+  await logBotAudit(env, 'Vault Resource Marked Updated', { id: cleanText(options.by || 'kyro-bot', 40) || 'kyro-bot', username: 'Kyro owner' },
+    `Marked "${updatedItem.title || slug}" updated${version ? ' to ' + version : ''}; ${targets.length} post${targets.length === 1 ? '' : 's'} refreshed.`);
+
+  return {
+    slug: recordSlug,
+    title: updatedItem.title || '',
+    version: version || (updatedItem.version || ''),
+    announcement_msg_id: previous.announcement_msg_id || '',
+    patched: targets.length
+  };
+}
+
+/* Called by the bot itself after the owner submits the update modal, and by the
+   website owner from the post's "Post Update" button. The bot secret keeps the
+   bot path off the public internet; the owner path uses the normal Discord
+   session and an owner check. */
+async function handleDiscordResourceUpdate(request, url, env, cors) {
+  if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405, cors);
+  const secret = String(env.BOT_PUBLISH_SECRET || '');
+  const isBot = Boolean(secret) && String(request.headers.get('x-kyro-bot') || '') === secret;
+  let session = null;
+  if (!isBot) {
+    const token = bearerToken(request, url);
+    // Keep the historical answer for an unauthenticated call: no token is a
+    // forbidden request, not an expired session.
+    if (!token) throw fail(403, 'forbidden', 'Bot secret required.');
+    session = await requireMember(token, env);
+    if (!isOwnerSession(session, env)) {
+      throw fail(403, 'forbidden', 'Only the Kyro Server Owner can update a post.');
+    }
+    await limitWrites(env, 'discord-update', session.id);
+  }
+  const input = await jsonBody(request);
+  const slug = resourceSlug({ slug: input.slug, id: input.id });
+  if (!slug) throw fail(400, 'bad_input', 'A resource slug is required.');
+  const out = await announceResourceUpdate(env, slug, {
+    version: input.version,
+    note: input.note,
+    by: isBot ? input.by : session.id,
+    id: input.id
+  });
+  return json({ ok: true, ...out }, 200, cors);
 }
 
 async function handleVirusTotalAdmin(request, url, env, cors) {

@@ -136,6 +136,15 @@ async function main() {
     await waitFor(() => deliveries.some(p => p.embeds[0].title === 'Forged owner request'));
     expect(!deliveries.find(p => p.embeds[0].title === 'Forged owner request').embeds[0].fields.find(f => f.name === 'Requested By').value.includes('OWNER'), 'forged owner badge absent from embed');
     expect((await call('/requests')).data.requests.find(r => r.id === ownerRow.id).author_role === 'owner', 'owner submission badge public');
+    out = await call('/requests', { ...base, title: 'Priority from EasyKyro', source: 'easykyro' }, 'member');
+    const priorityRow = out.data.requests.find(r => r.id === out.data.id);
+    expect(priorityRow.priority === true && priorityRow.source === 'easykyro', 'EasyKyro submissions are flagged priority');
+    expect(out.data.requests[0].id === priorityRow.id, 'priority requests list first');
+    expect((await call('/requests')).data.requests.find(r => r.id === priorityRow.id).priority === true, 'priority flag is public');
+    await waitFor(() => deliveries.some(p => p.embeds[0].title === 'Priority from EasyKyro'));
+    expect(deliveries.find(p => p.embeds[0].title === 'Priority from EasyKyro').embeds[0].fields.find(f => f.name === 'Requested By').value.includes('PRIORITY'), 'priority badge in Discord');
+    out = await call('/requests', { ...base, title: 'Manual website request' }, 'member');
+    expect(out.data.requests.find(r => r.id === out.data.id).priority === false, 'website submissions are not priority');
     expect((await call('/requests/status', { id: ownerRow.id, status: 'planned' }, 'owner')).status === 200, 'owner may update status');
     expect((await call('/requests/delete', { id: ownerRow.id })).status === 401, 'anonymous deletion denied');
     expect((await call('/requests/delete', { id: ownerRow.id }, 'expired')).status === 401, 'expired deletion denied');

@@ -11,6 +11,7 @@ const MEMBER = '300000000000000001';
 const OWNER_TOKEN = 'owner-token';
 const MEMBER_TOKEN = 'member-token';
 const PROOF = '900000000000000001';
+const BOT_SECRET = 'test-bot-secret';
 const ANNOUNCE = '1539961971422658571';
 const DOWNLOADS = '1539961998601756722';
 const SHOWCASE = '1541775088901292042';
@@ -36,6 +37,7 @@ const mf = new Miniflare(convertV4MiniflareOptions({
     DISCORD_CLIENT_SECRET: 'test-secret',
     DISCORD_BOT_TOKEN: 'test-bot-token',
     VIRUSTOTAL_API_KEY: 'test-vt-key',
+    BOT_PUBLISH_SECRET: BOT_SECRET,
     DISCORD_PROOF_CHANNEL_ID: PROOF
   },
   outboundService: async request => {
@@ -235,6 +237,61 @@ async function main() {
   expect(deniedProof.status === 403, 'ordinary member cannot configure the proof channel');
   const tested = await call('/dashboard/publishing', OWNER_TOKEN, { action: 'test' });
   expect(tested.status === 200, 'saved channel can be re-tested');
+
+  // 10. Every product post carries an owner-only update button; pressing it
+  //     with a new version edits the post and says it just got updated.
+  const updatePost = posts.find(post => post.channel === ANNOUNCE &&
+    (post.body.components || []).some(row => (row.components || []).some(c => c.custom_id === 'kyro-upd:mention-tool')));
+  expect(Boolean(updatePost), 'product post carries the update button');
+  const updateButton = updatePost.body.components[0].components.find(c => c.custom_id === 'kyro-upd:mention-tool');
+  expect(updateButton.style === 3 && updateButton.label.length <= 80, 'update button is a real button with a short label');
+
+  const forged = await mf.dispatchFetch('http://localhost/vault/discord/update', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: 'mention-tool', version: 'v1.1' })
+  });
+  expect(forged.status === 403, 'update route refuses requests without the bot secret');
+
+  const memberDenied = await mf.dispatchFetch('http://localhost/vault/discord/update', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + MEMBER_TOKEN },
+    body: JSON.stringify({ slug: 'mention-tool', version: 'v1.0.9' })
+  });
+  expect(memberDenied.status === 403, 'ordinary member cannot post an update from the website');
+
+  const beforeOwnerUpdate = announce().length;
+  const ownerUpdated = await mf.dispatchFetch('http://localhost/vault/discord/update', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + OWNER_TOKEN },
+    body: JSON.stringify({ slug: 'mention-tool', version: 'v1.0.5', note: 'Posted from the website' })
+  });
+  const ownerUpdatedBody = await ownerUpdated.json();
+  expect(ownerUpdated.status === 200 && ownerUpdatedBody.ok, 'owner token can post an update from the website');
+  expect(announce().length === beforeOwnerUpdate + 1, 'owner update posts exactly one announcement');
+  expect(/just got updated/.test(announce().at(-1).body.content), 'owner update announcement says it just got updated');
+
+  const beforeUpdate = announce().length;
+  const updated = await mf.dispatchFetch('http://localhost/vault/discord/update', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-kyro-bot': BOT_SECRET },
+    body: JSON.stringify({ slug: 'mention-tool', version: 'v1.1', note: 'Fixed the installer', by: OWNER })
+  });
+  const updatedBody = await updated.json();
+  expect(updated.status === 200 && updatedBody.version === 'v1.1', 'update route applies the new version');
+  const updateNotice = announce().at(-1);
+  expect(announce().length === beforeUpdate + 1, 'exactly one update announcement posted');
+  expect(/just got updated/.test(updateNotice.body.content), 'announcement says the product just got updated');
+  expect(updateNotice.body.content.includes('v1.1') && updateNotice.body.content.includes('Fixed the installer'), 'announcement carries version and note');
+  expect(patches.some(patch => JSON.stringify(patch.body).includes('UPDATED')), 'the existing post was edited in place');
+  const afterUpdate = await (await call('/vault/public', OWNER_TOKEN, null, 'GET')).json();
+  const versioned = (afterUpdate.items || []).find(item => item.slug === 'mention-tool');
+  expect(versioned && versioned.version === 'v1.1', 'new version stored on the resource');
+
+  const backfill = await mf.dispatchFetch('http://localhost/vault/discord/publish', {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-kyro-bot': BOT_SECRET },
+    body: JSON.stringify({ action: 'backfill' })
+  });
+  const backfillBody = await backfill.json();
+  expect(backfill.status === 200 && backfillBody.backfill.patched >= 2, 'backfill adds the button to existing posts');
 
   console.log(`publishing: ${checks} checks passed`);
   await mf.dispose();
