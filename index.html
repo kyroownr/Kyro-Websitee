@@ -80,7 +80,7 @@
       <div class="hero-search-wrap">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
         <button type="button" class="hero-search" id="heroSearch">Search the Kyro Vault…</button>
-        <span class="hero-search-kbd mono" aria-hidden="true"><span>Ctrl</span><span>⌘</span><span>K</span></span>
+        <span class="hero-search-kbd mono" aria-hidden="true"><span id="heroKbdKey">Ctrl</span><span>K</span></span>
       </div>
 
       <div class="os-toggle" role="group" aria-label="Choose operating system">
@@ -93,11 +93,27 @@
           macOS
         </button>
       </div>
+
+      <!-- The join action sits beside the explanation of what membership
+           unlocks, with the free-browsing guarantee and the safety links so a
+           new visitor can decide without scrolling. -->
+      <div class="hero-actions">
+        <a class="btn btn-discord" href="https://discord.gg/N3KJBSWrkR" target="_blank" rel="noopener noreferrer">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.3 4.9A17.4 17.4 0 0 0 15.9 3.5l-.3.5a16 16 0 0 0-7.1 0l-.3-.5c-1.6.3-3.1.8-4.4 1.5C.6 9.1-.2 12.7.1 16.2 1.7 17.5 3.7 18.4 5.8 19l1-1.6-1.9-.8.5-.4c3.8 1.7 8 1.7 11.9 0l.5.4-1.9.8 1 1.6c2.1-.6 4.1-1.5 5.7-2.9.4-4-.8-7.5-3.3-11.2ZM8.5 14c-.9 0-1.7-.9-1.7-1.9s.7-1.9 1.7-1.9c.9 0 1.7.9 1.7 1.9s-.8 1.9-1.7 1.9Zm7 0c-.9 0-1.7-.9-1.7-1.9s.8-1.9 1.7-1.9c1 0 1.7.9 1.7 1.9s-.7 1.9-1.7 1.9Z"/></svg>
+          Join Kyro Discord
+        </a>
+        <p class="hero-trust">
+          <span>Browsing stays free — no account needed.</span>
+          <a class="hero-trust-link" href="#aboutDownloads">How downloads are checked</a>
+          <span class="hero-trust-sep" aria-hidden="true">·</span>
+          <a class="hero-trust-link" href="/policy">Safety &amp; policy</a>
+        </p>
+      </div>
     </section>
 
     <!-- ============ Flush browse grid — the lists themselves live on the
      /windows and /macos pages, exactly like keyfla.me ==================== -->
-    <p class="section-label">Browse</p>
+    <p class="section-label section-label--browse">Browse</p>
     <div class="browse" id="browseGrid"></div>
 
     <!-- ============ Next step: the membership, below the two platform paths
@@ -146,6 +162,22 @@
           <h3>Requests shape what comes next</h3>
           <p>The requests board is where the community asks for a tool or an install guide. Shipped requests are marked as added.</p>
         </article>
+      </div>
+
+      <!-- Compact trust block: sourcing, review records and the report path -->
+      <div class="trust-row">
+        <a class="trust-item" href="/contribute">
+          <b>Where resources come from</b>
+          <span>Contributors and the Kyro team add the files; the original creator is credited where it is known.</span>
+        </a>
+        <a class="trust-item" href="#aboutDownloads">
+          <b>What review details show</b>
+          <span>Reviewer, date and checks appear only when they were recorded. Missing details say “Not provided”.</span>
+        </a>
+        <a class="trust-item" href="#discordCard">
+          <b>Report a broken or unsafe link</b>
+          <span>Send it to the Kyro Discord; it is reviewed and removed if needed.</span>
+        </a>
       </div>
     </section>
 
@@ -208,7 +240,7 @@
       <div class="palette-foot mono">
         <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
         <span><kbd>Enter</kbd> inspect</span>
-        <span><kbd>Ctrl K</kbd> toggle</span>
+        <span><kbd id="paletteKbdHint">Ctrl K</kbd> toggle</span>
       </div>
     </div>
   </div>
@@ -777,6 +809,21 @@
             <input type="url" class="input" id="oemImageUrl" placeholder="https://..." style="width:100%;box-sizing:border-box;">
           </div>
         </div>
+
+        <!-- Banner picture: paste, drop or pick a file — same flow as the upload form -->
+        <div>
+          <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Banner Picture (Drag &amp; Drop, Select from PC, or Paste)</label>
+          <div id="oemImageDrop" style="border:2px dashed rgba(255,255,255,0.15);border-radius:10px;padding:14px;text-align:center;background:rgba(255,255,255,0.02);cursor:pointer;transition:border-color 0.2s;">
+            <input type="file" id="oemImageFile" accept="image/*" style="display:none;">
+            <div id="oemImageDropText" style="display:flex;flex-direction:column;align-items:center;gap:4px;color:#cbd5e1;font-size:0.82rem;">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="opacity:0.7;"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+              <span><strong>Click to choose a picture</strong>, drag &amp; drop, or press <kbd style="background:rgba(255,255,255,0.1);padding:1px 5px;border-radius:4px;font-family:inherit;">Ctrl+V</kbd></span>
+            </div>
+            <img id="oemImagePreview" src="" alt="Banner preview" style="display:none;margin:0 auto;max-height:120px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);">
+          </div>
+          <div style="font-size:0.72rem;color:var(--dim);margin-top:4px;" id="oemImageStatus">Pasting or picking a picture uploads it and fills the URL above.</div>
+        </div>
+
         <div>
           <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Description / Effects / Notes</label>
           <textarea class="input" id="oemDetails" rows="4" style="width:100%;box-sizing:border-box;resize:vertical;font-family:inherit;line-height:1.4;"></textarea>

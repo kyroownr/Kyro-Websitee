@@ -229,8 +229,10 @@ code, .mono { font-family: var(--mono); }
 
 .hero-sub {
   margin: 14px auto 0;
-  max-width: 46ch;
-  color: var(--muted); font-size: 0.96rem; line-height: 1.65;
+  max-width: 58ch;
+  /* Slightly brighter than a caption: this paragraph has to stay readable on
+     black at small sizes, so it sits above the muted grey used for metadata. */
+  color: #B9BBC4; font-size: 1rem; line-height: 1.7;
   letter-spacing: -0.01em;
 }
 
@@ -280,6 +282,24 @@ code, .mono { font-family: var(--mono); }
   box-shadow: 0 4px 16px rgba(255, 255, 255, 0.15);
 }
 .os-toggle-btn svg { flex-shrink: 0; width: 14px; height: 14px; }
+
+/* Join action + the free-browsing promise and safety links, directly under the
+   platform choice so a first-time visitor has somewhere to go. */
+.hero-actions {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  margin-top: 24px;
+}
+.hero-trust {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+  gap: 4px 8px; margin: 0;
+  font-size: 0.79rem; color: var(--muted);
+}
+.hero-trust-link {
+  color: var(--silver); border-bottom: 1px solid var(--line);
+  transition: color 0.16s, border-color 0.16s;
+}
+.hero-trust-link:hover { color: var(--white); border-bottom-color: var(--accent); }
+.hero-trust-sep { color: var(--dim); }
 
 /* ------------------------------- notice -------------------------------- */
 /* Fine print, not a banner: it sits under the membership step. */
@@ -337,6 +357,9 @@ code, .mono { font-family: var(--mono); }
   letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim);
 }
 .section-label--tight { margin: 24px 0 10px; }
+/* Browse follows the hero directly: a shorter gap puts the categories on the
+   first screen instead of leaving them below it. */
+.section-label--browse { margin-top: 28px; }
 .section-note { color: var(--dim); letter-spacing: 0.1em; text-transform: none; }
 
 /* -------------------------- flush 3x3 browse grid ----------------------- */
@@ -364,8 +387,10 @@ code, .mono { font-family: var(--mono); }
   transform: translateY(-2px);
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
 }
-.cell-top { display: flex; align-items: center; gap: 8px; }
-.cell-title { flex: 1; font-size: 0.92rem; font-weight: 700; letter-spacing: -0.015em; color: var(--white); }
+/* Wraps so the platform pill drops under the title in a narrow four-column
+   card instead of pushing past the card edge. */
+.cell-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cell-title { flex: 1 1 auto; min-width: 0; font-size: 0.92rem; font-weight: 700; letter-spacing: -0.015em; color: var(--white); }
 .cell-ico { display: inline-flex; flex-shrink: 0; margin-bottom: 1px; color: var(--silver); }
 .browse-pill {
   flex-shrink: 0; padding: 3px 7px; border-radius: 980px;
@@ -373,9 +398,20 @@ code, .mono { font-family: var(--mono); }
   color: var(--ink); background: var(--white);
 }
 .cell-arrow { flex-shrink: 0; font-family: var(--sans); font-size: 0.82rem; color: var(--dim); transition: transform 0.18s, color 0.18s; }
-.browse-cell:hover .cell-arrow { color: var(--white); transform: translateX(3px); }
 .cell-desc { margin: 8px 0 0; color: var(--muted); font-size: 0.78rem; line-height: 1.6; }
-.cell-meta { margin: auto 0 0; padding-top: 12px; font-size: 0.64rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
+.cell-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  flex-wrap: wrap; margin: auto 0 0; padding-top: 12px;
+}
+.cell-cta {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 0.76rem; font-weight: 600; color: var(--silver);
+  transition: color 0.18s, transform 0.18s;
+}
+.cell-cta > span { transition: transform 0.18s; }
+.browse-cell:hover .cell-cta, .browse-cell:focus-visible .cell-cta { color: var(--white); }
+.browse-cell:hover .cell-cta > span { transform: translateX(3px); }
+.cell-meta { font-size: 0.64rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
 .browse-cell.is-active .cell-meta { color: var(--white); }
 .cell-soon {
   display: inline-block; padding: 2px 7px; border-radius: 980px;
@@ -1555,6 +1591,22 @@ textarea.field-input { min-height: 72px; resize: vertical; line-height: 1.6; }
 }
 .works-step h3 { margin: 6px 0; font-size: 0.92rem; font-weight: 700; letter-spacing: -0.02em; }
 .works-step p { margin: 0; color: var(--muted); font-size: 0.82rem; line-height: 1.65; }
+
+/* Compact trust block under the steps: sourcing, review records, reporting. */
+.trust-row {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;
+  margin-top: 10px;
+}
+.trust-item {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 12px 14px; border-radius: var(--radius-md);
+  border: 1px solid var(--line-dim); background: transparent;
+  transition: border-color 0.18s, background-color 0.18s;
+}
+.trust-item:hover { border-color: var(--line-hover); background: rgba(255, 255, 255, 0.03); }
+.trust-item b { font-size: 0.79rem; font-weight: 600; color: var(--white); letter-spacing: -0.01em; }
+.trust-item span { font-size: 0.74rem; line-height: 1.55; color: var(--muted); }
+@media (max-width: 720px) { .trust-row { grid-template-columns: 1fr; } }
 
 .about-downloads {
   margin-top: 24px;

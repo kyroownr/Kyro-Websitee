@@ -19,7 +19,7 @@ const PAGES = [
   },
   {
     id: 'macos',
-    title: 'MacOS',
+    title: 'macOS',
     desc: 'Software, tools, and plugins for Mac editors.',
     meta: 'Free After Effects software, tools and plugins for Mac editors — verified through the Kyro Discord.'
   }

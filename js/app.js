@@ -893,7 +893,7 @@
     document.title = b.title + ' — Kyro';
 
     const pill = b.osValue && b.osValue === DETECTED_OS
-      ? '<span class="browse-pill">detected</span>' : '';
+      ? '<span class="browse-pill">your platform</span>' : '';
     catCount.innerHTML = pill + '<span>' +
       (list.length ? list.length + (list.length === 1 ? ' item' : ' items') : 'coming soon') + '</span>';
 
@@ -910,12 +910,16 @@
      /guide is the written start-here. */
   const BROWSE = [
     { id: 'windows', osValue: 'windows', icon: 'windows', page: '/windows', title: 'Windows',
+      cta: 'Browse Windows resources',
       desc: 'Software, tools, and plugins for Windows editors.' },
     { id: 'macos', osValue: 'macos', icon: 'apple', page: '/macos', title: 'macOS',
+      cta: 'Browse macOS resources',
       desc: 'Software, tools, and plugins for Mac editors.' },
     { id: 'courses', page: '/courses', icon: 'course', title: 'Courses', kindValue: 'course',
+      cta: 'Browse courses',
       desc: 'Guided video courses that take you from first cut to pro editor.' },
     { id: 'guide', page: '/guide', noCount: true, title: 'Beginner\'s Guide',
+      cta: 'Read the guide',
       desc: 'Start here for After Effects setup, plugins, composition settings, and shortcuts.' }
   ];
 
@@ -957,18 +961,23 @@
      says nothing at all — and says COMING SOON when there is nothing to say. */
   const COUNT_FLOOR = 5;
 
+  /* Every cell ends with the action it opens, so the card says what clicking
+     does instead of leaving the arrow to imply it. */
   function cellFoot(b, count) {
-    if (b.noCount) return '';
-    if (count === 0) return '<p class="cell-meta"><span class="cell-soon mono">coming soon</span></p>';
-    if (count < COUNT_FLOOR) return '';
-    return '<p class="cell-meta mono">' + count + ' items</p>';
+    let meta = '';
+    if (!b.noCount) {
+      if (count === 0) meta = '<span class="cell-soon mono">coming soon</span>';
+      else if (count >= COUNT_FLOOR) meta = '<span class="cell-meta mono">' + count + ' items</span>';
+    }
+    const cta = '<span class="cell-cta">' + esc(b.cta || 'Open') +
+      ' <span aria-hidden="true">→</span></span>';
+    return '<p class="cell-foot">' + cta + meta + '</p>';
   }
 
   function cellInner(b, count) {
     const icon = b.icon ? '<span class="cell-ico">' + ICON[b.icon] + '</span>' : '';
-    const pill = (b.osValue && b.osValue === DETECTED_OS) ? '<span class="browse-pill">detected</span>' : '';
-    return '<div class="cell-top">' + icon + '<span class="cell-title">' + esc(b.title) + '</span>' + pill +
-      '<span class="cell-arrow" aria-hidden="true">→</span></div>' +
+    const pill = (b.osValue && b.osValue === DETECTED_OS) ? '<span class="browse-pill">your platform</span>' : '';
+    return '<div class="cell-top">' + icon + '<span class="cell-title">' + esc(b.title) + '</span>' + pill + '</div>' +
       '<p class="cell-desc">' + esc(b.desc) + '</p>' +
       cellFoot(b, count);
   }
@@ -4390,6 +4399,8 @@
     if (oemPassword) oemPassword.value = (r.files && r.files[0] && r.files[0].pass) || '';
     if (oemImageUrl) oemImageUrl.value = (r.gallery && r.gallery[0]) || '';
     if (oemDetails) oemDetails.value = r.desc || '';
+    if (oemImageStatus) oemImageStatus.textContent = 'Pasting or picking a picture uploads it and fills the URL above.';
+    syncOemImagePreview();
     if (oemReleaseAt) {
       if (r.releaseAt) {
         try {
@@ -4414,6 +4425,118 @@
 
   ownerEditModalClose?.addEventListener('click', closeOwnerEditModal);
   oemCancelBtn?.addEventListener('click', closeOwnerEditModal);
+
+  /* Banner picture in the edit modal: paste, drop or pick a file and it lands in
+     the Banner Image URL field, exactly like the upload form. */
+  const oemImageFile = $('#oemImageFile');
+  const oemImageDrop = $('#oemImageDrop');
+  const oemImageDropText = $('#oemImageDropText');
+  const oemImagePreview = $('#oemImagePreview');
+  const oemImageStatus = $('#oemImageStatus');
+
+  function syncOemImagePreview() {
+    const url = ($('#oemImageUrl')?.value || '').trim();
+    if (!oemImagePreview) return;
+    if (url) {
+      oemImagePreview.src = url;
+      oemImagePreview.style.display = 'block';
+      if (oemImageDropText) oemImageDropText.style.display = 'none';
+    } else {
+      oemImagePreview.removeAttribute('src');
+      oemImagePreview.style.display = 'none';
+      if (oemImageDropText) oemImageDropText.style.display = 'flex';
+    }
+  }
+
+  async function uploadOemImage(file) {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast({ title: 'Not an image', sub: 'Pick a PNG, JPG, GIF or WebP picture.', icon: ICON.x });
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      toast({ title: 'Image too large', sub: 'Pictures must be under 8 MB.', icon: ICON.x });
+      return;
+    }
+    if (!auth.token) {
+      toast({ title: 'Sign in first', sub: 'Only the signed-in owner can upload a banner.', icon: ICON.x });
+      return;
+    }
+
+    if (oemImagePreview) {
+      oemImagePreview.src = URL.createObjectURL(file);
+      oemImagePreview.style.display = 'block';
+    }
+    if (oemImageDropText) oemImageDropText.style.display = 'none';
+    if (oemImageStatus) oemImageStatus.textContent = 'Uploading…';
+
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Could not read that picture.'));
+        reader.readAsDataURL(file);
+      });
+      const res = await fetch(AUTH_WORKER_URL + '/vault/upload-image', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.token },
+        body: JSON.stringify({ image: dataUrl, filename: file.name || 'banner.png' }),
+        credentials: 'omit'
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.url) throw new Error(data.error || 'The image could not be stored.');
+      const urlInput = $('#oemImageUrl');
+      if (urlInput) urlInput.value = data.url;
+      if (oemImagePreview) oemImagePreview.src = data.url;
+      if (oemImageStatus) oemImageStatus.textContent = 'Uploaded ✓ — press Save & Update Live Post to publish it.';
+      toast({ title: 'Banner uploaded', sub: 'Save the post to put it live.', icon: ICON.check });
+    } catch (err) {
+      if (oemImageStatus) oemImageStatus.textContent = 'Upload failed — try a smaller picture or paste a direct image URL.';
+      toast({ title: 'Image upload failed', sub: err.message || 'Network error while storing the image.', icon: ICON.x });
+      syncOemImagePreview();
+    }
+  }
+
+  oemImageDrop?.addEventListener('click', () => oemImageFile?.click());
+  oemImageFile?.addEventListener('change', () => {
+    const file = oemImageFile.files && oemImageFile.files[0];
+    if (file) uploadOemImage(file);
+  });
+  ['dragenter', 'dragover'].forEach(name => {
+    oemImageDrop?.addEventListener(name, (e) => {
+      e.preventDefault();
+      oemImageDrop.style.borderColor = 'rgba(255,255,255,0.45)';
+    });
+  });
+  ['dragleave', 'drop'].forEach(name => {
+    oemImageDrop?.addEventListener(name, (e) => {
+      e.preventDefault();
+      oemImageDrop.style.borderColor = 'rgba(255,255,255,0.15)';
+    });
+  });
+  oemImageDrop?.addEventListener('drop', (e) => {
+    const file = e.dataTransfer?.files && e.dataTransfer.files[0];
+    if (file) uploadOemImage(file);
+  });
+
+  // Ctrl+V of a screenshot, anywhere in the edit form.
+  ownerEditModalForm?.addEventListener('paste', (e) => {
+    const items = (e.clipboardData || e.originalEvent?.clipboardData)?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) {
+          uploadOemImage(file);
+          toast({ title: 'Screenshot pasted!', sub: 'Image added from clipboard.', icon: ICON.check });
+        }
+        break;
+      }
+    }
+  });
+
+  $('#oemImageUrl')?.addEventListener('input', syncOemImagePreview);
   ownerEditModalOverlay?.addEventListener('click', (e) => {
     if (e.target === ownerEditModalOverlay) closeOwnerEditModal();
   });
@@ -4703,6 +4826,25 @@
   setInterval(tickStamp, 1000);
   $('#footerInvite').href = INVITE_URL;
   $('#footerDomain').textContent = window.KYRO_SITE.domain;
+
+  /* One shortcut, written the way this keyboard actually has it: ⌘K on a Mac,
+     Ctrl+K everywhere else — never both. */
+  const IS_MAC = /Mac|iPhone|iPad|iPod/i.test((navigator.userAgent || '') + ' ' + (navigator.platform || ''));
+  const heroKbdKey = $('#heroKbdKey');
+  if (heroKbdKey) heroKbdKey.textContent = IS_MAC ? '⌘' : 'Ctrl';
+  const paletteKbdHint = $('#paletteKbdHint');
+  if (paletteKbdHint) paletteKbdHint.textContent = IS_MAC ? '⌘ K' : 'Ctrl K';
+
+  /* "How downloads are checked" points at a collapsed <details>; open it on the
+     way in so the link lands on the answer, not on a closed summary row. */
+  const aboutDownloads = $('#aboutDownloads');
+  if (aboutDownloads) {
+    document.addEventListener('click', (e) => {
+      const link = e.target.closest && e.target.closest('a[href="#aboutDownloads"]');
+      if (link) aboutDownloads.open = true;
+    });
+    if (location.hash === '#aboutDownloads') aboutDownloads.open = true;
+  }
 
   /* /windows and /macos are this same bundle with one browse cell expanded
      into a page; the page tells the bundle which cell it is. Anything else
