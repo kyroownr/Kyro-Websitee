@@ -698,11 +698,15 @@
                 </div>
               </div>
 
-              <div>
-                <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Alternative download links (optional)</label>
-                <div style="font-size:0.72rem;color:var(--dim);margin-bottom:6px;">Add mirrors or backup hosts — if one link is dead, members can still download from another. Up to 5 extra links.</div>
+              <div style="border:1px solid rgba(56,189,248,0.25);border-radius:10px;padding:12px;background:rgba(56,189,248,0.06);display:grid;gap:10px;">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+                  <div>
+                    <strong style="display:block;font-size:0.88rem;color:#7dd3fc;">Alternative download links</strong>
+                    <div style="font-size:0.72rem;color:var(--dim);margin-top:2px;">Optional mirrors or backup hosts — if one link is dead, members can still download from another. Up to 5 extra links.</div>
+                  </div>
+                  <button type="button" id="vUpAddAltLink" class="btn btn-ghost btn-sm" style="border-color:rgba(56,189,248,0.4);color:#7dd3fc;">+ Add more download links</button>
+                </div>
                 <div id="vUpAltLinks" style="display:grid;gap:8px;"></div>
-                <button type="button" id="vUpAddAltLink" class="btn btn-ghost btn-sm" style="margin-top:8px;">+ Add alternative link</button>
               </div>
 
               <div>
