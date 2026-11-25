@@ -280,7 +280,14 @@ async function main() {
   const updateNotice = announce().at(-1);
   expect(announce().length === beforeUpdate + 1, 'exactly one update announcement posted');
   expect(/just got updated/.test(updateNotice.body.content), 'announcement says the product just got updated');
-  expect(updateNotice.body.content.includes('v1.1') && updateNotice.body.content.includes('Fixed the installer'), 'announcement carries version and note');
+  expect(!/https:\/\//.test(updateNotice.body.content), 'no bare page link for Discord to unfurl');
+  const updateCard = (updateNotice.body.embeds || [])[0] || {};
+  expect(updateCard.author && updateCard.author.name.includes('Updated'), 'update card is labelled as an update');
+  expect(updateCard.url && updateCard.url.includes('/windows#mention-tool'), 'update card links to the product page');
+  expect((updateCard.fields || []).some(field => field.name === 'New version' && field.value.includes('v1.1')), 'update card shows the new version');
+  expect(String(updateCard.description || '').includes('Fixed the installer'), 'update card carries the change note');
+  const pageButton = (updateNotice.body.components || []).flatMap(row => row.components || []).find(c => c.label === 'Open product page ↗');
+  expect(pageButton && pageButton.url.includes('/windows#mention-tool'), 'update card has a button to the product page');
   expect(patches.some(patch => JSON.stringify(patch.body).includes('UPDATED')), 'the existing post was edited in place');
   const afterUpdate = await (await call('/vault/public', OWNER_TOKEN, null, 'GET')).json();
   const versioned = (afterUpdate.items || []).find(item => item.slug === 'mention-tool');

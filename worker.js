@@ -3319,9 +3319,42 @@ async function announceResourceUpdate(env, slug, options = {}) {
 
   const title = embedText(updatedItem.title || 'A Kyro resource', 100);
   const note = cleanText(options.note || '', 300);
+  const pageUrl = resourcePageUrl(updatedItem);
+  const course = resourceKind(updatedItem) === 'course';
+  const os = String(updatedItem.os || '').toLowerCase();
+  const platform = course ? 'Course' : os === 'both' ? 'Windows & macOS' : os === 'macos' ? 'macOS' : 'Windows';
+  const shownVersion = embedText(version || updatedItem.version || 'latest', 40);
+
+  /* The update is its own card: the product's own artwork, the new version and
+     the details, with a button to the page. A bare link in the message body
+     only ever unfurled the generic Kyro site preview. */
+  const updateEmbed = {
+    author: { name: course ? 'Kyro Courses · Updated' : 'Kyro Vault · Updated', icon_url: KYRO_ICON },
+    title,
+    url: pageUrl,
+    description: (note ? embedText(note, 280) + '\n\n' : '') +
+      embedText(updatedItem.details || 'A new build is live. Open the product page for the current download, screenshots and install notes.', 220),
+    color: 0x10b981,
+    fields: [
+      { name: 'New version', value: '`' + shownVersion + '`', inline: true },
+      { name: 'Category', value: '`' + (embedText(updatedItem.category || 'General', 60) || 'General') + '`', inline: true },
+      { name: 'Platform', value: '`' + platform + '`', inline: true }
+    ],
+    footer: { text: 'Kyro · kyro.new.tg', icon_url: KYRO_ICON },
+    timestamp: new Date().toISOString(),
+    ...(updatedItem.image_url && /^https:\/\//i.test(updatedItem.image_url) ? { image: { url: updatedItem.image_url } } : {})
+  };
+  const updateComponents = [{
+    type: 1,
+    components: [
+      { type: 2, style: 5, label: 'Open product page ↗', url: pageUrl },
+      { type: 2, style: 5, label: 'Browse Kyro ↗', url: 'https://kyro.new.tg' }
+    ]
+  }];
   const notice = {
-    content: `🔄 **${title}** just got updated${version ? ` to \`${embedText(version, 40)}\`` : ''}` +
-      (note ? `\n> ${embedText(note, 280)}` : '') + `\n${resourcePageUrl(updatedItem)}`,
+    content: `🔄 **${title}** just got updated${version ? ` to \`${shownVersion}\`` : ''}`,
+    embeds: [updateEmbed],
+    components: updateComponents,
     allowed_mentions: { parse: [] }
   };
   const announcement = await discordCall(env, 'POST', `/channels/${PUBLISH_CHANNELS.announcements}/messages`, notice);
