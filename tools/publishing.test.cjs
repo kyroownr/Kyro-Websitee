@@ -325,6 +325,18 @@ async function main() {
   const altMissing = await call('/vault/link', OWNER_TOKEN, { id: mirrorEntry.id, name: 'alt:4' });
   expect(altMissing.status === 404, 'a mirror that does not exist is refused');
 
+  const editedMirrors = await call('/vault/submissions/manage', OWNER_TOKEN, {
+    id: mirrorEntry.id,
+    links: [{ label: 'MEGA', url: 'https://mega.example.com/build.zip' }]
+  }, 'PUT');
+  expect(editedMirrors.status === 200, 'owner can replace mirrors from the edit form');
+  const editedPublic = await (await call('/vault/public', OWNER_TOKEN, null, 'GET')).json();
+  const editedEntry = (editedPublic.items || []).find(item => item.slug === 'mirror-test');
+  expect(editedEntry.link_labels.length === 1 && editedEntry.link_labels[0] === 'MEGA', 'edited mirrors show on the listing');
+  const editedAlt = await call('/vault/link', OWNER_TOKEN, { id: editedEntry.id, name: 'alt:0' });
+  const editedAltBody = await editedAlt.json();
+  expect(editedAlt.status === 200 && editedAltBody.url === 'https://mega.example.com/build.zip', 'edited mirror is released to members');
+
   console.log(`publishing: ${checks} checks passed`);
   await mf.dispose();
 }

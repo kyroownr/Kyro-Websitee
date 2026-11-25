@@ -98,6 +98,7 @@
           reviewed_by: item.reviewed_by || '',
           reviewed_at: item.reviewed_at || '',
           checks: Array.isArray(item.checks) ? item.checks : [],
+          link_labels: Array.isArray(item.link_labels) ? item.link_labels : [],
           sha256: item.sha256 || '',
           license: item.license || item.licence || '',
           releaseAt: item.releaseAt || item.release_at || undefined,
@@ -4640,6 +4641,55 @@
   const oemCancelBtn = $('#oemCancelBtn');
   const oemSaveBtn = $('#oemSaveBtn');
 
+  /* Alternative links in the edit modal: the catalogue only carries mirror
+     labels, never their URLs, so this lists what exists and lets the owner
+     type a fresh set. Filling any row replaces the whole mirror list. */
+  const oemAltList = $('#oemAltLinks');
+  const oemAltAdd = $('#oemAddAltLink');
+  const oemExistingLinks = $('#oemExistingLinks');
+  const OEM_MAX_ALT = 5;
+  const oemInputStyle = 'width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);border-radius:8px;padding:7px 10px;color:#fff;font-size:0.85rem;';
+
+  function syncOemAltAdd() {
+    if (oemAltAdd && oemAltList) oemAltAdd.disabled = oemAltList.querySelectorAll('.oem-alt-row').length >= OEM_MAX_ALT;
+  }
+  function addOemAltRow(values = {}) {
+    if (!oemAltList || oemAltList.querySelectorAll('.oem-alt-row').length >= OEM_MAX_ALT) return;
+    const row = document.createElement('div');
+    row.className = 'oem-alt-row';
+    row.style.cssText = 'display:grid;grid-template-columns:minmax(0,0.9fr) minmax(0,1.8fr) auto;gap:8px;align-items:center;';
+    const label = document.createElement('input');
+    label.type = 'text';
+    label.className = 'oem-alt-label';
+    label.maxLength = 60;
+    label.placeholder = 'Label, e.g. MEGA';
+    label.value = values.label || '';
+    label.style.cssText = oemInputStyle;
+    const url = document.createElement('input');
+    url.type = 'url';
+    url.className = 'oem-alt-url';
+    url.placeholder = 'https://...';
+    url.value = values.url || '';
+    url.style.cssText = oemInputStyle;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn btn-ghost btn-sm';
+    remove.textContent = '✕';
+    remove.title = 'Remove this link';
+    remove.addEventListener('click', () => { row.remove(); syncOemAltAdd(); });
+    row.append(label, url, remove);
+    oemAltList.appendChild(row);
+    syncOemAltAdd();
+  }
+  function oemAltLinkValues() {
+    if (!oemAltList) return [];
+    return [...oemAltList.querySelectorAll('.oem-alt-row')].map((row, i) => ({
+      label: (row.querySelector('.oem-alt-label')?.value || '').trim() || 'Alternative ' + (i + 1),
+      url: (row.querySelector('.oem-alt-url')?.value || '').trim()
+    })).filter(link => /^https?:\/\//i.test(link.url));
+  }
+  oemAltAdd?.addEventListener('click', () => addOemAltRow());
+
   function openOwnerEditModal(resourceId) {
     const r = resources.find(x => x.id === resourceId);
     if (!r) return;
@@ -4663,6 +4713,16 @@
     if (oemPassword) oemPassword.value = (r.files && r.files[0] && r.files[0].pass) || '';
     if (oemImageUrl) oemImageUrl.value = (r.gallery && r.gallery[0]) || '';
     if (oemDetails) oemDetails.value = r.desc || '';
+    if (oemAltList) {
+      oemAltList.querySelectorAll('.oem-alt-row').forEach(row => row.remove());
+      addOemAltRow();
+    }
+    if (oemExistingLinks) {
+      const mirrors = r.link_labels || [];
+      oemExistingLinks.textContent = mirrors.length
+        ? 'On the listing now: ' + mirrors.join(', ')
+        : 'No mirrors on this listing yet.';
+    }
     if (oemImageStatus) oemImageStatus.textContent = 'Pasting or picking a picture uploads it and fills the URL above.';
     syncOemImagePreview();
     if (oemReleaseAt) {
@@ -4837,6 +4897,7 @@
     const image_url = $('#oemImageUrl')?.value.trim();
     const details = $('#oemDetails')?.value.trim();
     const release_at = $('#oemReleaseAt')?.value ? new Date($('#oemReleaseAt').value).toISOString() : null;
+    const altLinks = oemAltLinkValues();
 
     if (!id || !title) {
       toast({ title: 'Validation error', sub: 'Title and resource ID are required.', icon: ICON.x });
@@ -4862,7 +4923,8 @@
           password,
           image_url,
           details,
-          release_at
+          release_at,
+          ...(altLinks.length ? { links: altLinks } : {})
         }),
         credentials: 'omit'
       });
