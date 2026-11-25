@@ -64,6 +64,7 @@ for (const page of result.files.filter((file) => file.endsWith('.html'))) {
   if (!text.includes('ownerEditModalOverlay')) continue;
   expect(text.includes('postUpdateModalOverlay'), 'post update modal present in ' + page);
   expect(text.includes('pumSubmit'), 'post update form present in ' + page);
+  expect(text.includes('oemAddAltLink'), 'alternative link editor present in ' + page);
 }
 
 console.log(JSON.stringify({ checks, publishedFiles: result.files.length, backendBlocked: backend.length, result: 'passed' }));

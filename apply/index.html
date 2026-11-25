@@ -661,6 +661,17 @@
           <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Download URL</label>
           <input type="url" class="input" id="oemDownloadUrl" required style="width:100%;box-sizing:border-box;">
         </div>
+        <div style="border:1px solid rgba(56,189,248,0.25);border-radius:10px;padding:12px;background:rgba(56,189,248,0.06);display:grid;gap:10px;">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+            <div>
+              <strong style="display:block;font-size:0.78rem;color:#7dd3fc;">Alternative download links</strong>
+              <div id="oemExistingLinks" style="font-size:0.7rem;color:var(--dim);margin-top:2px;">No mirrors on this listing yet.</div>
+            </div>
+            <button type="button" id="oemAddAltLink" class="btn btn-ghost btn-sm" style="border-color:rgba(56,189,248,0.4);color:#7dd3fc;">+ Add more download links</button>
+          </div>
+          <div id="oemAltLinks" style="display:grid;gap:8px;"></div>
+          <div style="font-size:0.68rem;color:var(--dim);">Fill these in to replace the listing's mirrors. Leave empty to keep them exactly as they are.</div>
+        </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
           <div>
             <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Archive Password (Optional)</label>
