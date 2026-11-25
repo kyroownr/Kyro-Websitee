@@ -3132,6 +3132,9 @@ async function backfillResourceUpdateButtons(env) {
       before = listed.data[listed.data.length - 1].id;
       for (const message of listed.data) {
         scanned++;
+        // Editing history is one slow sweep, not a burst: Discord rate-limits
+        // per channel, and a worked backlog of posts must not lose edits to it.
+        await new Promise(resolve => setTimeout(resolve, 250));
         const buttons = (message.components || []).flatMap(row => row.components || []);
         if (buttons.some(button => String(button.custom_id || '').startsWith('kyro-upd:'))) continue;
         const embed = (message.embeds || [])[0];
