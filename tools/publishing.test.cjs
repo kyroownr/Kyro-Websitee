@@ -293,6 +293,31 @@ async function main() {
   const backfillBody = await backfill.json();
   expect(backfill.status === 200 && backfillBody.backfill.patched >= 2, 'backfill adds the button to existing posts');
 
+  // 11. Alternative download links: labels are public, URLs stay gated.
+  const mirrored = await call('/vault/submissions', OWNER_TOKEN, {
+    title: 'Mirror Test Tool',
+    slug: 'mirror-test',
+    kind: 'tool',
+    os: 'windows',
+    category: 'Plugins',
+    download_url: 'https://example.com/main.zip',
+    links: [
+      { label: 'Google Drive', url: 'https://drive.example.com/mirror.zip' },
+      { label: 'Broken mirror', url: 'not-a-url' }
+    ]
+  });
+  expect(mirrored.status === 201, 'upload with alternative links accepted');
+  const mirrorPublic = await (await call('/vault/public', OWNER_TOKEN, null, 'GET')).json();
+  const mirrorEntry = (mirrorPublic.items || []).find(item => item.slug === 'mirror-test');
+  expect(Boolean(mirrorEntry), 'mirrored resource is in the catalogue');
+  expect(!mirrorEntry.links && !mirrorEntry.download_url, 'mirror and main URLs stay out of the public catalogue');
+  expect(mirrorEntry.link_labels.length === 1 && mirrorEntry.link_labels[0] === 'Google Drive', 'mirror labels are public, the broken one dropped');
+  const altLink = await call('/vault/link', OWNER_TOKEN, { id: mirrorEntry.id, name: 'alt:0' });
+  const altLinkBody = await altLink.json();
+  expect(altLink.status === 200 && altLinkBody.url === 'https://drive.example.com/mirror.zip', 'verified member gets the alternative link');
+  const altMissing = await call('/vault/link', OWNER_TOKEN, { id: mirrorEntry.id, name: 'alt:4' });
+  expect(altMissing.status === 404, 'a mirror that does not exist is refused');
+
   console.log(`publishing: ${checks} checks passed`);
   await mf.dispose();
 }

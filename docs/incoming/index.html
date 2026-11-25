@@ -720,13 +720,46 @@
     </div>
   </div>
 
+  <!-- ============ Post Update Modal ============ -->
+  <div class="overlay" id="postUpdateModalOverlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-label="Post Update" style="max-width:460px;background:#0d1117;border:1px solid rgba(255,255,255,0.1);padding:24px;border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,0.6);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <h3 style="font-size:1.1rem;font-weight:700;color:#fff;display:flex;align-items:center;gap:8px;">
+          <span>🚀</span> Post Update
+        </h3>
+        <button type="button" class="close-x" id="postUpdateModalClose" aria-label="Close modal"></button>
+      </div>
+      <p id="pumSummary" style="font-size:0.82rem;line-height:1.55;color:var(--muted);margin:0 0 16px;"></p>
+      <form id="postUpdateForm" style="display:flex;flex-direction:column;gap:12px;">
+        <input type="hidden" id="pumId">
+        <label style="display:flex;align-items:center;gap:9px;font-size:0.84rem;color:#e5e7eb;cursor:pointer;">
+          <input type="checkbox" id="pumVersionToggle" style="accent-color:#38bdf8;width:16px;height:16px;">
+          <span>Announce a new version</span>
+        </label>
+        <div id="pumVersionRow" hidden>
+          <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">New version</label>
+          <input type="text" class="input" id="pumVersion" maxlength="40" placeholder="e.g. 4.1.0" style="width:100%;box-sizing:border-box;">
+        </div>
+        <div>
+          <label style="font-size:0.75rem;color:var(--dim);display:block;margin-bottom:4px;font-weight:600;">Note (optional)</label>
+          <textarea class="input" id="pumNote" rows="2" maxlength="280" placeholder="What changed?" style="width:100%;box-sizing:border-box;resize:vertical;font-family:inherit;line-height:1.4;"></textarea>
+        </div>
+        <p id="pumError" role="alert" style="display:none;margin:0;color:#ff6b6b;font-size:0.8rem;"></p>
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:4px;">
+          <button type="button" class="btn btn-ghost" id="pumCancel">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="pumSubmit">Post Update</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Toast stack (downloads, access notices) -->
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <!-- Modular scripts: data → preview engine → app wiring -->
   <script defer src="/js/data.js?v=f2d69c44"></script>
   <script defer src="/js/preview.js?v=53c30c30"></script>
-  <script defer src="/js/app.js?v=4296eaaa"></script>
+  <script defer src="/js/app.js?v=8503b821"></script>
   <script defer src="/js/applications.js?v=195770b9"></script>
 </body>
 </html>

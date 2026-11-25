@@ -112,13 +112,22 @@
           gallery: item.image_url ? [item.image_url] : [],
           /* The catalogue only marks a file as gated; the URL and password are
              fetched from the worker with the member token on click. */
-          files: (item.gated || item.download_url) ? [{
+          files: (item.gated || item.download_url || (item.link_labels || []).length) ? [{
             ext: 'link',
             name: item.title,
             size: item.size || 'Vault Build',
             label: item.title,
             gated: true
-          }] : []
+          }, ...(item.link_labels || []).map((label, i) => ({
+            /* Mirrors keep the same gated row; only the label is public, the
+               URL is fetched per link from the worker on click. */
+            ext: 'mirror',
+            name: label,
+            size: 'Mirror',
+            label: 'Alternative link ' + (i + 1),
+            gated: true,
+            linkName: 'alt:' + i
+          }))] : []
         };
       }).filter(item => !isHiddenResource(item.id, item.cloud_id));
 
@@ -3229,6 +3238,54 @@
     const dropzoneText = $('#vUpDropzoneText');
     if (!form || !btn) return;
 
+    /* Alternative download links: the uploader can list up to five mirrors.
+       Only labels reach the catalogue; each URL is released per click by the
+       worker to a verified member, exactly like the main link. */
+    const altList = $('#vUpAltLinks');
+    const altAdd = $('#vUpAddAltLink');
+    const MAX_ALT_LINKS = 5;
+    const altInputStyle = 'width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.85rem;';
+    function syncAltAddButton() {
+      if (altAdd && altList) altAdd.disabled = altList.querySelectorAll('.vup-alt-row').length >= MAX_ALT_LINKS;
+    }
+    function addAltLinkRow(values = {}) {
+      if (!altList || altList.querySelectorAll('.vup-alt-row').length >= MAX_ALT_LINKS) return;
+      const row = document.createElement('div');
+      row.className = 'vup-alt-row';
+      row.style.cssText = 'display:grid;grid-template-columns:minmax(0,0.9fr) minmax(0,1.8fr) auto;gap:8px;align-items:center;';
+      const label = document.createElement('input');
+      label.type = 'text';
+      label.className = 'vup-alt-label';
+      label.maxLength = 60;
+      label.placeholder = 'Label, e.g. Google Drive';
+      label.value = values.label || '';
+      label.style.cssText = altInputStyle;
+      const url = document.createElement('input');
+      url.type = 'url';
+      url.className = 'vup-alt-url';
+      url.placeholder = 'https://...';
+      url.value = values.url || '';
+      url.style.cssText = altInputStyle;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'btn btn-ghost btn-sm';
+      remove.textContent = '✕';
+      remove.title = 'Remove this link';
+      remove.addEventListener('click', () => { row.remove(); syncAltAddButton(); });
+      row.append(label, url, remove);
+      altList.appendChild(row);
+      syncAltAddButton();
+    }
+    function altLinks() {
+      if (!altList) return [];
+      return [...altList.querySelectorAll('.vup-alt-row')].map((row, i) => ({
+        label: (row.querySelector('.vup-alt-label')?.value || '').trim() || 'Alternative ' + (i + 1),
+        url: (row.querySelector('.vup-alt-url')?.value || '').trim()
+      })).filter(link => /^https?:\/\//i.test(link.url));
+    }
+    if (altAdd) altAdd.addEventListener('click', () => addAltLinkRow());
+    if (altList && !altList.querySelector('.vup-alt-row')) addAltLinkRow();
+
     /* Update-in-place: choosing a listing that is already live turns the form
        into an edit of that product. Nothing new is created, so a new Botanica
        build bumps the existing listing instead of adding a second card. */
@@ -3263,6 +3320,10 @@
          empty and the owner pastes the new build's link. */
       set('#vUpDownloadUrl', '');
       set('#vUpPassword', '');
+      if (altList) {
+        altList.querySelectorAll('.vup-alt-row').forEach(row => row.remove());
+        addAltLinkRow();
+      }
     }
 
     function paintPublishTarget() {
@@ -3479,6 +3540,8 @@
         if (categoryVal) body.category = categoryVal;
         const linkVal = $('#vUpDownloadUrl')?.value.trim();
         if (linkVal) body.download_url = linkVal;
+        const altVals = altLinks();
+        if (altVals.length) body.links = altVals;
         const passVal = $('#vUpPassword')?.value.trim();
         if (passVal) body.password = passVal;
         const imageVal = $('#vUpImageUrl')?.value.trim();
@@ -3564,6 +3627,7 @@
         size: $('#vUpSize')?.value.trim() || 'Vault Build',
         version: $('#vUpVersion')?.value.trim() || undefined,
         download_url: $('#vUpDownloadUrl')?.value.trim(),
+        links: altLinks(),
         password: $('#vUpPassword')?.value.trim() || '',
         image_url: $('#vUpImageUrl')?.value.trim(),
         details: $('#vUpDetails')?.value.trim(),
@@ -3833,7 +3897,7 @@
         : (f.gated || f.url)
           /* The archive lives on an external host. Its URL is not in the page:
              the worker hands it over with the member token on click. */
-          ? '<button type="button" class="btn btn-primary btn-sm" data-gated="' + esc(f.name || f.ext || '') +
+          ? '<button type="button" class="btn btn-primary btn-sm" data-gated="' + esc(f.linkName || f.name || f.ext || '') +
             '">' + ICON.download + 'Download</button>'
           : '<button type="button" class="btn btn-primary btn-sm" data-file="' + esc(f.ext) +
             '" style="position:relative">' + ICON.download + 'Download<span class="ring"></span></button>';

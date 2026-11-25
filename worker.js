@@ -340,6 +340,24 @@ function isOwnerSession(session, env) {
   return Boolean(session && (session.isOwner || String(session.id) === ownerId(env) || String(session.role || '').toLowerCase() === 'owner'));
 }
 
+/* Alternative download links: labelled mirrors for the same build. They live
+   beside download_url on the resource and, like it, are only handed to a
+   verified member one at a time through /vault/link. */
+function cleanVaultLinks(input) {
+  if (!Array.isArray(input)) return [];
+  return input.slice(0, 5).map(entry => {
+    /* A broken mirror must not sink the whole upload: drop it and keep the
+       good ones, since the main link is still validated strictly. */
+    let url = '';
+    try { url = entry && entry.url ? safeHttpUrl(entry.url, 500) : ''; } catch { url = ''; }
+    return {
+      label: cleanText(entry && entry.label, 60),
+      url,
+      pass: cleanText(entry && entry.pass, 60) || undefined
+    };
+  }).filter(link => link.url);
+}
+
 /* Control characters and newline runs have no business in a one-line card. */
 function cleanText(value, max) {
   return String(value == null ? '' : value)
@@ -1528,9 +1546,11 @@ async function handleVaultPublic(request, url, env, cors) {
     // archive password never leave the worker here either — the catalogue only
     // says a file is gated, and /vault/link hands the real values to a verified
     // member. Without this, "members only" would be a client-side promise.
-    .map(({ voters, by, discord_msg_id, vote_offset, updated_at, download_url, pass, password, ...item }) => ({
+    .map(({ voters, by, discord_msg_id, vote_offset, updated_at, download_url, links, pass, password, ...item }) => ({
       ...item,
-      gated: Boolean(download_url || pass || password)
+      gated: Boolean(download_url || pass || password),
+      /* Mirror labels are safe to show; their URLs stay behind /vault/link. */
+      link_labels: Array.isArray(links) ? links.map((link, i) => link.label || 'Alternative ' + (i + 1)) : []
     }));
   return json({ items, hidden }, 200, cors);
 }
@@ -1574,6 +1594,30 @@ async function handleVaultLink(request, url, env, cors) {
       try { await recordSignal(env, 'download', id); } catch {}
       return json({ ok: true, url: outUrl, pass: file.pass || '' }, 200, cors);
     }
+  }
+
+  // A mirror link: "alt:0" asks for the first alternative, "alt:1" the next.
+  const altMatch = /^alt:(\d+)$/.exec(name);
+  if (altMatch) {
+    const index = Number(altMatch[1]);
+    const candidates = [];
+    if (staged) candidates.push(staged);
+    const pubDoc = (await readDoc(env, VAULT_PUBLIC_ITEMS_KEY, { items: [] })).value || {};
+    const publicItem = (Array.isArray(pubDoc.items) ? pubDoc.items : []).find(i => i.id === id || i.slug === id);
+    if (publicItem) candidates.push(publicItem);
+    const subsDoc = (await readDoc(env, VAULT_SUBMISSIONS_KEY, { submissions: [] })).value || {};
+    const submitted = (Array.isArray(subsDoc.submissions) ? subsDoc.submissions : []).find(s => s.id === id || s.slug === id);
+    if (submitted) candidates.push(submitted);
+
+    for (const candidate of candidates) {
+      const link = (Array.isArray(candidate.links) ? candidate.links : [])[index];
+      const altUrl = link && link.url ? safeOutputUrl(link.url) : '';
+      if (!altUrl) continue;
+      await limitWrites(env, 'links', session.id, 80);
+      try { await recordSignal(env, 'download', id); } catch {}
+      return json({ ok: true, url: altUrl, pass: link.pass || candidate.pass || '' }, 200, cors);
+    }
+    throw fail(404, 'no_file', 'No alternative link is stored for that resource.');
   }
 
   // No uploaded archive: fall back to the external link stored on the resource.
@@ -1679,6 +1723,7 @@ async function handleVaultSubmissions(request, url, env, cors) {
     const details = cleanText(input.details || input.desc, 2000);
     const version = cleanText(input.version || '1.0', 40);
     const password = cleanText(input.password || input.pass, 60);
+    const links = cleanVaultLinks(input.links);
     const releaseAt = input.release_at || input.releaseAt || null;
 
     const submission = {
@@ -1699,6 +1744,7 @@ async function handleVaultSubmissions(request, url, env, cors) {
       details,
       version,
       pass: password || undefined,
+      links: links.length ? links : undefined,
       releaseAt: releaseAt || undefined,
       by: session.id,
       by_username: session.username,
@@ -1999,6 +2045,7 @@ async function handleIncomingReleases(request, url, env, cors) {
     const creator = cleanText(input.creator || session.username, 60);
     const details = cleanText(input.details || '', 1500);
     const password = cleanText(input.password || input.pass, 60);
+    const links = cleanVaultLinks(input.links);
     const voteLimit = Math.max(1, Math.min(1000, parseInt(input.vote_limit, 10) || 5));
 
     const item = {
@@ -2018,6 +2065,7 @@ async function handleIncomingReleases(request, url, env, cors) {
       creator,
       details,
       pass: password || undefined,
+      links: links.length ? links : undefined,
       votes: 0,
       voters: {}, // userId -> 1 or -1
       vote_limit: voteLimit,
@@ -2449,6 +2497,10 @@ async function handleVaultSubmissionManage(request, url, env, cors) {
         if (input.title) found.title = cleanText(input.title, 120);
         if (input.details !== undefined) found.details = cleanText(input.details, 1500);
         if (input.download_url !== undefined) found.download_url = safeHttpUrl(input.download_url, 500);
+        if (input.links !== undefined) {
+          const nextLinks = cleanVaultLinks(input.links);
+          found.links = nextLinks.length ? nextLinks : undefined;
+        }
         if (input.password !== undefined) found.pass = cleanText(input.password, 100);
         if (input.size) found.size = cleanText(input.size, 30);
         if (input.category) found.category = cleanText(input.category, 60);
@@ -2472,6 +2524,10 @@ async function handleVaultSubmissionManage(request, url, env, cors) {
         if (input.title) found.title = cleanText(input.title, 120);
         if (input.details !== undefined) found.details = cleanText(input.details, 1500);
         if (input.download_url !== undefined) found.download_url = safeHttpUrl(input.download_url, 500);
+        if (input.links !== undefined) {
+          const nextLinks = cleanVaultLinks(input.links);
+          found.links = nextLinks.length ? nextLinks : undefined;
+        }
         if (input.password !== undefined) found.pass = cleanText(input.password, 100);
         if (input.size) found.size = cleanText(input.size, 30);
         if (input.category) found.category = cleanText(input.category, 60);

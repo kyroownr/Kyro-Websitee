@@ -700,6 +700,13 @@
               </div>
 
               <div>
+                <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Alternative download links (optional)</label>
+                <div style="font-size:0.72rem;color:var(--dim);margin-bottom:6px;">Add mirrors or backup hosts — if one link is dead, members can still download from another. Up to 5 extra links.</div>
+                <div id="vUpAltLinks" style="display:grid;gap:8px;"></div>
+                <button type="button" id="vUpAddAltLink" class="btn btn-ghost btn-sm" style="margin-top:8px;">+ Add alternative link</button>
+              </div>
+
+              <div>
                 <label style="display:block;font-size:0.8rem;color:var(--dim);margin-bottom:4px;">Banner / Screenshot Image URL (or upload below)</label>
                 <input type="url" id="vUpImageUrl" placeholder="https://... (or drop image below)" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 12px;color:#fff;font-size:0.9rem;">
               </div>
@@ -925,7 +932,7 @@
   <!-- Modular scripts: data → preview engine → app wiring -->
   <script defer src="/js/data.js?v=f2d69c44"></script>
   <script defer src="/js/preview.js?v=53c30c30"></script>
-  <script defer src="/js/app.js?v=4296eaaa"></script>
+  <script defer src="/js/app.js?v=8503b821"></script>
   <script defer src="/js/applications.js?v=195770b9"></script>
 </body>
 </html>
