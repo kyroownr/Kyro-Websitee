@@ -55,4 +55,15 @@ expect(!fs.existsSync(path.join(outDir, 'tools')), 'tools/ is not published');
 expect(!fs.existsSync(path.join(outDir, 'dashboard.html')), 'the staff dashboard is not published');
 expect(!result.files.some((file) => /\.(cjs|ts|map|log)$/i.test(file)), 'no code or log artifacts in the output');
 
+/* Every page that can open the product detail modal also carries the owner
+   edit modal. The Post Update modal must travel with it: the button renders
+   from the shared bundle, so a page that forgets the markup shows a button
+   that silently does nothing. */
+for (const page of result.files.filter((file) => file.endsWith('.html'))) {
+  const text = fs.readFileSync(path.join(outDir, page), 'utf8');
+  if (!text.includes('ownerEditModalOverlay')) continue;
+  expect(text.includes('postUpdateModalOverlay'), 'post update modal present in ' + page);
+  expect(text.includes('pumSubmit'), 'post update form present in ' + page);
+}
+
 console.log(JSON.stringify({ checks, publishedFiles: result.files.length, backendBlocked: backend.length, result: 'passed' }));
