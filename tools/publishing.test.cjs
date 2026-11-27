@@ -227,6 +227,8 @@ async function main() {
   const savedBody = await saved.json();
   expect(savedBody.channel_id === '910000000000000002', 'proof channel id persisted');
   expect(Boolean(savedBody.test_message_id), 'test post confirmed by Discord');
+  expect(savedBody.reposted >= 1, 'finished scans are reposted into the newly connected channel');
+  expect(posts.some(post => post.channel === '910000000000000002' && JSON.stringify(post.body).includes('VirusTotal scan')), 'reposted proof carries the scan embed');
   const proofGet = await call('/dashboard/publishing', OWNER_TOKEN, null, 'GET');
   const proofGetBody = await proofGet.json();
   expect(proofGetBody.proof_channel_id === '910000000000000002' && proofGetBody.reachable === true, 'saved channel is reachable');

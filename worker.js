@@ -2866,12 +2866,31 @@ async function setProofChannelConfig(env, channelId, actor) {
     if (test.status === 403) throw fail(403, 'channel_no_send', 'The bot cannot post in that channel. Give it View Channel, Send Messages and Embed Links.');
     throw fail(502, 'test_post_failed', 'Discord rejected the test post (' + test.status + ').');
   }
+  const before = (await readDoc(env, DASHBOARD_CONFIG_KEY, {})).value || {};
+  const previous = String((before.publishing && before.publishing.proof_channel_id) || '').trim();
+  const verifiedAt = new Date().toISOString();
   await mutateDoc(env, DASHBOARD_CONFIG_KEY, {}, curr => {
     const base = curr && typeof curr === 'object' ? curr : {};
-    return { ...base, publishing: { ...(base.publishing || {}), proof_channel_id: id, verified_at: new Date().toISOString() } };
+    return { ...base, publishing: { ...(base.publishing || {}), proof_channel_id: id, verified_at: verifiedAt } };
   });
   await logBotAudit(env, 'Proof Channel Updated', actor, `#${id} verified with a test post.`);
-  return { channel_id: id, verified_at: new Date().toISOString(), test_message_id: test.data && test.data.id };
+  /* Connecting a channel (or moving to a different one) reposts the reports
+     that were finished while nothing was configured, so an admin does not have
+     to retry every scan by hand to get its proof message. */
+  const channelChanged = previous !== id;
+  let reposted = 0;
+  try {
+    const records = await scanRecords(env);
+    for (const slug of Object.keys(records)) {
+      const saved = records[slug] && typeof records[slug] === 'object' ? records[slug] : null;
+      if (!saved || !['completed', 'failed', 'unavailable'].includes(String(saved.status || ''))) continue;
+      if (saved.proof_msg_id && !channelChanged) continue;
+      const record = { ...saved, proof_msg_id: '', proof_attempts: 0, proof_error: undefined };
+      const posted = await postOrUpdateProof(env, record);
+      if (posted && posted.proof_msg_id && !posted.proof_error) reposted += 1;
+    }
+  } catch {}
+  return { channel_id: id, verified_at: verifiedAt, test_message_id: test.data && test.data.id, reposted };
 }
 
 async function handleDashboardPublishing(request, url, env, cors) {
