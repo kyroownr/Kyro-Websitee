@@ -123,6 +123,13 @@ async function main() {
     expect(signals.data.totals.downloads === 1, 'the handed-out download link was counted');
     expect(signals.data.totals.broken === 1 && signals.data.reports[0].note === 'test report', 'the broken-link report was stored');
     expect((await api('/vault/signals', { token })).status === 403, 'a normal member cannot read the owner signals');
+    expect((await api('/vault/signals', { method: 'POST', token, body: { id: 'demo-tool' } })).status === 403,
+      'a normal member cannot close a broken-link report');
+    const closed = await api('/vault/signals', { method: 'POST', token: ownerToken, body: { id: 'demo-tool', at: signals.data.reports[0].at } });
+    expect(closed.status === 200 && closed.data.removed === 1, 'the owner can mark a broken-link report fixed');
+    const afterClose = await api('/vault/signals', { token: ownerToken });
+    expect(afterClose.data.reports.length === 0 && afterClose.data.totals.broken === 0,
+      'a closed report leaves the queue and its counter');
 
     /* 9. Approval stores exactly what the owner ticked and nothing more. */
     await kv.put('kyro.vault_submissions.v1', JSON.stringify({ submissions: [{

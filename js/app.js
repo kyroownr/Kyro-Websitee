@@ -2941,6 +2941,29 @@
     }
   }
 
+  /* Reports arrive as the resource id plus the visitor's note; the catalogue
+     turns the id into the product name. This queue is the only place the owner
+     reads them, and closing one takes it off the list. */
+  function brokenReportsHTML(reports) {
+    if (!reports || !reports.length) return '<div style="font-size:0.78rem;color:var(--dim);">No broken-link reports right now.</div>';
+    return '<div style="display:flex;flex-direction:column;gap:8px;">' +
+      '<div style="font-size:0.78rem;font-weight:600;color:#e2e8f0;">Broken link reports <span style="color:var(--dim);font-weight:400;">(' + esc(String(reports.length)) + ')</span></div>' +
+      reports.map(r => {
+        const item = resources.find(x => (x.cloud_id || x.id) === r.id) || null;
+        const title = item ? item.title : r.id;
+        const when = r.at ? new Date(r.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+        const href = item && item.id ? '/product?id=' + encodeURIComponent(item.id) : '';
+        return '<div style="border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:9px 10px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;">' +
+          '<div style="min-width:180px;flex:1;">' +
+            '<div style="font-size:0.82rem;color:#e2e8f0;">' + (href ? '<a href="' + href + '" style="color:#7dd3fc;text-decoration:none;">' + esc(title) + '</a>' : esc(title)) + '</div>' +
+            (r.note ? '<div style="font-size:0.76rem;color:#fca5a5;margin-top:2px;">' + esc(r.note) + '</div>' : '<div style="font-size:0.76rem;color:var(--dim);margin-top:2px;">No note left.</div>') +
+            (when ? '<div style="font-size:0.7rem;color:var(--dim);margin-top:3px;">Reported ' + esc(when) + '</div>' : '') +
+          '</div>' +
+          '<button type="button" class="acc-action-pill" data-broken-fix="' + esc(r.id) + '" data-broken-at="' + esc(r.at || '') + '">Mark fixed</button>' +
+        '</div>';
+      }).join('') + '</div>';
+  }
+
   /* Aggregate signals for the owner: five numbers, no personal data. A failed
      read hides the card rather than showing invented figures. */
   async function renderSignals(isOwner) {
@@ -2972,7 +2995,26 @@
         '</div>' +
         top(d.views, 'Most viewed') +
         top(d.downloads, 'Most downloaded') +
-        top(d.broken, 'Reported links');
+        brokenReportsHTML(d.reports);
+
+      body.querySelectorAll('[data-broken-fix]').forEach(btn => btn.addEventListener('click', async () => {
+        if (btn.disabled) return;
+        btn.disabled = true;
+        try {
+          const res2 = await fetch(AUTH_WORKER_URL + '/vault/signals', {
+            method: 'POST',
+            headers: { authorization: 'Bearer ' + auth.token, 'content-type': 'application/json' },
+            credentials: 'omit',
+            body: JSON.stringify({ id: btn.dataset.brokenFix, at: btn.dataset.brokenAt })
+          });
+          if (!res2.ok) throw new Error('failed');
+          toast({ title: 'Report closed', sub: 'That link left the broken-link queue.', icon: ICON.check });
+          renderSignals(true);
+        } catch {
+          btn.disabled = false;
+          toast({ title: 'Could not update', sub: 'Try again in a moment.', icon: ICON.x });
+        }
+      }));
     } catch { group.style.display = 'none'; }
   }
 

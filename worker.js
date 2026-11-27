@@ -1174,10 +1174,34 @@ function topSignals(map, limit = 8) {
 }
 
 async function handleVaultSignals(request, url, env, cors) {
-  if (request.method !== 'GET') return json({ error: 'Use GET.' }, 405, cors);
+  if (request.method !== 'GET' && request.method !== 'POST') return json({ error: 'Use GET or POST.' }, 405, cors);
   const session = await requireMember(bearerToken(request, url), env);
   if (!isOwnerSession(session, env) && !isAdmin(session, env)) {
     throw fail(403, 'forbidden', 'Only Kyro staff can read the site signals.');
+  }
+  if (request.method === 'POST') {
+    /* "Mark fixed" on a broken-link report: the report leaves the queue and the
+       resource's counter drops with it, so the list only shows what is still
+       waiting for a look. */
+    const input = await jsonBody(request);
+    if (String(input.action || 'resolve') !== 'resolve') throw fail(400, 'bad_action', 'Use action "resolve".');
+    const id = cleanText(input.id, 60).toLowerCase();
+    const at = cleanText(input.at, 40);
+    if (!id) throw fail(400, 'bad_id', 'Resource ID is required.');
+    let removed = 0;
+    await mutateDoc(env, SIGNALS_KEY, {}, (curr) => {
+      const d = signalsDoc(curr);
+      const before = d.reports.length;
+      d.reports = d.reports.filter((r) => !(r && r.id === id && (!at || r.at === at)));
+      removed = before - d.reports.length;
+      if (removed > 0) {
+        const left = Math.max(0, (Number(d.broken[id]) || 0) - removed);
+        if (left) d.broken[id] = left; else delete d.broken[id];
+      }
+      return d;
+    });
+    await logBotAudit(env, 'Broken Link Report Closed', session, `${removed} report(s) for ` + id + ' marked fixed.');
+    return json({ ok: true, removed }, 200, cors);
   }
   const d = signalsDoc((await readDoc(env, SIGNALS_KEY, {})).value);
   const views = topSignals(d.views, 12);
